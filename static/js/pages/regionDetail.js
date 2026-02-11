@@ -3,15 +3,15 @@
  * Shows single region information with map and child regions.
  */
 
-import { getRegion, updateRegion, deleteRegion, regionToFeature, getRegionMembers } from '../api/regions.js?v=c49aed9';
-import { getGroupsByRegion } from '../api/signalGroups.js?v=c49aed9';
-import { createReport } from '../api/reports.js?v=c49aed9';
-import { requestMembership } from '../api/membership.js?v=c49aed9';
-import { initMap, addRegionsLayer, destroyMap, fitToBounds } from '../components/map.js?v=c49aed9';
-import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser, getUser } from '../utils/store.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import modal from '../components/modal.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { getRegion, updateRegion, deleteRegion, regionToFeature, getRegionMembers } from '../api/regions.js';
+import { getGroupsByRegion } from '../api/signalGroups.js';
+import { createReport } from '../api/reports.js';
+import { requestMembership } from '../api/membership.js';
+import { initMap, addRegionsLayer, destroyMap, fitToBounds } from '../components/map.js';
+import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser, getUser } from '../utils/store.js';
+import toast from '../components/toast.js';
+import modal from '../components/modal.js';
+import { navigate } from '../app.js';
 
 let mapInstance = null;
 

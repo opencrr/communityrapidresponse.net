@@ -2,8 +2,8 @@
  * Authentication API module
  */
 
-import { get, post, del, ApiError } from './client.js?v=c49aed9';
-import { setUser, clearUser } from '../utils/store.js?v=c49aed9';
+import { get, post, del, ApiError } from './client.js';
+import { setUser, clearUser } from '../utils/store.js';
 
 /**
  * Register a new user

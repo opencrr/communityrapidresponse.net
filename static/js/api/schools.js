@@ -2,7 +2,7 @@
  * Schools API module
  */
 
-import { get, post, ApiError } from './client.js?v=c49aed9';
+import { get, post, ApiError } from './client.js';
 
 /**
  * Search schools by name, state, or district

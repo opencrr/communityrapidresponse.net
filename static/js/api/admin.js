@@ -3,7 +3,7 @@
  * Handles superuser-specific operations like granting vouch verification.
  */
 
-import { get, post, del, ApiError } from './client.js?v=c49aed9';
+import { get, post, del, ApiError } from './client.js';
 
 /**
  * Search for users by email or username

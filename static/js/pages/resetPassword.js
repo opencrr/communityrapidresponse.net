@@ -3,8 +3,8 @@
  * Validates token from URL and allows setting a new password.
  */
 
-import { validateResetToken, resetPassword } from '../api/auth.js?v=c49aed9';
-import { ApiError } from '../api/client.js?v=c49aed9';
+import { validateResetToken, resetPassword } from '../api/auth.js';
+import { ApiError } from '../api/client.js';
 
 /**
  * Render the reset password page

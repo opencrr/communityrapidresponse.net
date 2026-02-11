@@ -2,8 +2,8 @@
  * Regions API module
  */
 
-import { get, post, put, del, ApiError } from './client.js?v=c49aed9';
-import { setRegions, setCurrentRegion } from '../utils/store.js?v=c49aed9';
+import { get, post, put, del, ApiError } from './client.js';
+import { setRegions, setCurrentRegion } from '../utils/store.js';
 
 /**
  * Get all regions with optional filters

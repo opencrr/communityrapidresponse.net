@@ -2,10 +2,10 @@
  * Registration page
  */
 
-import { register } from '../api/auth.js?v=c49aed9';
-import { ApiError } from '../api/client.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { register } from '../api/auth.js';
+import { ApiError } from '../api/client.js';
+import toast from '../components/toast.js';
+import { navigate } from '../app.js';
 
 const MIN_PASSWORD_LENGTH = 12;
 

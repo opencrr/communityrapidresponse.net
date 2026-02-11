@@ -4,10 +4,10 @@
  * Shows user's schools/districts on load, with search below.
  */
 
-import { searchSchools, getMySchools } from '../api/schools.js?v=c49aed9';
-import { initMap, destroyMap, showPopup } from '../components/map.js?v=c49aed9';
-import { isAuthenticated } from '../utils/store.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { searchSchools, getMySchools } from '../api/schools.js';
+import { initMap, destroyMap, showPopup } from '../components/map.js';
+import { isAuthenticated } from '../utils/store.js';
+import { navigate } from '../app.js';
 
 const US_STATES = [
     'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',

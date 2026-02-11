@@ -3,10 +3,10 @@
  * Shows map with all regions and sidebar list.
  */
 
-import { getRegions, regionsToFeatureCollection } from '../api/regions.js?v=c49aed9';
-import { initMap, addRegionsLayer, createLegendHtml, destroyMap, fitToBounds, showPopup } from '../components/map.js?v=c49aed9';
-import { isAuthenticated, isAdmin } from '../utils/store.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { getRegions, regionsToFeatureCollection } from '../api/regions.js';
+import { initMap, addRegionsLayer, createLegendHtml, destroyMap, fitToBounds, showPopup } from '../components/map.js';
+import { isAuthenticated, isAdmin } from '../utils/store.js';
+import { navigate } from '../app.js';
 
 let mapInstance = null;
 

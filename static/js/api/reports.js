@@ -3,7 +3,7 @@
  * Handles user report operations.
  */
 
-import { get, post, ApiError } from './client.js?v=c49aed9';
+import { get, post, ApiError } from './client.js';
 
 /**
  * Create a report for a user in a region

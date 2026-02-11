@@ -3,8 +3,8 @@
  * Allows users to request a password reset email.
  */
 
-import { requestPasswordReset } from '../api/auth.js?v=c49aed9';
-import { ApiError } from '../api/client.js?v=c49aed9';
+import { requestPasswordReset } from '../api/auth.js';
+import { ApiError } from '../api/client.js';
 
 /**
  * Render the forgot password page

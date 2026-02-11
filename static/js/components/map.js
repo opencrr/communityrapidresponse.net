@@ -3,7 +3,7 @@
  * Provides map initialization, region display, and polygon drawing functionality.
  */
 
-import { store } from '../utils/store.js?v=c49aed9';
+import { store } from '../utils/store.js';
 
 // Mapbox access token - should be configured in environment
 const MAPBOX_TOKEN = window.MAPBOX_ACCESS_TOKEN || '';

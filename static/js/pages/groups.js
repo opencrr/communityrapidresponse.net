@@ -3,9 +3,9 @@
  * Shows all Signal groups the user has access to.
  */
 
-import { getGroups } from '../api/signalGroups.js?v=c49aed9';
-import { hasReadAccess, isAdmin } from '../utils/store.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
+import { getGroups } from '../api/signalGroups.js';
+import { hasReadAccess, isAdmin } from '../utils/store.js';
+import toast from '../components/toast.js';
 
 /**
  * Get a scope key for grouping (region:id, school:id, or district:id)

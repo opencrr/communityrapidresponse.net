@@ -614,21 +614,23 @@ migrate-local:
         echo "✅ Applied $pending migration(s)"
     fi
 
-# Stamp all static asset references with a cache-busting version (git short SHA)
-cache-bust:
+# Stamp index.html entry-point references with a cache-busting version
+# Usage: just cache-bust         (uses git short SHA)
+#        just cache-bust abc123  (uses explicit version)
+cache-bust VERSION="":
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(git rev-parse --short HEAD)
-    echo "Stamping static assets with version: $VERSION"
+    if [ -n "{{VERSION}}" ]; then
+        V="{{VERSION}}"
+    else
+        V=$(git rev-parse --short HEAD)
+    fi
+    echo "Stamping index.html with version: $V"
 
-    # Update index.html local static references (href and src to /static/...)
-    sed -i '' -E "s|href=\"/static/([^\"?]*)(\?v=[^\"]*)?|href=\"/static/\1?v=$VERSION|g" templates/index.html
-    sed -i '' -E "s|src=\"/static/([^\"?]*)(\?v=[^\"]*)?|src=\"/static/\1?v=$VERSION|g" templates/index.html
+    sed -i '' -E "s|href=\"/static/([^\"?]*)(\?v=[^\"]*)?|href=\"/static/\1?v=$V|g" templates/index.html
+    sed -i '' -E "s|src=\"/static/([^\"?]*)(\?v=[^\"]*)?|src=\"/static/\1?v=$V|g" templates/index.html
 
-    # Update all JS module import paths
-    find static/js -name '*.js' -exec sed -i '' -E "s|from '(\.[^'?]*)(\?v=[^']*)?'|from '\1?v=$VERSION'|g" {} +
-
-    echo "Done — cache-busted with version $VERSION"
+    echo "Done — cache-busted index.html with version $V"
 
 # Generate a secure JWT secret
 generate-secret:

@@ -3,45 +3,45 @@
  * Handles routing, initialization, and page management.
  */
 
-import { store, isAuthenticated, setUser, clearUser, hasReadAccess, isAdmin, isSuperuser } from './utils/store.js?v=c49aed9';
-import { getCurrentUser } from './api/auth.js?v=c49aed9';
-import { renderHeader } from './components/header.js?v=c49aed9';
-import { renderFooter } from './components/footer.js?v=c49aed9';
+import { store, isAuthenticated, setUser, clearUser, hasReadAccess, isAdmin, isSuperuser } from './utils/store.js';
+import { getCurrentUser } from './api/auth.js';
+import { renderHeader } from './components/header.js';
+import { renderFooter } from './components/footer.js';
 
 // Page imports
-import homePage from './pages/home.js?v=c49aed9';
-import loginPage from './pages/login.js?v=c49aed9';
-import registerPage from './pages/register.js?v=c49aed9';
-import mfaSetupPage from './pages/mfaSetup.js?v=c49aed9';
-import mfaVerifyPage from './pages/mfaVerify.js?v=c49aed9';
-import dashboardPage from './pages/dashboard.js?v=c49aed9';
-import regionsPage from './pages/regions.js?v=c49aed9';
-import regionDetailPage from './pages/regionDetail.js?v=c49aed9';
-import verificationPage from './pages/verification.js?v=c49aed9';
-import vouchPage from './pages/vouch.js?v=c49aed9';
-import groupsPage from './pages/groups.js?v=c49aed9';
-import verifyEmailPage from './pages/verifyEmail.js?v=c49aed9';
-import createRegionPage from './pages/admin/createRegion.js?v=c49aed9';
-import manageGroupsPage from './pages/admin/manageGroups.js?v=c49aed9';
-import manageUsersPage from './pages/admin/manageUsers.js?v=c49aed9';
-import auditLogsPage from './pages/admin/auditLogs.js?v=c49aed9';
-import inviteLinkProposalsPage from './pages/admin/inviteLinkProposals.js?v=c49aed9';
-import blocklistProposalsPage from './pages/admin/blocklistProposals.js?v=c49aed9';
-import deletionProposalsPage from './pages/admin/deletionProposals.js?v=c49aed9';
-import userReportsPage from './pages/admin/userReports.js?v=c49aed9';
-import blockedAddressesPage from './pages/admin/blockedAddresses.js?v=c49aed9';
-import membershipRequestsPage from './pages/admin/membershipRequests.js?v=c49aed9';
-import helpPage from './pages/help.js?v=c49aed9';
-import aboutPage from './pages/about.js?v=c49aed9';
-import membershipPage from './pages/membership.js?v=c49aed9';
-import profilePage from './pages/profile.js?v=c49aed9';
-import forgotPasswordPage from './pages/forgotPassword.js?v=c49aed9';
-import resetPasswordPage from './pages/resetPassword.js?v=c49aed9';
-import schoolsPage from './pages/schools.js?v=c49aed9';
-import schoolDetailPage from './pages/schoolDetail.js?v=c49aed9';
-import districtDetailPage from './pages/districtDetail.js?v=c49aed9';
-import privacyPage from './pages/privacy.js?v=c49aed9';
-import termsPage from './pages/terms.js?v=c49aed9';
+import homePage from './pages/home.js';
+import loginPage from './pages/login.js';
+import registerPage from './pages/register.js';
+import mfaSetupPage from './pages/mfaSetup.js';
+import mfaVerifyPage from './pages/mfaVerify.js';
+import dashboardPage from './pages/dashboard.js';
+import regionsPage from './pages/regions.js';
+import regionDetailPage from './pages/regionDetail.js';
+import verificationPage from './pages/verification.js';
+import vouchPage from './pages/vouch.js';
+import groupsPage from './pages/groups.js';
+import verifyEmailPage from './pages/verifyEmail.js';
+import createRegionPage from './pages/admin/createRegion.js';
+import manageGroupsPage from './pages/admin/manageGroups.js';
+import manageUsersPage from './pages/admin/manageUsers.js';
+import auditLogsPage from './pages/admin/auditLogs.js';
+import inviteLinkProposalsPage from './pages/admin/inviteLinkProposals.js';
+import blocklistProposalsPage from './pages/admin/blocklistProposals.js';
+import deletionProposalsPage from './pages/admin/deletionProposals.js';
+import userReportsPage from './pages/admin/userReports.js';
+import blockedAddressesPage from './pages/admin/blockedAddresses.js';
+import membershipRequestsPage from './pages/admin/membershipRequests.js';
+import helpPage from './pages/help.js';
+import aboutPage from './pages/about.js';
+import membershipPage from './pages/membership.js';
+import profilePage from './pages/profile.js';
+import forgotPasswordPage from './pages/forgotPassword.js';
+import resetPasswordPage from './pages/resetPassword.js';
+import schoolsPage from './pages/schools.js';
+import schoolDetailPage from './pages/schoolDetail.js';
+import districtDetailPage from './pages/districtDetail.js';
+import privacyPage from './pages/privacy.js';
+import termsPage from './pages/terms.js';
 
 // Route definitions
 // - auth: requires login

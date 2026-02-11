@@ -2,8 +2,8 @@
  * Signal Groups API module
  */
 
-import { get, post, put, del, ApiError } from './client.js?v=c49aed9';
-import { setSignalGroups } from '../utils/store.js?v=c49aed9';
+import { get, post, put, del, ApiError } from './client.js';
+import { setSignalGroups } from '../utils/store.js';
 
 /**
  * Get all Signal groups the user has access to

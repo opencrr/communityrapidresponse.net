@@ -3,7 +3,7 @@
  * Handles blocklist proposal and blocklisted address operations.
  */
 
-import { get, post, ApiError } from './client.js?v=c49aed9';
+import { get, post, ApiError } from './client.js';
 
 /**
  * Get all blocklist proposals the user can see

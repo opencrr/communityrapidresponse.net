@@ -9,13 +9,13 @@ import {
     getVerificationStatus,
     cancelVerificationRequest,
     resendPostcard,
-} from '../api/verification.js?v=c49aed9';
-import { getRegions } from '../api/regions.js?v=c49aed9';
-import { ApiError } from '../api/client.js?v=c49aed9';
-import { getCurrentUser } from '../api/auth.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import modal from '../components/modal.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+} from '../api/verification.js';
+import { getRegions } from '../api/regions.js';
+import { ApiError } from '../api/client.js';
+import { getCurrentUser } from '../api/auth.js';
+import toast from '../components/toast.js';
+import modal from '../components/modal.js';
+import { navigate } from '../app.js';
 
 let availableRegions = [];
 

@@ -3,7 +3,7 @@
  * Handles postcard and vouch verification flows.
  */
 
-import { get, post } from './client.js?v=c49aed9';
+import { get, post } from './client.js';
 
 /**
  * Request postcard verification

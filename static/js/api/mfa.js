@@ -2,8 +2,8 @@
  * MFA API module
  */
 
-import { post, ApiError } from './client.js?v=c49aed9';
-import { setUser } from '../utils/store.js?v=c49aed9';
+import { post, ApiError } from './client.js';
+import { setUser } from '../utils/store.js';
 
 /**
  * Initiate MFA setup

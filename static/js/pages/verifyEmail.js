@@ -3,8 +3,8 @@
  * Handles the email verification link from the verification email
  */
 
-import { get } from '../api/client.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { get } from '../api/client.js';
+import { navigate } from '../app.js';
 
 /**
  * Render the email verification page

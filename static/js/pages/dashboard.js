@@ -3,15 +3,15 @@
  * Shows user status, verification status, regions, and groups.
  */
 
-import { store, getUser, isPostcardVerified, isVouchVerified, hasReadAccess, isAdmin, isSuperuser, getVerificationStatus as getVerificationStatusFromStore } from '../utils/store.js?v=c49aed9';
-import { getMyRegions } from '../api/regions.js?v=c49aed9';
-import { getGroups } from '../api/signalGroups.js?v=c49aed9';
-import { getVerificationStatus as getVerificationStatusAPI, getPendingVouchRequests, vouchForUser } from '../api/verification.js?v=c49aed9';
-import { listMyRequests, listMyInvitations } from '../api/membership.js?v=c49aed9';
-import { getMySchools } from '../api/schools.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import modal from '../components/modal.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { store, getUser, isPostcardVerified, isVouchVerified, hasReadAccess, isAdmin, isSuperuser, getVerificationStatus as getVerificationStatusFromStore } from '../utils/store.js';
+import { getMyRegions } from '../api/regions.js';
+import { getGroups } from '../api/signalGroups.js';
+import { getVerificationStatus as getVerificationStatusAPI, getPendingVouchRequests, vouchForUser } from '../api/verification.js';
+import { listMyRequests, listMyInvitations } from '../api/membership.js';
+import { getMySchools } from '../api/schools.js';
+import toast from '../components/toast.js';
+import modal from '../components/modal.js';
+import { navigate } from '../app.js';
 
 // Module-level state for detailed verification status
 let detailedVerificationStatus = null;

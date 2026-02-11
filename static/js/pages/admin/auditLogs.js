@@ -3,10 +3,10 @@
  * Allows superusers to view and filter audit logs.
  */
 
-import { getAuditLogs, exportAuditLogs } from '../../api/admin.js?v=c49aed9';
-import { ApiError } from '../../api/client.js?v=c49aed9';
-import { isSuperuser } from '../../utils/store.js?v=c49aed9';
-import toast from '../../components/toast.js?v=c49aed9';
+import { getAuditLogs, exportAuditLogs } from '../../api/admin.js';
+import { ApiError } from '../../api/client.js';
+import { isSuperuser } from '../../utils/store.js';
+import toast from '../../components/toast.js';
 
 let currentLogs = [];
 let currentPage = 1;

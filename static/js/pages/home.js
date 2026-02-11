@@ -3,10 +3,10 @@
  * Shows hero section with map overview and call-to-action.
  */
 
-import { isAuthenticated, hasReadAccess } from '../utils/store.js?v=c49aed9';
-import { getRegions, regionsToFeatureCollection } from '../api/regions.js?v=c49aed9';
-import { initMap, addRegionsLayer, createLegendHtml, destroyMap, fitToBounds } from '../components/map.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+import { isAuthenticated, hasReadAccess } from '../utils/store.js';
+import { getRegions, regionsToFeatureCollection } from '../api/regions.js';
+import { initMap, addRegionsLayer, createLegendHtml, destroyMap, fitToBounds } from '../components/map.js';
+import { navigate } from '../app.js';
 
 let mapInstance = null;
 

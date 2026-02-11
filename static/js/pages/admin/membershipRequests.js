@@ -8,12 +8,12 @@ import {
     getRequest,
     voteOnRequest,
     listPendingForRegion,
-} from '../../api/membership.js?v=c49aed9';
-import { getUser, isAdmin, isSuperuser } from '../../utils/store.js?v=c49aed9';
-import { ApiError } from '../../api/client.js?v=c49aed9';
-import toast from '../../components/toast.js?v=c49aed9';
-import modal from '../../components/modal.js?v=c49aed9';
-import { navigate } from '../../app.js?v=c49aed9';
+} from '../../api/membership.js';
+import { getUser, isAdmin, isSuperuser } from '../../utils/store.js';
+import { ApiError } from '../../api/client.js';
+import toast from '../../components/toast.js';
+import modal from '../../components/modal.js';
+import { navigate } from '../../app.js';
 
 let currentFilter = 'all';
 

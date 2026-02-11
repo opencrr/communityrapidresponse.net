@@ -9,12 +9,12 @@ import {
     getVerificationStatus,
     getVouchStatus,
     getPendingVouchRequests,
-} from '../api/verification.js?v=c49aed9';
-import { getUser, isPostcardVerified, isVouchVerified, isAdmin } from '../utils/store.js?v=c49aed9';
-import { ApiError } from '../api/client.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import modal from '../components/modal.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
+} from '../api/verification.js';
+import { getUser, isPostcardVerified, isVouchVerified, isAdmin } from '../utils/store.js';
+import { ApiError } from '../api/client.js';
+import toast from '../components/toast.js';
+import modal from '../components/modal.js';
+import { navigate } from '../app.js';
 
 const US_STATES = [
     { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' },

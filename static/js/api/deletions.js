@@ -3,7 +3,7 @@
  * Handles deletion proposal operations for signal groups and sub-regions.
  */
 
-import { get, post, ApiError } from './client.js?v=c49aed9';
+import { get, post, ApiError } from './client.js';
 
 /**
  * Get all deletion proposals the user can see

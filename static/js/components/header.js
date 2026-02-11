@@ -3,10 +3,10 @@
  * Renders the site header with navigation links and user status.
  */
 
-import { store, isAuthenticated, getUser, isAdmin, hasReadAccess, getVerificationStatus, isSuperuser } from '../utils/store.js?v=c49aed9';
-import { logout } from '../api/auth.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
-import toast from './toast.js?v=c49aed9';
+import { store, isAuthenticated, getUser, isAdmin, hasReadAccess, getVerificationStatus, isSuperuser } from '../utils/store.js';
+import { logout } from '../api/auth.js';
+import { navigate } from '../app.js';
+import toast from './toast.js';
 
 /**
  * Render the header component

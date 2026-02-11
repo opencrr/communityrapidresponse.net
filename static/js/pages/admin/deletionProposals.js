@@ -9,15 +9,15 @@ import {
     createDeletionProposal,
     voteOnDeletionProposal,
     expireDeletionProposal,
-} from '../../api/deletions.js?v=c49aed9';
-import { getAdminRegions } from '../../api/regions.js?v=c49aed9';
-import { getGroupsByRegion, getAdminGroups } from '../../api/signalGroups.js?v=c49aed9';
-import { getRegion } from '../../api/regions.js?v=c49aed9';
-import { getMySchools, getSchoolSignalGroups, getDistrictSignalGroups } from '../../api/schools.js?v=c49aed9';
-import { ApiError } from '../../api/client.js?v=c49aed9';
-import { isAdmin, isSuperuser } from '../../utils/store.js?v=c49aed9';
-import toast from '../../components/toast.js?v=c49aed9';
-import modal from '../../components/modal.js?v=c49aed9';
+} from '../../api/deletions.js';
+import { getAdminRegions } from '../../api/regions.js';
+import { getGroupsByRegion, getAdminGroups } from '../../api/signalGroups.js';
+import { getRegion } from '../../api/regions.js';
+import { getMySchools, getSchoolSignalGroups, getDistrictSignalGroups } from '../../api/schools.js';
+import { ApiError } from '../../api/client.js';
+import { isAdmin, isSuperuser } from '../../utils/store.js';
+import toast from '../../components/toast.js';
+import modal from '../../components/modal.js';
 
 let currentFilter = 'pending';
 let adminRegions = [];

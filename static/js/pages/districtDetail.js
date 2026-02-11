@@ -3,13 +3,13 @@
  * Shows district info, schools list, and signal groups.
  */
 
-import { getDistrict, getDistrictMembers, getDistrictSignalGroups, createDistrictSignalGroup, districtToFeature } from '../api/schools.js?v=c49aed9';
-import { createDistrictReport } from '../api/reports.js?v=c49aed9';
-import { initMap, addRegionsLayer, fitToBounds, destroyMap } from '../components/map.js?v=c49aed9';
-import { isAuthenticated, getUser } from '../utils/store.js?v=c49aed9';
-import { navigate } from '../app.js?v=c49aed9';
-import toast from '../components/toast.js?v=c49aed9';
-import modal from '../components/modal.js?v=c49aed9';
+import { getDistrict, getDistrictMembers, getDistrictSignalGroups, createDistrictSignalGroup, districtToFeature } from '../api/schools.js';
+import { createDistrictReport } from '../api/reports.js';
+import { initMap, addRegionsLayer, fitToBounds, destroyMap } from '../components/map.js';
+import { isAuthenticated, getUser } from '../utils/store.js';
+import { navigate } from '../app.js';
+import toast from '../components/toast.js';
+import modal from '../components/modal.js';
 
 let districtId = null;
 let districtData = null;

@@ -2,7 +2,7 @@
  * Membership API client for sub-region membership requests and invitations.
  */
 
-import { get, post, del } from './client.js?v=c49aed9';
+import { get, post, del } from './client.js';
 
 /**
  * Request to join a sub-region
