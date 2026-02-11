@@ -1,0 +1,14 @@
+[
+  {
+    "place_id": 403971531,
+    "display_name": "California, United States",
+    "name": "California",
+    "type": "administrative",
+    "category": "boundary",
+    "addresstype": "state",
+    "lat": "36.7014631",
+    "lon": "-118.7559970",
+    "address": {"state": "California", "country": "United States"},
+    "geojson": {"type": "MultiPolygon", "coordinates": [[[[-124.4,32.5],[-124.4,42.0],[-114.1,42.0],[-114.1,32.5],[-124.4,32.5]]]]}
+  }
+]

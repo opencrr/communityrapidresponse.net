@@ -1,0 +1,61 @@
+# Air configuration for hot reload during development
+# Documentation: https://github.com/air-verse/air
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+  # Command to build the application
+  cmd = "go build -o ./tmp/main ./cmd/server"
+  # Binary file yields from `cmd`
+  bin = "./tmp/main"
+  # Watch these file extensions
+  include_ext = ["go", "tpl", "tmpl", "html"]
+  # Ignore these directories
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "node_modules"]
+  # Ignore files matching these patterns
+  exclude_file = []
+  # Ignore unchanged files
+  exclude_unchanged = false
+  # Follow symlinks
+  follow_symlink = false
+  # Working directory
+  full_bin = ""
+  # Include subdirectories
+  include_dir = []
+  # Kill delay before restarting
+  kill_delay = "0s"
+  # Log file name
+  log = "build-errors.log"
+  # Poll files for changes (useful for Docker)
+  poll = true
+  poll_interval = 500 # ms
+  # Rerun on file change
+  rerun = false
+  rerun_delay = 500
+  # Send interrupt signal before kill
+  send_interrupt = false
+  # Stop running old binary immediately
+  stop_on_error = false
+
+[color]
+  # Customize colors
+  app = ""
+  build = "yellow"
+  main = "magenta"
+  runner = "green"
+  watcher = "cyan"
+
+[log]
+  # Show log time
+  main_only = false
+  time = false
+
+[misc]
+  # Delete tmp directory on exit
+  clean_on_exit = false
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true

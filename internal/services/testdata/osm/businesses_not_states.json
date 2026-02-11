@@ -1,0 +1,26 @@
+[
+  {
+    "place_id": 12345,
+    "display_name": "USA Minimart, Renton, King County, Washington, United States",
+    "name": "USA Minimart",
+    "type": "convenience",
+    "category": "shop",
+    "addresstype": "shop",
+    "lat": "47.4",
+    "lon": "-122.2",
+    "address": {"shop": "USA Minimart", "city": "Renton", "county": "King County", "state": "Washington"},
+    "geojson": {"type": "Point", "coordinates": [-122.2, 47.4]}
+  },
+  {
+    "place_id": 12346,
+    "display_name": "Alaska USA FCU, Kirkland, King County, Washington, United States",
+    "name": "Alaska USA FCU",
+    "type": "atm",
+    "category": "amenity",
+    "addresstype": "amenity",
+    "lat": "47.7",
+    "lon": "-122.2",
+    "address": {"amenity": "Alaska USA FCU", "city": "Kirkland", "county": "King County", "state": "Washington"},
+    "geojson": {"type": "Point", "coordinates": [-122.2, 47.7]}
+  }
+]

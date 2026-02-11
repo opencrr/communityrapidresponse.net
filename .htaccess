@@ -1,0 +1,169 @@
+# Community Rapid Response - Apache Configuration
+# Handles SPA routing and API proxying
+
+# Enable rewrite engine
+RewriteEngine On
+
+# Set base for relative URLs
+RewriteBase /
+
+# ----------------------------------------------------------------------
+# API Proxy - Forward API requests to Go backend
+# ----------------------------------------------------------------------
+
+# Proxy /api/* requests to Go backend on port 8080
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^(.*)$ http://localhost:8080/$1 [P,L]
+
+# Proxy /health endpoint to Go backend
+RewriteCond %{REQUEST_URI} ^/health$
+RewriteRule ^(.*)$ http://localhost:8080/$1 [P,L]
+
+# ----------------------------------------------------------------------
+# Static Files - Serve directly
+# ----------------------------------------------------------------------
+
+# Serve static files directly if they exist
+RewriteCond %{REQUEST_URI} ^/static/
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# Serve templates directly if file exists
+RewriteCond %{REQUEST_URI} ^/templates/
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# Serve favicon and other root-level static files
+RewriteCond %{REQUEST_URI} ^/(favicon\.ico|robots\.txt|sitemap\.xml)$
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+# ----------------------------------------------------------------------
+# SPA Fallback - All other routes serve index.html
+# ----------------------------------------------------------------------
+
+# If the request is not for an existing file or directory
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+# Serve the SPA shell
+RewriteRule ^(.*)$ /templates/index.html [L]
+
+# ----------------------------------------------------------------------
+# Security Headers
+# ----------------------------------------------------------------------
+
+<IfModule mod_headers.c>
+    # Prevent MIME type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Prevent clickjacking
+    Header always set X-Frame-Options "DENY"
+
+    # Enable XSS protection
+    Header always set X-XSS-Protection "1; mode=block"
+
+    # Referrer policy
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Content Security Policy (adjust as needed for Mapbox)
+    # Note: This is a permissive policy for development; tighten for production
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.mapbox.com https://*.mapbox.com blob:; style-src 'self' 'unsafe-inline' https://api.mapbox.com https://*.mapbox.com; img-src 'self' data: blob: https://*.mapbox.com https://api.mapbox.com; connect-src 'self' https://*.mapbox.com https://api.mapbox.com https://events.mapbox.com; worker-src 'self' blob:; child-src blob:; font-src 'self' data:; frame-ancestors 'none';"
+
+    # Remove potentially sensitive headers
+    Header unset X-Powered-By
+    Header unset Server
+</IfModule>
+
+# ----------------------------------------------------------------------
+# Compression
+# ----------------------------------------------------------------------
+
+<IfModule mod_deflate.c>
+    # Compress HTML, CSS, JavaScript, Text, XML and fonts
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE text/javascript
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE application/xml
+    AddOutputFilterByType DEFLATE text/xml
+    AddOutputFilterByType DEFLATE text/plain
+    AddOutputFilterByType DEFLATE image/svg+xml
+    AddOutputFilterByType DEFLATE font/ttf
+    AddOutputFilterByType DEFLATE font/otf
+</IfModule>
+
+# ----------------------------------------------------------------------
+# Caching
+# ----------------------------------------------------------------------
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # Default expiration
+    ExpiresDefault "access plus 1 month"
+
+    # HTML - no cache (for SPA updates)
+    ExpiresByType text/html "access plus 0 seconds"
+
+    # CSS and JavaScript - cache for 1 week (use cache busting in production)
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+    ExpiresByType text/javascript "access plus 1 week"
+
+    # Images - cache for 1 month
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+    ExpiresByType image/x-icon "access plus 1 month"
+
+    # Fonts - cache for 1 month
+    ExpiresByType font/ttf "access plus 1 month"
+    ExpiresByType font/otf "access plus 1 month"
+    ExpiresByType font/woff "access plus 1 month"
+    ExpiresByType font/woff2 "access plus 1 month"
+
+    # JSON/API responses - no cache
+    ExpiresByType application/json "access plus 0 seconds"
+</IfModule>
+
+# ----------------------------------------------------------------------
+# CORS for Development (remove or restrict in production)
+# ----------------------------------------------------------------------
+
+<IfModule mod_headers.c>
+    # Allow credentials for same-origin requests
+    Header set Access-Control-Allow-Credentials "true"
+</IfModule>
+
+# ----------------------------------------------------------------------
+# Error Documents
+# ----------------------------------------------------------------------
+
+# Custom error pages (optional - SPA handles most routing)
+ErrorDocument 404 /templates/index.html
+ErrorDocument 500 /templates/index.html
+
+# ----------------------------------------------------------------------
+# Prevent access to sensitive files
+# ----------------------------------------------------------------------
+
+# Block access to hidden files and directories
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Block access to backup and config files
+<FilesMatch "\.(bak|config|sql|fla|psd|ini|log|sh|inc|swp|dist|env)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Block access to CLAUDE.md and DESIGN.md
+<FilesMatch "^(CLAUDE|DESIGN)\.md$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

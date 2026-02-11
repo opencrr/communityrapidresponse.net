@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+DESIGN.md
+CLAUDE.md
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test and coverage
+coverage.out
+coverage.html
+*.test
+
+# Build artifacts
+bin/
+dist/
+tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files (no need to copy these into container)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Development tools config
+.air.toml
+justfile
+
+# Logs
+*.log
+logs/

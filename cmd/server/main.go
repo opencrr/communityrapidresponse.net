@@ -1,0 +1,345 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	gosentry "github.com/getsentry/sentry-go"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/config"
+	"github.com/opencrr/communityrapidresponse.net/internal/database"
+	"github.com/opencrr/communityrapidresponse.net/internal/handlers"
+	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
+	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
+	"github.com/opencrr/communityrapidresponse.net/internal/services"
+)
+
+// version is set at build time via -ldflags "-X main.version=..."
+// See deploy/digitalocean/scripts/build-linux.sh
+var version = "dev"
+
+func main() {
+	log.Printf("Community Rapid Response %s", version)
+
+	// Load configuration
+	cfg := config.Load()
+
+	// Use build-embedded version as Sentry release if not overridden by env var
+	if cfg.Sentry.Release == "" {
+		cfg.Sentry.Release = version
+	}
+
+	// Validate required configuration
+	if cfg.JWT.Secret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+	// MFA encryption key is only required if MFA is enabled
+	if cfg.MFA.Required {
+		if cfg.MFA.EncryptionKey == "" {
+			log.Fatal("MFA_ENCRYPTION_KEY environment variable is required (32 characters)")
+		}
+		if len(cfg.MFA.EncryptionKey) != 32 {
+			log.Fatalf("MFA_ENCRYPTION_KEY must be exactly 32 characters (got %d)", len(cfg.MFA.EncryptionKey))
+		}
+	} else {
+		log.Println("WARNING: MFA is disabled (MFA_REQUIRED=false). This should only be used in development.")
+	}
+
+	// Initialize Sentry error tracking
+	if err := appSentry.Init(&cfg.Sentry); err != nil {
+		log.Fatalf("Failed to initialize Sentry: %v", err)
+	}
+	defer gosentry.Flush(2 * time.Second)
+
+	// Connect to database
+	db, err := database.New(&cfg.Database)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	log.Println("Connected to database")
+
+	// Initialize repositories
+	userRepo := database.NewUserRepository(db)
+	regionRepo := database.NewRegionRepository(db)
+	verificationRepo := database.NewVerificationRepository(db)
+	vouchRepo := database.NewVouchRepository(db)
+	signalGroupRepo := database.NewSignalGroupRepository(db)
+	inviteLinkProposalRepo := database.NewInviteLinkProposalRepository(db)
+	auditRepo := database.NewAuditRepository(db)
+
+	membershipRepo := database.NewMembershipRepository(db)
+	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, &cfg.Blocklist)
+	deletionProposalRepo := database.NewDeletionProposalRepository(db)
+
+	// User report repository
+	userReportRepo := database.NewUserReportRepository(db)
+
+	// School repositories
+	schoolRepo := database.NewSchoolRepository(db)
+	districtRepo := database.NewSchoolDistrictRepository(db)
+	schoolVouchRepo := database.NewSchoolVouchRepository(db)
+
+	// Start audit log cleanup worker (runs every 24 hours, retains 90 days)
+	auditRepo.StartCleanupWorker(context.Background(), 24*time.Hour, 90*24*time.Hour)
+
+	// Start proposal expiration worker (runs every hour)
+	inviteLinkProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
+
+	// Start membership request expiration worker (runs every hour)
+	membershipRepo.StartExpirationWorker(context.Background(), time.Hour)
+
+	// Start blocklist proposal expiration worker (runs every hour)
+	blocklistProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
+
+	// Initialize services
+	mailService, err := services.NewMailService(cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize mail service: %v", err)
+	}
+	mapboxService := services.NewMapboxService(&cfg.Mapbox)
+
+	// Initialize MFA service only if MFA is required
+	var mfaService *services.MFAService
+	if cfg.MFA.Required {
+		var err error
+		mfaService, err = services.NewMFAService(&cfg.MFA)
+		if err != nil {
+			log.Fatalf("Failed to initialize MFA service: %v", err)
+		}
+	}
+
+	// Configure trusted proxies for IP extraction (must happen before rate limiter use)
+	middleware.SetTrustedProxies(cfg.RateLimit.TrustedProxies)
+
+	// Initialize rate limiter
+	var rateLimiter services.RateLimiter
+	var rateLimitConfig *handlers.RateLimitOptions
+	if cfg.RateLimit.Enabled {
+		if cfg.RateLimit.Backend == "database" {
+			dbLimiter := services.NewDBRateLimiter(db.DB)
+			dbLimiter.StartCleanupWorker(context.Background(), 5*time.Minute, time.Hour)
+			rateLimiter = dbLimiter
+			log.Printf("Rate limiting enabled (database backend): %d requests per %d seconds", cfg.RateLimit.IPLimit, cfg.RateLimit.IPWindowSecs)
+		} else {
+			memLimiter := services.NewInMemoryRateLimiter()
+			memLimiter.StartCleanupWorker(context.Background(), 5*time.Minute, time.Hour)
+			rateLimiter = memLimiter
+			log.Printf("Rate limiting enabled (in-memory backend): %d requests per %d seconds", cfg.RateLimit.IPLimit, cfg.RateLimit.IPWindowSecs)
+		}
+		rateLimitConfig = &handlers.RateLimitOptions{
+			Enabled:    true,
+			Limit:      cfg.RateLimit.IPLimit,
+			WindowSecs: cfg.RateLimit.IPWindowSecs,
+		}
+	} else {
+		rateLimiter = services.NewNoOpRateLimiter()
+		log.Println("WARNING: Rate limiting is disabled")
+	}
+
+	// Initialize email service
+	emailService, err := services.NewEmailService(&cfg.Email)
+	if err != nil {
+		log.Fatalf("Failed to initialize email service: %v", err)
+	}
+	if cfg.Email.Enabled {
+		log.Printf("Email verification enabled via %s backend", emailService.Backend())
+	} else {
+		log.Printf("WARNING: Email verification is disabled (EMAIL_ENABLED=false). Using %s backend for logging.", emailService.Backend())
+	}
+
+	// Initialize notification queue and service
+	notificationQueue := database.NewDatabaseQueue(db)
+	notificationService := services.NewNotificationService(notificationQueue)
+
+	// Initialize email templates
+	appName := "Community Rapid Response"
+	loginURL := cfg.Email.VerificationURL // Reuse email verification URL base
+	if loginURL == "" {
+		loginURL = "http://localhost:3000/login"
+	}
+	emailTemplates := services.NewEmailTemplates(appName, loginURL)
+
+	// Start notification worker
+	notificationWorker := services.NewNotificationWorker(
+		notificationQueue,
+		emailService,
+		emailTemplates,
+		userRepo,
+		regionRepo,
+		&cfg.Notification,
+	)
+	notificationWorker.Start(context.Background())
+
+	// Initialize password reset repository
+	passwordResetRepo := database.NewPasswordResetRepository(db)
+
+	// Initialize middleware
+	jwtAuth := middleware.NewJWTAuth(&cfg.JWT)
+
+	// Derive base URL from login URL for password reset links
+	baseURL := loginURL
+	// Strip trailing path components like /login to get the base URL
+	if idx := len(baseURL) - 1; idx > 0 {
+		for idx > 0 && baseURL[idx] != '/' {
+			idx--
+		}
+		if idx > 0 {
+			baseURL = baseURL[:idx]
+		}
+	}
+
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandlerWithEmailService(
+		db,
+		userRepo,
+		jwtAuth,
+		emailService,
+		cfg.JWT.Secret,
+		cfg.Server.SecureCookies,
+		cfg.MFA.Required,
+		auditRepo,
+		passwordResetRepo,
+		emailTemplates,
+		baseURL,
+	)
+	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
+	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
+	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, inviteLinkProposalRepo, regionRepo, auditRepo, &cfg.Consensus)
+	verificationHandler := handlers.NewVerificationHandler(
+		db,
+		verificationRepo,
+		vouchRepo,
+		userRepo,
+		regionRepo,
+		mailService,
+		mapboxService,
+		auditRepo,
+		cfg.Bootstrap.CooldownEnabled,
+		cfg.Bootstrap.CooldownMinutes,
+	)
+	if cfg.Bootstrap.CooldownEnabled {
+		log.Printf("Bootstrap vouch cooldown enabled: %d minutes", cfg.Bootstrap.CooldownMinutes)
+	} else {
+		log.Println("Bootstrap vouch cooldown disabled")
+	}
+	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, auditRepo)
+	membershipHandler := handlers.NewMembershipHandler(db, membershipRepo, regionRepo, userRepo, auditRepo)
+	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
+		db, blocklistProposalRepo, regionRepo, userRepo, auditRepo,
+		&cfg.Consensus, &cfg.Blocklist,
+	)
+
+	deletionProposalHandler := handlers.NewDeletionProposalHandler(
+		db, deletionProposalRepo, signalGroupRepo, regionRepo, schoolRepo,
+		userRepo, auditRepo, &cfg.Consensus,
+	)
+
+	// Initialize NCES service for lazy-loading district boundaries
+	ncesService := services.NewNCESService()
+
+	// Initialize school handler
+	schoolHandler := handlers.NewSchoolHandler(
+		db, schoolRepo, districtRepo, schoolVouchRepo,
+		signalGroupRepo, inviteLinkProposalRepo, userRepo, auditRepo,
+		ncesService,
+		&cfg.Consensus, cfg.Bootstrap.CooldownEnabled, cfg.Bootstrap.CooldownMinutes,
+	)
+
+	// Initialize user report handler
+	userReportHandler := handlers.NewUserReportHandler(
+		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
+	)
+
+	// Wire notification service to handlers
+	signalGroupHandler.SetNotificationService(notificationService)
+	verificationHandler.SetNotificationService(notificationService)
+	blocklistProposalHandler.SetNotificationService(notificationService)
+	membershipHandler.SetNotificationService(notificationService)
+
+	// Setup CSRF protection
+	csrfConfig := &handlers.CSRFConfig{
+		Enabled:       true,
+		Secret:        cfg.JWT.Secret,
+		SecureCookies: cfg.Server.SecureCookies,
+	}
+
+	// Build Content-Security-Policy directives
+	cspDirectives := "default-src 'self'; " +
+		"script-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
+		"style-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
+		"img-src 'self' data: blob: https://api.mapbox.com; " +
+		"connect-src 'self' https://api.mapbox.com https://events.mapbox.com; " +
+		"worker-src blob:; " +
+		"child-src blob:; " +
+		"object-src 'none'; " +
+		"base-uri 'self'; " +
+		"frame-ancestors 'none'"
+
+	securityConfig := &middleware.SecurityConfig{
+		SecureCookies: cfg.Server.SecureCookies,
+		CSPDirectives: cspDirectives,
+	}
+
+	// Setup router
+	router := handlers.NewRouter(
+		authHandler,
+		mfaHandler,
+		regionHandler,
+		signalGroupHandler,
+		verificationHandler,
+		adminHandler,
+		membershipHandler,
+		blocklistProposalHandler,
+		deletionProposalHandler,
+		schoolHandler,
+		userReportHandler,
+		jwtAuth,
+		rateLimiter,
+		rateLimitConfig,
+		csrfConfig,
+		cfg.CORS.AllowedOrigins,
+		securityConfig,
+	)
+
+	// Create HTTP server
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      router.Setup(),
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("Starting Community Rapid Response server on %s", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server stopped")
+}

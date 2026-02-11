@@ -1,0 +1,14 @@
+[
+  {
+    "place_id": 253956466,
+    "display_name": "Seattle, King County, Washington, United States",
+    "name": "Seattle",
+    "type": "city",
+    "category": "place",
+    "addresstype": "city",
+    "lat": "47.6038321",
+    "lon": "-122.3300624",
+    "address": {"city": "Seattle", "county": "King County", "state": "Washington", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-122.4,47.5],[-122.4,47.7],[-122.2,47.7],[-122.2,47.5],[-122.4,47.5]]]}
+  }
+]

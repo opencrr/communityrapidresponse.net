@@ -1,0 +1,46 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "address.987654321",
+      "type": "Feature",
+      "place_type": ["address"],
+      "text": "Bedford Avenue",
+      "place_name": "123 Bedford Avenue, Brooklyn, New York 11211, United States",
+      "center": [-73.9614, 40.7178],
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-73.9614, 40.7178]
+      },
+      "context": [
+        {
+          "id": "neighborhood.11111",
+          "text": "Williamsburg"
+        },
+        {
+          "id": "locality.22222",
+          "text": "Brooklyn"
+        },
+        {
+          "id": "place.33333",
+          "text": "New York",
+          "short_code": ""
+        },
+        {
+          "id": "district.44444",
+          "text": "Kings County"
+        },
+        {
+          "id": "region.55555",
+          "text": "New York",
+          "short_code": "US-NY"
+        },
+        {
+          "id": "country.66666",
+          "text": "United States",
+          "short_code": "us"
+        }
+      ]
+    }
+  ]
+}

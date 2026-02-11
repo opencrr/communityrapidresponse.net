@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Shield shape -->
+  <path d="M32 2 L58 14 L58 30 Q58 50 32 62 Q6 50 6 30 L6 14 Z" fill="#2563eb" stroke="#1d4ed8" stroke-width="1.5"/>
+  <!-- Three connected people figures -->
+  <!-- Left person -->
+  <circle cx="20" cy="24" r="4.5" fill="#ffffff"/>
+  <path d="M13 38 Q13 31 20 31 Q27 31 27 38" fill="#ffffff" stroke="none"/>
+  <!-- Right person -->
+  <circle cx="44" cy="24" r="4.5" fill="#ffffff"/>
+  <path d="M37 38 Q37 31 44 31 Q51 31 51 38" fill="#ffffff" stroke="none"/>
+  <!-- Center person (slightly raised to show connection/unity) -->
+  <circle cx="32" cy="19" r="4.5" fill="#ffffff"/>
+  <path d="M25 33 Q25 26 32 26 Q39 26 39 33" fill="#ffffff" stroke="none"/>
+  <!-- Connection arc between people -->
+  <path d="M22 36 Q32 42 42 36" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+</svg>

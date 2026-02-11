@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "address.111222333",
+      "type": "Feature",
+      "place_type": ["address"],
+      "text": "Highway 101",
+      "place_name": "1000 Highway 101, Humboldt County, California 95521, United States",
+      "center": [-124.1637, 40.8021],
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-124.1637, 40.8021]
+      },
+      "context": [
+        {
+          "id": "district.30303",
+          "text": "Humboldt County"
+        },
+        {
+          "id": "region.40404",
+          "text": "California",
+          "short_code": "US-CA"
+        },
+        {
+          "id": "country.50505",
+          "text": "United States",
+          "short_code": "us"
+        }
+      ]
+    }
+  ]
+}

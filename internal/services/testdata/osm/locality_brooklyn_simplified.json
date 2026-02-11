@@ -1,0 +1,14 @@
+[
+  {
+    "place_id": 345678901,
+    "display_name": "Brooklyn, Kings County, New York, United States",
+    "name": "Brooklyn",
+    "type": "borough",
+    "category": "place",
+    "addresstype": "suburb",
+    "lat": "40.6501038",
+    "lon": "-73.9495823",
+    "address": {"suburb": "Brooklyn", "county": "Kings County", "state": "New York", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-74.0,40.6],[-74.0,40.7],[-73.8,40.7],[-73.8,40.6],[-74.0,40.6]]]}
+  }
+]

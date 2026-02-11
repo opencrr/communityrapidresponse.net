@@ -1,0 +1,38 @@
+[
+  {
+    "place_id": 394370670,
+    "display_name": "Washington, District of Columbia, United States",
+    "name": "Washington",
+    "type": "city",
+    "category": "place",
+    "addresstype": "city",
+    "lat": "38.8950368",
+    "lon": "-77.0365427",
+    "address": {"city": "Washington", "state": "District of Columbia", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-77.1,38.8],[-77.1,38.9],[-77.0,38.9],[-77.0,38.8],[-77.1,38.8]]]}
+  },
+  {
+    "place_id": 299671221,
+    "display_name": "Washington, United States",
+    "name": "Washington",
+    "type": "administrative",
+    "category": "boundary",
+    "addresstype": "state",
+    "lat": "47.2868352",
+    "lon": "-120.2126139",
+    "address": {"state": "Washington", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-124.7,45.5],[-124.7,49.0],[-116.9,49.0],[-116.9,45.5],[-124.7,45.5]]]}
+  },
+  {
+    "place_id": 292871936,
+    "display_name": "Washington County, Texas, United States",
+    "name": "Washington County",
+    "type": "administrative",
+    "category": "boundary",
+    "addresstype": "county",
+    "lat": "30.2165157",
+    "lon": "-96.4033917",
+    "address": {"county": "Washington County", "state": "Texas", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-96.6,30.0],[-96.6,30.4],[-96.2,30.4],[-96.2,30.0],[-96.6,30.0]]]}
+  }
+]

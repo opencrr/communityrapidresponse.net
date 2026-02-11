@@ -1,0 +1,278 @@
+services:
+  # MariaDB database with spatial extensions
+  db:
+    image: mariadb:11.2
+    container_name: communityrapidresponse-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-communityrapidresponse}
+      MYSQL_USER: ${DB_USER:-communityrapidresponse}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-devpassword}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+      - ./migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - communityrapidresponse
+
+  # Test database (separate instance for testing)
+  db-test:
+    image: mariadb:11.2
+    container_name: communityrapidresponse-db-test
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: testroot
+      MYSQL_DATABASE: communityrapidresponse_test
+      # Allow root access from any host for testing
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      - "${TEST_DB_PORT:-3307}:3306"
+    volumes:
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+      - ./migrations:/migrations:ro
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - communityrapidresponse
+
+  # Go application (development mode with hot reload)
+  app:
+    build:
+      context: .
+      target: development
+    container_name: communityrapidresponse-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-communityrapidresponse}
+      - DB_PASSWORD=${DB_PASSWORD:-devpassword}
+      - DB_NAME=${DB_NAME:-communityrapidresponse}
+      - JWT_SECRET=${JWT_SECRET:-development_secret_key_change_in_production_at_least_32_chars}
+      - JWT_EXPIRATION_HOURS=24
+      - JWT_ISSUER=communityrapidresponse-dev
+      - SECURE_COOKIES=false
+      - MAPBOX_PUBLIC_TOKEN=${MAPBOX_PUBLIC_TOKEN:-}
+      - MAPBOX_SECRET_TOKEN=${MAPBOX_SECRET_TOKEN:-}
+      # Mail provider: lob (recommended) or postgrid
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-lob}
+      # Lob configuration (recommended - 90-day data retention)
+      - LOB_API_KEY=${LOB_API_KEY:-}
+      - LOB_BASE_URL=https://api.lob.com/v1
+      - LOB_RETURN_NAME=${LOB_RETURN_NAME:-Community Rapid Response}
+      - LOB_RETURN_ADDRESS=${LOB_RETURN_ADDRESS:-}
+      - LOB_RETURN_CITY=${LOB_RETURN_CITY:-}
+      - LOB_RETURN_STATE=${LOB_RETURN_STATE:-}
+      - LOB_RETURN_ZIP=${LOB_RETURN_ZIP:-}
+      - LOB_RETURN_COUNTRY=${LOB_RETURN_COUNTRY:-US}
+      # Postgrid configuration (legacy - not recommended)
+      - POSTGRID_ADDVER_API_KEY=${POSTGRID_ADDVER_API_KEY:-}
+      - POSTGRID_ADDVER_BASE_URL=https://api.postgrid.com/v1
+      - POSTGRID_PRINT_API_KEY=${POSTGRID_PRINT_API_KEY:-}
+      - POSTGRID_PRINT_BASE_URL=https://api.postgrid.com/print-mail/v1
+      - POSTGRID_RETURN_NAME=${POSTGRID_RETURN_NAME:-Community Rapid Response}
+      - POSTGRID_RETURN_ADDRESS=${POSTGRID_RETURN_ADDRESS:-}
+      - POSTGRID_RETURN_CITY=${POSTGRID_RETURN_CITY:-}
+      - POSTGRID_RETURN_STATE=${POSTGRID_RETURN_STATE:-}
+      - POSTGRID_RETURN_ZIP=${POSTGRID_RETURN_ZIP:-}
+      - POSTGRID_RETURN_COUNTRY=${POSTGRID_RETURN_COUNTRY:-US}
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+      - MFA_REQUIRED=${MFA_REQUIRED:-true}
+      - MFA_ENCRYPTION_KEY=${MFA_ENCRYPTION_KEY:-01234567890123456789012345678901}
+      - MFA_ISSUER=${MFA_ISSUER:-Community Rapid Response}
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-false}
+      - EMAIL_BACKEND=${EMAIL_BACKEND:-mock}
+      - EMAIL_VERIFICATION_URL=${EMAIL_VERIFICATION_URL:-http://localhost:3000/verify-email}
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-noreply@communityrapidresponse.net}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Community Rapid Response}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      # Bootstrap mode cooldown (disable for development)
+      - BOOTSTRAP_COOLDOWN_ENABLED=${BOOTSTRAP_COOLDOWN_ENABLED:-false}
+      - BOOTSTRAP_COOLDOWN_MINUTES=${BOOTSTRAP_COOLDOWN_MINUTES:-30}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    networks:
+      - communityrapidresponse
+
+  # Test runner container
+  test:
+    build:
+      context: .
+      target: development
+    container_name: communityrapidresponse-test
+    depends_on:
+      db-test:
+        condition: service_healthy
+    environment:
+      - TEST_DB_HOST=db-test
+      - TEST_DB_PORT=3306
+      - TEST_DB_USER=root
+      - TEST_DB_PASSWORD=testroot
+      - TEST_DB_NAME=communityrapidresponse_test
+      - MFA_ENCRYPTION_KEY=test_mfa_key_32_characters_long!
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    working_dir: /app
+    networks:
+      - communityrapidresponse
+    profiles:
+      - test
+
+  # Nginx web server for serving static frontend
+  web:
+    image: nginx:1.25-alpine
+    container_name: communityrapidresponse-web
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/usr/share/nginx/html/static:ro
+      - ./templates:/usr/share/nginx/html/templates:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/templates/index.html"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - communityrapidresponse
+
+  # Nginx web server for test environment (connects to test app)
+  web-test:
+    image: nginx:1.25-alpine
+    container_name: communityrapidresponse-web-test
+    depends_on:
+      - app-test
+    ports:
+      - "${WEB_TEST_PORT:-3001}:80"
+    volumes:
+      - ./nginx.test.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/usr/share/nginx/html/static:ro
+      - ./templates:/usr/share/nginx/html/templates:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/templates/index.html"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - communityrapidresponse
+    profiles:
+      - test
+
+  # Go application for test environment
+  app-test:
+    build:
+      context: .
+      target: development
+    container_name: communityrapidresponse-app-test
+    depends_on:
+      db-test:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - DB_HOST=db-test
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=testroot
+      - DB_NAME=communityrapidresponse_test
+      - JWT_SECRET=test_secret_key_for_testing_purposes_only_32_chars
+      - JWT_EXPIRATION_HOURS=24
+      - JWT_ISSUER=communityrapidresponse-test
+      - MAPBOX_PUBLIC_TOKEN=${MAPBOX_PUBLIC_TOKEN:-}
+      - MAPBOX_SECRET_TOKEN=${MAPBOX_SECRET_TOKEN:-}
+      # Mail provider: lob (recommended) or postgrid
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-lob}
+      # Lob configuration (recommended - 90-day data retention)
+      - LOB_API_KEY=${LOB_API_KEY:-}
+      - LOB_BASE_URL=https://api.lob.com/v1
+      - LOB_RETURN_NAME=${LOB_RETURN_NAME:-Community Rapid Response}
+      - LOB_RETURN_ADDRESS=${LOB_RETURN_ADDRESS:-}
+      - LOB_RETURN_CITY=${LOB_RETURN_CITY:-}
+      - LOB_RETURN_STATE=${LOB_RETURN_STATE:-}
+      - LOB_RETURN_ZIP=${LOB_RETURN_ZIP:-}
+      - LOB_RETURN_COUNTRY=${LOB_RETURN_COUNTRY:-US}
+      # Postgrid configuration (legacy - not recommended)
+      - POSTGRID_ADDVER_API_KEY=${POSTGRID_ADDVER_API_KEY:-}
+      - POSTGRID_ADDVER_BASE_URL=https://api.postgrid.com/v1
+      - POSTGRID_PRINT_API_KEY=${POSTGRID_PRINT_API_KEY:-}
+      - POSTGRID_PRINT_BASE_URL=https://api.postgrid.com/print-mail/v1
+      - POSTGRID_RETURN_NAME=${POSTGRID_RETURN_NAME:-Community Rapid Response}
+      - POSTGRID_RETURN_ADDRESS=${POSTGRID_RETURN_ADDRESS:-}
+      - POSTGRID_RETURN_CITY=${POSTGRID_RETURN_CITY:-}
+      - POSTGRID_RETURN_STATE=${POSTGRID_RETURN_STATE:-}
+      - POSTGRID_RETURN_ZIP=${POSTGRID_RETURN_ZIP:-}
+      - POSTGRID_RETURN_COUNTRY=${POSTGRID_RETURN_COUNTRY:-US}
+      - CORS_ALLOWED_ORIGINS=http://localhost:3001,http://web-test
+      - MFA_ENCRYPTION_KEY=test_mfa_key_32_characters_long!
+      - MFA_ISSUER=Community Rapid Response Test
+      # Bootstrap mode cooldown (disabled for test environment)
+      - BOOTSTRAP_COOLDOWN_ENABLED=false
+      - BOOTSTRAP_COOLDOWN_MINUTES=30
+    ports:
+      - "${APP_TEST_PORT:-8081}:8080"
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    networks:
+      - communityrapidresponse
+    profiles:
+      - test
+
+  # Adminer for database management (optional)
+  adminer:
+    image: adminer:4
+    container_name: communityrapidresponse-adminer
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "${ADMINER_PORT:-8082}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    networks:
+      - communityrapidresponse
+    profiles:
+      - tools
+
+volumes:
+  db_data:
+    name: communityrapidresponse-db-data
+  go_modules:
+    name: communityrapidresponse-go-modules
+
+networks:
+  communityrapidresponse:
+    name: communityrapidresponse-network

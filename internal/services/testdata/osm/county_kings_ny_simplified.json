@@ -1,0 +1,14 @@
+[
+  {
+    "place_id": 324197389,
+    "display_name": "Kings County, New York, United States",
+    "name": "Kings County",
+    "type": "administrative",
+    "category": "boundary",
+    "addresstype": "county",
+    "lat": "40.6501038",
+    "lon": "-73.9495823",
+    "address": {"county": "Kings County", "state": "New York", "country": "United States"},
+    "geojson": {"type": "Polygon", "coordinates": [[[-74.0,40.6],[-74.0,40.7],[-73.8,40.7],[-73.8,40.6],[-74.0,40.6]]]}
+  }
+]

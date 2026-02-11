@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "address.123456789",
+      "type": "Feature",
+      "place_type": ["address"],
+      "text": "Market Street",
+      "place_name": "100 Market Street, San Francisco, California 94105, United States",
+      "center": [-122.3969, 37.7935],
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.3969, 37.7935]
+      },
+      "context": [
+        {
+          "id": "neighborhood.12345",
+          "text": "Financial District"
+        },
+        {
+          "id": "place.23456",
+          "text": "San Francisco",
+          "short_code": ""
+        },
+        {
+          "id": "district.34567",
+          "text": "San Francisco County"
+        },
+        {
+          "id": "region.45678",
+          "text": "California",
+          "short_code": "US-CA"
+        },
+        {
+          "id": "country.67890",
+          "text": "United States",
+          "short_code": "us"
+        }
+      ]
+    }
+  ]
+}

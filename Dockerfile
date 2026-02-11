@@ -1,0 +1,60 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server ./cmd/server
+
+# Development stage with hot reload
+FROM golang:1.24-alpine AS development
+
+WORKDIR /app
+
+# Install development tools
+RUN apk add --no-cache git ca-certificates curl
+RUN go install github.com/air-verse/air@v1.61.5
+
+# Copy go mod files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code (will be overwritten by volume mount)
+COPY . .
+
+# Expose port
+EXPOSE 8080
+
+# Run with hot reload
+CMD ["air", "-c", ".air.toml"]
+
+# Production stage
+FROM alpine:3.19 AS production
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Copy binary from builder
+COPY --from=builder /app/server /app/server
+
+# Create non-root user
+RUN adduser -D -g '' appuser
+USER appuser
+
+# Expose port
+EXPOSE 8080
+
+# Run the application
+CMD ["/app/server"]

@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "address.555666777",
+      "type": "Feature",
+      "place_type": ["address"],
+      "text": "Pike Street",
+      "place_name": "100 Pike Street, Seattle, Washington 98101, United States",
+      "center": [-122.3421, 47.6097],
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.3421, 47.6097]
+      },
+      "context": [
+        {
+          "id": "neighborhood.77777",
+          "text": "Downtown"
+        },
+        {
+          "id": "place.88888",
+          "text": "Seattle",
+          "short_code": ""
+        },
+        {
+          "id": "district.99999",
+          "text": "King County"
+        },
+        {
+          "id": "region.10101",
+          "text": "Washington",
+          "short_code": "US-WA"
+        },
+        {
+          "id": "country.20202",
+          "text": "United States",
+          "short_code": "us"
+        }
+      ]
+    }
+  ]
+}
