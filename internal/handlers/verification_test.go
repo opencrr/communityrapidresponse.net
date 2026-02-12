@@ -102,27 +102,6 @@ func (s *verificationTestSuite) createTestRegion(name string, regionType models.
 	return region
 }
 
-// createTestCityWithHierarchy creates a full state -> county -> city hierarchy for testing
-// Returns the city region and a cleanup function that removes all three regions
-func (s *verificationTestSuite) createTestCityWithHierarchy(cityName, countyName, stateName, createdBy string) (*models.GeographicRegion, func()) {
-	// Create state
-	state := s.createTestRegion(stateName, models.RegionTypeState, nil, createdBy)
-
-	// Create county with state as parent
-	county := s.createTestRegion(countyName, models.RegionTypeCounty, &state.ID, createdBy)
-
-	// Create city with county as parent
-	city := s.createTestRegion(cityName, models.RegionTypeCity, &county.ID, createdBy)
-
-	cleanup := func() {
-		s.cleanupRegions(city.ID)
-		s.cleanupRegions(county.ID)
-		s.cleanupRegions(state.ID)
-	}
-
-	return city, cleanup
-}
-
 func (s *verificationTestSuite) createVerificationRequest(userID, regionID string, code string, status models.VerificationStatus) *models.VerificationRequest {
 	req := &models.VerificationRequest{
 		ID:                uuid.New().String(),
