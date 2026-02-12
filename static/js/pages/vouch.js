@@ -45,8 +45,6 @@ const US_STATES = [
     { code: 'DC', name: 'District of Columbia' },
 ];
 
-const US_STATE_CODES = US_STATES.map(s => s.code);
-
 let verificationStatus = null;
 
 /**

@@ -218,12 +218,13 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		}
 
 		// Check if a city-level or more specific region exists
-		// (existingRegions are ordered: city_block, neighborhood, city, county, state)
+		// (existingRegions are ordered: city_block, neighborhood, locality, city, county, state)
 		var cityOrMoreSpecificRegion *models.RegionSummary
 		for i := range existingRegions {
 			rt := existingRegions[i].RegionType
 			if rt == models.RegionTypeCityBlock ||
 				rt == models.RegionTypeNeighborhood ||
+				rt == models.RegionTypeLocality ||
 				rt == models.RegionTypeCity {
 				cityOrMoreSpecificRegion = &existingRegions[i]
 				break
@@ -588,6 +589,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		rt := existingRegions[i].RegionType
 		if rt == models.RegionTypeCityBlock ||
 			rt == models.RegionTypeNeighborhood ||
+			rt == models.RegionTypeLocality ||
 			rt == models.RegionTypeCity {
 			cityOrMoreSpecificRegion = &existingRegions[i]
 			break
