@@ -54,8 +54,17 @@ const US_STATES = [
  * @param {HTMLElement} container - Container element to render into
  */
 export async function render(container) {
-    // Gate: must be vouch-verified before requesting address verification
-    if (!isVouchVerified()) {
+    // Check verification status first (needed before gate to detect pending postcards)
+    let status = null;
+    try {
+        status = await getVerificationStatus();
+    } catch (error) {
+        console.error('Failed to get verification status:', error);
+    }
+
+    // Gate: must be vouch-verified before requesting NEW address verification.
+    // Allow users with an existing pending postcard to enter their code.
+    if (!isVouchVerified() && !status?.pending_request) {
         container.innerHTML = `
             <div class="page">
                 <div class="page__container" style="max-width: 600px;">
@@ -81,14 +90,6 @@ export async function render(container) {
         return;
     }
 
-    // Check verification status first
-    let status = null;
-    try {
-        status = await getVerificationStatus();
-    } catch (error) {
-        console.error('Failed to get verification status:', error);
-    }
-
     // Fetch available regions
     try {
         availableRegions = await getRegions();
@@ -106,7 +107,9 @@ export async function render(container) {
                 <div class="page__header text-center">
                     <h1 class="page__title">Verify Your Address</h1>
                     <p class="page__subtitle">
-                        Prove your residency to become a community admin. You're already vouch-verified with read-only access.
+                        ${isVouchVerified()
+                            ? 'Prove your residency to become a community admin. You\'re already vouch-verified with read-only access.'
+                            : 'Enter your postcard code to complete address verification. Get vouched by community members to access Signal groups.'}
                     </p>
                 </div>
 
