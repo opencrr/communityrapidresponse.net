@@ -43,16 +43,19 @@ export async function getVerificationStatus() {
 }
 
 /**
- * Request vouch verification by specifying city and state
- * Creates a pending user_region entry for the matching region
- * @param {string} city - City name to request vouch for
- * @param {string} state - State code (2-letter) to request vouch for
+ * Request vouch verification by providing an address
+ * Address is geocoded to identify the community and is never stored
+ * @param {Object} address - Address object
+ * @param {string} address.line1 - Street address
+ * @param {string} address.city - City
+ * @param {string} address.state - State
+ * @param {string} address.postal_code - ZIP/postal code
+ * @param {string} [address.line2] - Unit/apartment number
  * @returns {Promise<Object>} Vouch request result with region info
  */
-export async function requestVouchVerification(city, state) {
+export async function requestVouchVerification(address) {
     const response = await post('/verification/vouch/request', {
-        city,
-        state,
+        address,
     });
     return response;
 }

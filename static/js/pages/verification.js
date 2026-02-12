@@ -13,6 +13,7 @@ import {
 import { getRegions } from '../api/regions.js';
 import { ApiError } from '../api/client.js';
 import { getCurrentUser } from '../api/auth.js';
+import { isVouchVerified } from '../utils/store.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
 import { navigate } from '../app.js';
@@ -53,6 +54,33 @@ const US_STATES = [
  * @param {HTMLElement} container - Container element to render into
  */
 export async function render(container) {
+    // Gate: must be vouch-verified before requesting address verification
+    if (!isVouchVerified()) {
+        container.innerHTML = `
+            <div class="page">
+                <div class="page__container" style="max-width: 600px;">
+                    <div class="page__header text-center">
+                        <h1 class="page__title">Address Verification</h1>
+                    </div>
+                    <div class="card">
+                        <div class="card__body text-center" style="padding: var(--space-8);">
+                            <div style="font-size: 48px; margin-bottom: var(--space-4);">&#x1F91D;</div>
+                            <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-3);">
+                                Vouch Verification Required
+                            </h2>
+                            <p style="color: var(--color-gray-600); margin-bottom: var(--space-4);">
+                                You must be vouched by community members before requesting address verification.
+                                Address verification upgrades you to an admin.
+                            </p>
+                            <a href="/vouch" class="btn btn--primary" data-link>Go to Vouch Verification</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
     // Check verification status first
     let status = null;
     try {
@@ -78,7 +106,7 @@ export async function render(container) {
                 <div class="page__header text-center">
                     <h1 class="page__title">Verify Your Address</h1>
                     <p class="page__subtitle">
-                        Prove your residency to access local Signal groups. Combined with vouch verification, you can become a community admin.
+                        Prove your residency to become a community admin. You're already vouch-verified with read-only access.
                     </p>
                 </div>
 

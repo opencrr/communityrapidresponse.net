@@ -154,13 +154,13 @@ export function isVouchVerified() {
 }
 
 /**
- * Check if user has any verification (read-only access to groups)
- * Either postcard OR vouch verification grants read-only access
+ * Check if user has read access to Signal groups
+ * Only vouch verification grants read-only access (postcard alone does not)
  * Superusers always have read access
  * @returns {boolean}
  */
 export function hasReadAccess() {
-    return isSuperuser() || isPostcardVerified() || isVouchVerified();
+    return isSuperuser() || isVouchVerified();
 }
 
 /**
@@ -221,29 +221,29 @@ export function getVerificationStatus() {
             canRead: true,
             isSuperuser: false,
         };
-    } else if (postcardVerified) {
-        return {
-            level: 'postcard',
-            label: 'Postcard Verified',
-            description: 'Read-only access - needs vouch verification for admin rights',
-            canAdmin: false,
-            canRead: true,
-            isSuperuser: false,
-        };
     } else if (vouchVerified) {
         return {
             level: 'vouched',
             label: 'Vouch Verified',
-            description: 'Read-only access - needs postcard verification for admin rights',
+            description: 'Read-only access — verify your address to become an admin',
             canAdmin: false,
             canRead: true,
+            isSuperuser: false,
+        };
+    } else if (postcardVerified) {
+        return {
+            level: 'postcard',
+            label: 'Postcard Verified',
+            description: 'Address verified — get vouched by community members to access Signal groups',
+            canAdmin: false,
+            canRead: false,
             isSuperuser: false,
         };
     } else {
         return {
             level: 'unverified',
             label: 'Unverified',
-            description: 'Verify your address or get vouched to access groups',
+            description: 'Enter your address and get vouched to access groups',
             canAdmin: false,
             canRead: false,
             isSuperuser: false,

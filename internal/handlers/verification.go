@@ -79,10 +79,17 @@ func (h *VerificationHandler) SetNotificationService(svc NotificationServiceInte
 }
 
 // RequestPostcardVerification handles POST /api/v1/verification/postcard/request
+// Requires vouch verification first — postcard upgrades a vouched user to admin.
 func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	if !claims.VouchVerified {
+		writeError(w, http.StatusForbidden, "vouch_required",
+			"You must be vouch-verified before requesting address verification")
 		return
 	}
 
@@ -535,7 +542,8 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 }
 
 // RequestVouchVerification handles POST /api/v1/verification/vouch/request
-// Creates a pending user_region entry for a city where the user wants to be vouched
+// Accepts an address, geocodes it to identify the community, creates a pending user_region entry.
+// Address is used only for geocoding and is never stored.
 func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -549,29 +557,64 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		return
 	}
 
-	// Validate required fields
-	if req.City == "" || req.State == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "City and state are required")
+	// Validate address fields
+	if req.Address.Line1 == "" || req.Address.City == "" || req.Address.State == "" || req.Address.PostalCode == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "Complete address is required (street, city, state, postal code)")
 		return
 	}
 
-	// Normalize state to uppercase abbreviation
-	state := strings.ToUpper(strings.TrimSpace(req.State))
-	city := strings.TrimSpace(req.City)
-
-	// Find the city region (case-insensitive)
-	region, err := h.regionRepo.GetCityByNameAndState(r.Context(), city, state)
+	// Geocode address with Mapbox (address in memory only)
+	geocodeResult, err := h.mapboxService.GeocodeAddress(r.Context(), &req.Address)
 	if err != nil {
-		if errors.Is(err, database.ErrRegionNotFound) {
-			writeError(w, http.StatusNotFound, "region_not_found",
-				"No community found for "+city+", "+state+". A verified user must create the community first.")
+		log.Printf("ERROR: Mapbox geocoding failed: %v", err)
+		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
+		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
+		return
+	}
+
+	// Determine or create the region for this address
+	var regionID string
+	var regionCreated bool
+
+	existingRegions, err := h.regionRepo.GetRegionsContainingPoint(r.Context(), geocodeResult.Latitude, geocodeResult.Longitude)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to find regions", "verification", "request_vouch")
+		return
+	}
+
+	// Check if a city-level or more specific region exists
+	var cityOrMoreSpecificRegion *models.RegionSummary
+	for i := range existingRegions {
+		rt := existingRegions[i].RegionType
+		if rt == models.RegionTypeCityBlock ||
+			rt == models.RegionTypeNeighborhood ||
+			rt == models.RegionTypeCity {
+			cityOrMoreSpecificRegion = &existingRegions[i]
+			break
+		}
+	}
+
+	if cityOrMoreSpecificRegion != nil {
+		regionID = cityOrMoreSpecificRegion.ID
+	} else {
+		// No city-level region exists - create the hierarchy
+		createdRegionID, err := h.createRegionHierarchy(r.Context(), geocodeResult, &req.Address, claims.UserID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to create region", "verification", "create_hierarchy")
 			return
 		}
-		writeServerError(w, r, err, "Failed to find region", "verification", "request_vouch")
+		regionID = createdRegionID
+		regionCreated = true
+	}
+
+	// Get region details for response
+	region, err := h.regionRepo.GetByID(r.Context(), regionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get region details", "verification", "request_vouch")
 		return
 	}
 
-	// Wrap bootstrap check + duplicate check + create in a transaction
+	// Check bootstrap mode and create pending entry
 	var bootstrapMode bool
 	var adminCount int
 	var userRegionID string
@@ -581,20 +624,14 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		var errCode, errMsg string
 
 		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			// Check bootstrap mode within transaction
 			var err error
-			bootstrapMode, adminCount, err = h.regionRepo.IsRegionInBootstrapModeTx(r.Context(), tx, region.ID)
+			bootstrapMode, adminCount, err = h.regionRepo.IsRegionInBootstrapModeTx(r.Context(), tx, regionID)
 			if err != nil {
 				return err
 			}
-			if bootstrapMode && !claims.PostcardVerified {
-				httpStatus = http.StatusForbidden
-				errCode = "bootstrap_requires_postcard"
-				return database.ErrRateLimited // Sentinel to break out
-			}
 
 			// Check for existing membership with lock
-			existing, err := h.regionRepo.GetUserRegionForUpdate(r.Context(), tx, claims.UserID, region.ID)
+			existing, err := h.regionRepo.GetUserRegionForUpdate(r.Context(), tx, claims.UserID, regionID)
 			if err != nil {
 				return err
 			}
@@ -608,23 +645,14 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 					errCode = "already_member"
 					errMsg = "You are already a verified member of this region"
 				}
-				return database.ErrPendingExists // Sentinel to break out
+				return database.ErrPendingExists
 			}
 
 			// Create pending entry
-			userRegionID, err = h.regionRepo.AddUserToRegionPendingTx(r.Context(), tx, claims.UserID, region.ID)
+			userRegionID, err = h.regionRepo.AddUserToRegionPendingTx(r.Context(), tx, claims.UserID, regionID)
 			return err
 		})
 		if txErr != nil {
-			if errors.Is(txErr, database.ErrRateLimited) {
-				writeJSON(w, http.StatusForbidden, map[string]interface{}{
-					"error":          errCode,
-					"message":        "This region is in bootstrap mode. Please complete postcard verification first, then you'll be automatically eligible for vouches.",
-					"bootstrap_mode": true,
-					"admin_count":    adminCount,
-				})
-				return
-			}
 			if errors.Is(txErr, database.ErrPendingExists) {
 				writeError(w, httpStatus, errCode, errMsg)
 				return
@@ -635,21 +663,12 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	} else {
 		// Fallback for when db is not available (e.g., tests)
 		var err error
-		bootstrapMode, adminCount, err = h.regionRepo.IsRegionInBootstrapMode(r.Context(), region.ID)
+		bootstrapMode, adminCount, err = h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to check region status", "verification", "request_vouch")
 			return
 		}
-		if bootstrapMode && !claims.PostcardVerified {
-			writeJSON(w, http.StatusForbidden, map[string]interface{}{
-				"error":          "bootstrap_requires_postcard",
-				"message":        "This region is in bootstrap mode. Please complete postcard verification first, then you'll be automatically eligible for vouches.",
-				"bootstrap_mode": true,
-				"admin_count":    adminCount,
-			})
-			return
-		}
-		existing, err := h.regionRepo.GetUserRegion(r.Context(), claims.UserID, region.ID)
+		existing, err := h.regionRepo.GetUserRegion(r.Context(), claims.UserID, regionID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to check existing membership", "verification", "request_vouch")
 			return
@@ -662,39 +681,57 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 			writeError(w, http.StatusConflict, "already_member", "You are already a verified member of this region")
 			return
 		}
-		userRegionID, err = h.regionRepo.AddUserToRegionPending(r.Context(), claims.UserID, region.ID)
+		userRegionID, err = h.regionRepo.AddUserToRegionPending(r.Context(), claims.UserID, regionID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to create vouch request", "verification", "request_vouch")
 			return
 		}
 	}
 
+	// Address is now discarded from memory - NEVER written to database
+
 	// Audit log: vouch requested
 	if h.auditRepo != nil {
 		resourceType := "region"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionVouchRequested, &resourceType, &region.ID, map[string]interface{}{
-			"region_name": region.Name,
-			"city":        city,
-			"state":       state,
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionVouchRequested, &resourceType, &regionID, map[string]interface{}{
+			"region_name":    region.Name,
+			"region_created": regionCreated,
 		}), "vouch_requested")
 	}
 
-	// Determine vouch requirement based on bootstrap mode (already checked earlier)
+	// Determine vouch requirement based on bootstrap mode
 	vouchesRequired := requiredVouchesForTier2
 	if bootstrapMode {
 		vouchesRequired = bootstrapVouchesRequired
 	}
 
+	var regionInfo *models.RegionInfo
+	if region != nil {
+		regionInfo = &models.RegionInfo{
+			ID:      region.ID,
+			Name:    region.Name,
+			Type:    string(region.RegionType),
+			Created: regionCreated,
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, models.VouchVerificationResponse{
 		UserRegionID:    userRegionID,
-		RegionID:        region.ID,
+		RegionID:        regionID,
 		RegionName:      region.Name,
 		Status:          "pending",
 		VouchesNeeded:   vouchesRequired,
-		Message:         fmt.Sprintf("Vouch request created. You need %d verified users from this region to vouch for you.", vouchesRequired),
+		Message:         fmt.Sprintf("Vouch request created. You need %d community members to vouch for you.", vouchesRequired),
 		BootstrapMode:   bootstrapMode,
 		AdminCount:      adminCount,
 		VouchesRequired: vouchesRequired,
+		PrivacyNotice:   "Your address was used only to identify your community and was not stored.",
+		DetectedBoundary: &models.BoundaryInfo{
+			Type:  geocodeResult.BoundaryType,
+			Name:  geocodeResult.BoundaryName,
+			State: geocodeResult.BoundaryState,
+		},
+		Region: regionInfo,
 	})
 }
 
@@ -771,22 +808,8 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		if pendingRegion != nil {
 			regionID = pendingRegion.ID
 		} else {
-			// No pending request - check if user has a verified region (bootstrap flow)
-			// Postcard-verified users with verified status can receive vouches
-			if vouchee.PostcardVerified && !vouchee.VouchVerified {
-				verifiedRegion, err := h.regionRepo.GetUserVerifiedRegion(r.Context(), vouchedUserID)
-				if err != nil {
-					writeServerError(w, r, err, "Failed to check verified region", "verification", "vouch_for_user")
-					return
-				}
-				if verifiedRegion != nil {
-					regionID = verifiedRegion.ID
-				}
-			}
-			if regionID == "" {
-				writeError(w, http.StatusBadRequest, "no_vouch_request", "User has not requested vouch verification for any region")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "no_vouch_request", "User has not requested vouch verification for any region")
+			return
 		}
 	}
 
@@ -805,13 +828,8 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 
 	// Check voucher eligibility based on mode (using fresh DB values, not JWT claims)
 	if bootstrapMode {
-		// Bootstrap mode: only require postcard verification to vouch
-		if !voucher.PostcardVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Only postcard-verified users can vouch in bootstrap mode")
-			return
-		}
-
-		// Bootstrap mode: enforce cooldown between vouches from same user (if enabled)
+		// Bootstrap mode: any region member can vouch (like schools bootstrap model)
+		// Cooldown still enforced to prevent abuse
 		if h.bootstrapCooldownEnabled {
 			lastVouchTime, err := h.vouchRepo.GetLastVouchTimeByVoucher(r.Context(), claims.UserID)
 			if err != nil {
@@ -834,7 +852,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Normal mode: require BOTH postcard AND vouch verification (fully verified / admin status)
 		if !voucher.PostcardVerified || !voucher.VouchVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Only fully verified users (both postcard and vouch verified) can vouch for others")
+			writeError(w, http.StatusForbidden, "forbidden", "Only fully verified admins can vouch for others")
 			return
 		}
 	}
@@ -875,32 +893,13 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify vouchee is eligible for vouch verification in this region
-	// Two valid cases:
-	// 1. User has a pending vouch request (traditional flow)
-	// 2. User is postcard-verified with verified user_region but not yet vouch-verified (bootstrap flow)
-	voucheeHasPendingRequest := false
-	voucheeIsVerifiedPostcardUser := false
-
+	// User must have a pending vouch request (created via address submission)
 	pendingRequest, err := h.regionRepo.GetUserRegionByStatus(r.Context(), vouchedUserID, regionID, string(models.UserRegionStatusPending))
 	if err != nil {
 		writeServerError(w, r, err, "Failed to check vouch request status", "verification", "vouch_for_user")
 		return
 	}
-	if pendingRequest != nil {
-		voucheeHasPendingRequest = true
-	} else {
-		// Check if user is a postcard-verified user with verified status who needs vouch verification
-		verifiedRegion, err := h.regionRepo.GetUserRegionByStatus(r.Context(), vouchedUserID, regionID, string(models.UserRegionStatusVerified))
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check user region status", "verification", "vouch_for_user")
-			return
-		}
-		if verifiedRegion != nil && vouchee.PostcardVerified && !vouchee.VouchVerified {
-			voucheeIsVerifiedPostcardUser = true
-		}
-	}
-
-	if !voucheeHasPendingRequest && !voucheeIsVerifiedPostcardUser {
+	if pendingRequest == nil {
 		writeError(w, http.StatusBadRequest, "not_eligible", "User is not eligible for vouch verification in this region")
 		return
 	}
@@ -956,18 +955,13 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 
+				// Admin requires both postcard and vouch verification
+				// Normally postcard comes after vouch, but migrated users may already have postcard
 				isAdmin := vouchee.PostcardVerified
 
-				if voucheeHasPendingRequest {
-					if err := h.regionRepo.UpgradeUserRegionToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
-						log.Printf("ERROR: Failed to upgrade user_region: %v", err)
-						_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region")
-					}
-				} else if voucheeIsVerifiedPostcardUser && isAdmin {
-					if err := h.regionRepo.SetUserRegionAdminTx(r.Context(), tx, vouchedUserID, regionID, true); err != nil {
-						log.Printf("ERROR: Failed to set user_region admin status: %v", err)
-						_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "set_admin_status")
-					}
+				if err := h.regionRepo.UpgradeUserRegionToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
+					log.Printf("ERROR: Failed to upgrade user_region: %v", err)
+					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region")
 				}
 			}
 
@@ -1018,12 +1012,9 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			autoUpgraded = true
 			_ = h.userRepo.SetVouchVerified(r.Context(), vouchedUserID, true)
 			_ = h.userRepo.UpdateVerificationTier(r.Context(), vouchedUserID, models.TierVouched)
-			isAdmin := vouchee.PostcardVerified
-			if voucheeHasPendingRequest {
-				_ = h.regionRepo.UpgradeUserRegionToVerified(r.Context(), vouchedUserID, regionID, isAdmin)
-			} else if voucheeIsVerifiedPostcardUser && isAdmin {
-				_ = h.regionRepo.SetUserRegionAdmin(r.Context(), vouchedUserID, regionID, true)
-			}
+			// Admin requires both postcard and vouch verification
+			// Normally postcard comes after vouch, but migrated users may already have postcard
+			_ = h.regionRepo.UpgradeUserRegionToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified)
 		}
 	}
 
@@ -1149,12 +1140,8 @@ func (h *VerificationHandler) GetPendingVouchRequests(w http.ResponseWriter, r *
 	isFullAdmin := user.PostcardVerified && user.VouchVerified
 
 	// If not a full admin, check if they can vouch in bootstrap mode
+	// In bootstrap mode, any region member can vouch
 	if !isFullAdmin {
-		if !user.PostcardVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Postcard verification required")
-			return
-		}
-
 		// Check if user is in any region that's in bootstrap mode
 		regions, err := h.regionRepo.ListForUser(r.Context(), claims.UserID)
 		if err != nil || len(regions) == 0 {
@@ -1173,7 +1160,7 @@ func (h *VerificationHandler) GetPendingVouchRequests(w http.ResponseWriter, r *
 		}
 
 		if !inBootstrapRegion {
-			writeError(w, http.StatusForbidden, "forbidden", "Admin access required (or postcard verification in a bootstrap mode region)")
+			writeError(w, http.StatusForbidden, "forbidden", "Admin access required (or membership in a bootstrap mode region)")
 			return
 		}
 	}
@@ -1184,8 +1171,7 @@ func (h *VerificationHandler) GetPendingVouchRequests(w http.ResponseWriter, r *
 		// Full admins use the standard query (regions where they're admin)
 		pending, err = h.regionRepo.GetPendingVouchUsersForAdmin(r.Context(), claims.UserID)
 	} else {
-		// Postcard-only users in bootstrap mode use the bootstrap query
-		// (regions where they're a member and region is in bootstrap mode)
+		// Members in bootstrap mode use the bootstrap query
 		pending, err = h.regionRepo.GetPendingVouchUsersForBootstrapMode(r.Context(), claims.UserID)
 	}
 
@@ -1278,50 +1264,6 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 			response["bootstrap_mode"] = bootstrapMode
 			response["admin_count"] = adminCount
 			response["vouches_required"] = vouchesRequired
-		}
-	} else if user.PostcardVerified && !user.VouchVerified {
-		// Postcard-verified user without vouch verification - they're automatically waiting for vouches
-		// in their verified region (no need to manually request)
-		regions, err := h.regionRepo.ListForUser(r.Context(), claims.UserID)
-		if err == nil && len(regions) > 0 {
-			// Use the last region (most specific) as their vouch region
-			// ListForUser orders by region_type: state=1, county=2, city=3, etc.
-			vouchRegion := regions[len(regions)-1]
-			vouchCount, _ := h.vouchRepo.CountVouchesForUser(r.Context(), claims.UserID, vouchRegion.ID)
-
-			// Check bootstrap mode for this region to determine threshold
-			bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), vouchRegion.ID)
-			vouchesRequired := requiredVouchesForTier2
-			if err == nil && bootstrapMode {
-				vouchesRequired = bootstrapVouchesRequired
-			}
-
-			// Auto-upgrade if user now meets the threshold (e.g., region exited bootstrap mode)
-			if vouchCount >= vouchesRequired {
-				if err := h.userRepo.SetVouchVerified(r.Context(), claims.UserID, true); err != nil {
-					log.Printf("ERROR: Failed to auto-upgrade vouch verification: %v", err)
-					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "auto_upgrade_vouch")
-				} else {
-					log.Printf("INFO: Auto-upgraded user %s to vouch-verified (had %d vouches, needed %d)", claims.UserID, vouchCount, vouchesRequired)
-					// Refresh user data and update response
-					user, _ = h.userRepo.GetByID(r.Context(), claims.UserID)
-					response["vouch_verified"] = true
-					response["verification_tier"] = user.VerificationTier
-				}
-			}
-
-			response["pending_vouch_region"] = map[string]interface{}{
-				"id":   vouchRegion.ID,
-				"name": vouchRegion.Name,
-			}
-			response["vouch_count"] = vouchCount
-			response["auto_eligible"] = true // Indicates they didn't need to request, already eligible
-
-			if err == nil {
-				response["bootstrap_mode"] = bootstrapMode
-				response["admin_count"] = adminCount
-				response["vouches_required"] = vouchesRequired
-			}
 		}
 	} else {
 		// No pending vouch region - check if user is in any region to determine bootstrap mode

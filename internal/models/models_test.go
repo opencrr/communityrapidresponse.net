@@ -12,8 +12,8 @@ func TestVerificationTier(t *testing.T) {
 		expected int
 	}{
 		{TierUnverified, 0},
-		{TierPostcard, 1},
-		{TierVouched, 2},
+		{TierVouched, 1},
+		{TierPostcard, 2},
 	}
 
 	for _, tt := range tests {

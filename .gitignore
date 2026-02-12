@@ -59,3 +59,6 @@ build-errors.log
 
 # Compiled server binary
 /server
+
+# Compiled seed schools binary
+/seed-schools

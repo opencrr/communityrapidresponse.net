@@ -817,9 +817,13 @@ func TestCSRF_E2E_RegisterLoginAndAuthenticatedAction(t *testing.T) {
 	}
 
 	// Step 4: Authenticated POST WITHOUT CSRF header — should fail
-	resp4 := suite.doRequest(client, "POST", "/api/v1/verification/vouch/request", map[string]string{
-		"city":  "Test City",
-		"state": "TS",
+	resp4 := suite.doRequest(client, "POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+		"address": map[string]string{
+			"line1":       "123 Main St",
+			"city":        "Test City",
+			"state":       "TS",
+			"postal_code": "12345",
+		},
 	}, jwtToken)
 	defer func() { _ = resp4.Body.Close() }()
 
@@ -828,9 +832,13 @@ func TestCSRF_E2E_RegisterLoginAndAuthenticatedAction(t *testing.T) {
 	}
 
 	// Step 5: Authenticated POST WITH valid CSRF header — should pass CSRF check
-	resp5 := suite.doRequestWithCSRF(client, "POST", "/api/v1/verification/vouch/request", map[string]string{
-		"city":  "Test City",
-		"state": "TS",
+	resp5 := suite.doRequestWithCSRF(client, "POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+		"address": map[string]string{
+			"line1":       "123 Main St",
+			"city":        "Test City",
+			"state":       "TS",
+			"postal_code": "12345",
+		},
 	}, jwtToken)
 	defer func() { _ = resp5.Body.Close() }()
 

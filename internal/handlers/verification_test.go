@@ -286,7 +286,7 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 	defer suite.cleanup(user.ID)
 	defer suite.cleanupRegions(region.ID)
 
-	t.Run("successful postcard verification request", func(t *testing.T) {
+	t.Run("postcard request requires vouch verification", func(t *testing.T) {
 		suite.postgridService.Reset()
 		suite.mapboxService.Reset()
 
@@ -308,6 +308,43 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 			UserID:           user.ID,
 			Email:            user.Email,
 			VerificationTier: models.TierUnverified,
+			VouchVerified:    false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 for non-vouch-verified user, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("successful postcard verification request", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.mapboxService.Reset()
+
+		body := map[string]interface{}{
+			"region_id": region.ID,
+			"address": map[string]string{
+				"line1":       "123 Main St",
+				"city":        "San Francisco",
+				"state":       "CA",
+				"postal_code": "94102",
+			},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		// Vouch-verified user (postcard requires vouch first)
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -384,7 +421,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -416,7 +454,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -455,7 +494,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -496,7 +536,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -544,7 +585,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           rateLimitUser.ID,
 			Email:            rateLimitUser.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -605,7 +647,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           rateLimitUser.ID,
 			Email:            rateLimitUser.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -647,7 +690,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -703,7 +747,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           sendFailUser.ID,
 			Email:            sendFailUser.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -754,7 +799,8 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -1768,14 +1814,27 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@vouchreqtest.com'")
 
 	user := suite.createTestUser("vouchreq_user", models.TierUnverified)
-	// Create full hierarchy: Oregon (state) -> Multnomah County (county) -> Portland (city)
-	region, cleanupHierarchy := suite.createTestCityWithHierarchy("Portland", "Multnomah County", "Oregon", user.ID)
+
+	// Create full hierarchy with unique geometry in rural Montana area (47.0, -110.0)
+	// This avoids interference from other test regions that share the default SF polygon.
+	stateGeoJSON := `{"type":"Polygon","coordinates":[[[-112.0,45.0],[-108.0,45.0],[-108.0,49.0],[-112.0,49.0],[-112.0,45.0]]]}`
+	vouchState := suite.createTestRegionWithCustomGeometry("VouchReq Oregon", models.RegionTypeState, nil, user.ID, stateGeoJSON)
+
+	countyGeoJSON := `{"type":"Polygon","coordinates":[[[-111.0,46.0],[-109.0,46.0],[-109.0,48.0],[-111.0,48.0],[-111.0,46.0]]]}`
+	vouchCounty := suite.createTestRegionWithCustomGeometry("VouchReq Multnomah County", models.RegionTypeCounty, &vouchState.ID, user.ID, countyGeoJSON)
+
+	cityGeoJSON := `{"type":"Polygon","coordinates":[[[-110.5,46.5],[-109.5,46.5],[-109.5,47.5],[-110.5,47.5],[-110.5,46.5]]]}`
+	region := suite.createTestRegionWithCustomGeometry("VouchReq Portland", models.RegionTypeCity, &vouchCounty.ID, user.ID, cityGeoJSON)
 
 	// Exit bootstrap mode so unverified users can request vouch verification
 	adminIDs := suite.exitBootstrapMode(region.ID)
 
 	defer suite.cleanup(user.ID)
-	defer cleanupHierarchy()
+	defer func() {
+		suite.cleanupRegions(region.ID)
+		suite.cleanupRegions(vouchCounty.ID)
+		suite.cleanupRegions(vouchState.ID)
+	}()
 	defer func() {
 		for _, id := range adminIDs {
 			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", id)
@@ -1783,12 +1842,30 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 		}
 	}()
 
-	t.Run("successful vouch request", func(t *testing.T) {
+	// Helper to build address payload for vouch request
+	makeAddressPayload := func(line1, city, state, postalCode string) []byte {
 		body := map[string]interface{}{
-			"city":  "Portland",
-			"state": "Oregon",
+			"address": map[string]interface{}{
+				"line1":       line1,
+				"city":        city,
+				"state":       state,
+				"postal_code": postalCode,
+			},
 		}
 		bodyBytes, _ := json.Marshal(body)
+		return bodyBytes
+	}
+
+	t.Run("successful vouch request", func(t *testing.T) {
+		// Configure mock Mapbox to return coordinates within the test city polygon
+		suite.mapboxService.DefaultLatitude = 47.0
+		suite.mapboxService.DefaultLongitude = -110.0
+		defer func() {
+			suite.mapboxService.DefaultLatitude = 37.7749
+			suite.mapboxService.DefaultLongitude = -122.4194
+		}()
+
+		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
 		req := httptest.NewRequest("POST", "/api/v1/verification/vouch/request", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1817,47 +1894,28 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 		if resp["region_id"] != region.ID {
 			t.Errorf("Expected region_id '%s', got %v", region.ID, resp["region_id"])
 		}
+		if resp["privacy_notice"] == nil || resp["privacy_notice"] == "" {
+			t.Error("Expected privacy_notice in response")
+		}
 
 		// Cleanup
 		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID)
 	})
 
-	t.Run("region not found fails", func(t *testing.T) {
-		body := map[string]interface{}{
-			"city":  "NonexistentCity",
-			"state": "XX",
-		}
-		bodyBytes, _ := json.Marshal(body)
-
-		req := httptest.NewRequest("POST", "/api/v1/verification/vouch/request", bytes.NewReader(bodyBytes))
-		req.Header.Set("Content-Type", "application/json")
-
-		claims := &middleware.Claims{
-			UserID:           user.ID,
-			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
-		}
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-
-		rec := httptest.NewRecorder()
-		suite.handler.RequestVouchVerification(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
 	t.Run("duplicate pending request fails", func(t *testing.T) {
+		// Configure mock Mapbox to return coordinates within the test city polygon
+		suite.mapboxService.DefaultLatitude = 47.0
+		suite.mapboxService.DefaultLongitude = -110.0
+		defer func() {
+			suite.mapboxService.DefaultLatitude = 37.7749
+			suite.mapboxService.DefaultLongitude = -122.4194
+		}()
+
 		// Create initial pending request
 		suite.addUserToRegionPending(user.ID, region.ID)
 		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID) }()
 
-		body := map[string]interface{}{
-			"city":  "Portland",
-			"state": "Oregon",
-		}
-		bodyBytes, _ := json.Marshal(body)
+		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
 		req := httptest.NewRequest("POST", "/api/v1/verification/vouch/request", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1879,15 +1937,19 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 	})
 
 	t.Run("already verified member fails", func(t *testing.T) {
+		// Configure mock Mapbox to return coordinates within the test city polygon
+		suite.mapboxService.DefaultLatitude = 47.0
+		suite.mapboxService.DefaultLongitude = -110.0
+		defer func() {
+			suite.mapboxService.DefaultLatitude = 37.7749
+			suite.mapboxService.DefaultLongitude = -122.4194
+		}()
+
 		// Create verified membership
 		suite.addUserToRegion(user.ID, region.ID, false)
 		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID) }()
 
-		body := map[string]interface{}{
-			"city":  "Portland",
-			"state": "Oregon",
-		}
-		bodyBytes, _ := json.Marshal(body)
+		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
 		req := httptest.NewRequest("POST", "/api/v1/verification/vouch/request", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1908,9 +1970,14 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 		}
 	})
 
-	t.Run("missing city fails validation", func(t *testing.T) {
+	t.Run("missing address fields fails validation", func(t *testing.T) {
+		// Missing line1
 		body := map[string]interface{}{
-			"state": "OR",
+			"address": map[string]interface{}{
+				"city":        "Portland",
+				"state":       "OR",
+				"postal_code": "97204",
+			},
 		}
 		bodyBytes, _ := json.Marshal(body)
 
@@ -1933,9 +2000,13 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 		}
 	})
 
-	t.Run("missing state fails validation", func(t *testing.T) {
+	t.Run("missing postal code fails validation", func(t *testing.T) {
 		body := map[string]interface{}{
-			"city": "Portland",
+			"address": map[string]interface{}{
+				"line1": "123 Main St",
+				"city":  "Portland",
+				"state": "OR",
+			},
 		}
 		bodyBytes, _ := json.Marshal(body)
 
@@ -1959,11 +2030,7 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 	})
 
 	t.Run("unauthenticated request fails", func(t *testing.T) {
-		body := map[string]interface{}{
-			"city":  "Portland",
-			"state": "OR",
-		}
-		bodyBytes, _ := json.Marshal(body)
+		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
 		req := httptest.NewRequest("POST", "/api/v1/verification/vouch/request", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -2043,13 +2110,15 @@ func TestVerificationHandler_Vouch_FullyVerifiedRequired(t *testing.T) {
 		}
 	})
 
-	t.Run("postcard-only user cannot vouch", func(t *testing.T) {
+	t.Run("unverified user cannot vouch in normal mode", func(t *testing.T) {
 		// Add users to region
-		suite.addUserToRegion(postcardOnlyUser.ID, region.ID, false)
+		unverifiedUser := suite.createTestUserWithFlags("unverified_voucher", false, false)
+		suite.addUserToRegion(unverifiedUser.ID, region.ID, false)
 		suite.addUserToRegionPending(targetUser.ID, region.ID)
 		defer func() {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", postcardOnlyUser.ID, targetUser.ID)
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", unverifiedUser.ID, targetUser.ID)
 		}()
+		defer suite.cleanup(unverifiedUser.ID)
 
 		body := map[string]interface{}{
 			"vouched_user_id": targetUser.ID,
@@ -2061,10 +2130,10 @@ func TestVerificationHandler_Vouch_FullyVerifiedRequired(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		claims := &middleware.Claims{
-			UserID:           postcardOnlyUser.ID,
-			Email:            postcardOnlyUser.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			UserID:           unverifiedUser.ID,
+			Email:            unverifiedUser.Email,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -2250,7 +2319,8 @@ func TestVerificationHandler_PostcardVerification_RegionAssignment(t *testing.T)
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -2422,7 +2492,8 @@ func TestVerificationHandler_PostcardVerification_RegionAssignment(t *testing.T)
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -2527,7 +2598,8 @@ func TestVerificationHandler_PostcardVerification_RegionAssignment(t *testing.T)
 		claims := &middleware.Claims{
 			UserID:           user.ID,
 			Email:            user.Email,
-			VerificationTier: models.TierUnverified,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -2591,14 +2663,14 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@bootstraptest.com'")
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE name LIKE '%Bootstrap Test%'")
 
-	t.Run("postcard-only user can vouch in bootstrap mode", func(t *testing.T) {
+	t.Run("any member can vouch in bootstrap mode", func(t *testing.T) {
 		// Create a region with no full admins (bootstrap mode)
-		creator := suite.createTestUserWithFlags("bootstrap_creator", true, false) // postcard only
+		creator := suite.createTestUserWithFlags("bootstrap_creator", false, false) // unverified
 		region := suite.createTestRegion("Bootstrap Test Region", models.RegionTypeCity, nil, creator.ID)
 		suite.addUserToRegion(creator.ID, region.ID, true) // admin but not full admin
 
-		// Create another postcard-only user who will vouch
-		voucher := suite.createTestUserWithFlags("bootstrap_voucher", true, false) // postcard only
+		// Create another unverified user who will vouch (any member can in bootstrap)
+		voucher := suite.createTestUserWithFlags("bootstrap_voucher", false, false) // unverified
 		suite.addUserToRegion(voucher.ID, region.ID, false)
 
 		// Create a user to be vouched for with pending status
@@ -2620,7 +2692,7 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 			t.Errorf("Expected 0 full admins, got %d", adminCount)
 		}
 
-		// Postcard-only user should be able to vouch in bootstrap mode
+		// Any member should be able to vouch in bootstrap mode
 		body := map[string]interface{}{
 			"user_id":   vouchee.ID,
 			"region_id": region.ID,
@@ -2633,8 +2705,8 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           voucher.ID,
 			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -2662,20 +2734,20 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 
 	t.Run("bootstrap mode requires 3 vouches instead of 2", func(t *testing.T) {
 		// Create a region with no full admins (bootstrap mode)
-		creator := suite.createTestUserWithFlags("bootstrap_creator2", true, false)
+		creator := suite.createTestUserWithFlags("bootstrap_creator2", false, false)
 		region := suite.createTestRegion("Bootstrap Test Region 2", models.RegionTypeCity, nil, creator.ID)
 		suite.addUserToRegion(creator.ID, region.ID, true)
 
-		// Create three vouchers (postcard-only)
-		voucher1 := suite.createTestUserWithFlags("bootstrap_voucher2_1", true, false)
-		voucher2 := suite.createTestUserWithFlags("bootstrap_voucher2_2", true, false)
-		voucher3 := suite.createTestUserWithFlags("bootstrap_voucher2_3", true, false)
+		// Create three vouchers (unverified members — any member can vouch in bootstrap)
+		voucher1 := suite.createTestUserWithFlags("bootstrap_voucher2_1", false, false)
+		voucher2 := suite.createTestUserWithFlags("bootstrap_voucher2_2", false, false)
+		voucher3 := suite.createTestUserWithFlags("bootstrap_voucher2_3", false, false)
 		suite.addUserToRegion(voucher1.ID, region.ID, false)
 		suite.addUserToRegion(voucher2.ID, region.ID, false)
 		suite.addUserToRegion(voucher3.ID, region.ID, false)
 
 		// Create a user to be vouched for
-		vouchee := suite.createTestUserWithFlags("bootstrap_vouchee2", true, false) // postcard verified
+		vouchee := suite.createTestUserWithFlags("bootstrap_vouchee2", false, false) // unverified
 		suite.addUserToRegionPending(vouchee.ID, region.ID)
 
 		defer suite.cleanup(creator.ID, voucher1.ID, voucher2.ID, voucher3.ID, vouchee.ID)
@@ -2695,8 +2767,8 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 			claims := &middleware.Claims{
 				UserID:           voucher.ID,
 				Email:            voucher.Email,
-				VerificationTier: models.TierPostcard,
-				PostcardVerified: true,
+				VerificationTier: models.TierUnverified,
+				PostcardVerified: false,
 				VouchVerified:    false,
 			}
 			ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -2773,12 +2845,12 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		)
 
 		// Create a region with no full admins (bootstrap mode)
-		creator := suite.createTestUserWithFlags("bootstrap_creator3", true, false)
+		creator := suite.createTestUserWithFlags("bootstrap_creator3", false, false)
 		region := suite.createTestRegion("Bootstrap Test Region 3", models.RegionTypeCity, nil, creator.ID)
 		suite.addUserToRegion(creator.ID, region.ID, true)
 
-		// Create a voucher (postcard-only)
-		voucher := suite.createTestUserWithFlags("bootstrap_voucher3", true, false)
+		// Create a voucher (unverified member — any member can vouch in bootstrap)
+		voucher := suite.createTestUserWithFlags("bootstrap_voucher3", false, false)
 		suite.addUserToRegion(voucher.ID, region.ID, false)
 
 		// Create two users to be vouched for
@@ -2802,8 +2874,8 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           voucher.ID,
 			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -2843,7 +2915,7 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		}
 	})
 
-	t.Run("postcard-only user cannot vouch in normal mode", func(t *testing.T) {
+	t.Run("vouch-only user cannot vouch in normal mode", func(t *testing.T) {
 		// Create a region with 3 full admins (not in bootstrap mode)
 		admin1 := suite.createTestUserWithFlags("normal_admin1", true, true) // full admin
 		admin2 := suite.createTestUserWithFlags("normal_admin2", true, true) // full admin
@@ -2853,8 +2925,8 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		suite.addUserToRegion(admin2.ID, region.ID, true)
 		suite.addUserToRegion(admin3.ID, region.ID, true)
 
-		// Create a postcard-only user who tries to vouch
-		voucher := suite.createTestUserWithFlags("normal_voucher", true, false) // postcard only
+		// Create a vouch-only user who tries to vouch (not fully verified)
+		voucher := suite.createTestUserWithFlags("normal_voucher", false, true) // vouch only
 		suite.addUserToRegion(voucher.ID, region.ID, false)
 
 		// Create a user to be vouched for
@@ -2876,7 +2948,7 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 			t.Errorf("Expected 3 full admins, got %d", adminCount)
 		}
 
-		// Postcard-only user should NOT be able to vouch in normal mode
+		// Vouch-only user should NOT be able to vouch in normal mode (needs both verifications)
 		body := map[string]interface{}{
 			"user_id":   vouchee.ID,
 			"region_id": region.ID,
@@ -2889,9 +2961,9 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           voucher.ID,
 			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    false, // NOT vouch verified
+			VerificationTier: models.TierVouched,
+			PostcardVerified: false,
+			VouchVerified:    true,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -2906,7 +2978,7 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 
 	t.Run("region API returns bootstrap_mode flag", func(t *testing.T) {
 		// Create a region with no full admins (bootstrap mode)
-		creator := suite.createTestUserWithFlags("bootstrap_api_creator", true, false)
+		creator := suite.createTestUserWithFlags("bootstrap_api_creator", false, false)
 		region := suite.createTestRegion("Bootstrap API Region", models.RegionTypeCity, nil, creator.ID)
 		suite.addUserToRegion(creator.ID, region.ID, true)
 
@@ -2928,38 +3000,31 @@ func TestVerificationHandler_BootstrapMode(t *testing.T) {
 }
 
 // =============================================================================
-// Bug Fix Tests: Vouch for Verified Status Users (not just pending)
+// Vouch Tests: Pending Request Required
 // =============================================================================
-// This tests the fix for the bug where vouching failed with "no_vouch_request"
-// when the vouchee had verified status (from postcard verification) instead of
-// pending status. The fix allows auto-detection of the region from verified
-// user_regions when no pending request exists.
+// These tests verify that vouching requires the vouchee to have a pending
+// vouch request (created via address submission in the vouch request flow).
 
-func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
+func TestVerificationHandler_Vouch_PendingRequestRequired(t *testing.T) {
 	suite := setupVerificationTestSuite(t)
 
 	// Clean up test data
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@vouchverifiedtest.com'")
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE name LIKE 'VouchVerified%'")
 
-	t.Run("vouch succeeds for postcard-verified user with verified status in bootstrap mode", func(t *testing.T) {
-		// This tests the bug fix: previously, vouching failed when the vouchee
-		// had verified status (from postcard verification) because the code only
-		// looked for pending vouch requests to detect the region.
+	t.Run("vouch succeeds for user with pending request in bootstrap mode", func(t *testing.T) {
+		// Create an unverified voucher (any member can vouch in bootstrap mode)
+		voucher := suite.createTestUserWithFlags("vv_voucher", false, false)
 
-		// Create a postcard-verified voucher (can vouch in bootstrap mode)
-		voucher := suite.createTestUserWithFlags("vv_voucher", true, false)
-
-		// Create a postcard-verified vouchee who needs vouch verification
-		vouchee := suite.createTestUserWithFlags("vv_vouchee", true, false)
+		// Create an unverified vouchee who submitted a vouch request
+		vouchee := suite.createTestUserWithFlags("vv_vouchee", false, false)
 
 		// Create region (will be in bootstrap mode with no full admins)
 		region := suite.createTestRegion("VouchVerified City", models.RegionTypeCity, nil, voucher.ID)
 
-		// Add both users to region with VERIFIED status (not pending)
-		// This simulates users who completed postcard verification
+		// Add voucher as verified member, vouchee as pending (from vouch request)
 		suite.addUserToRegion(voucher.ID, region.ID, false)
-		suite.addUserToRegion(vouchee.ID, region.ID, false)
+		suite.addUserToRegionPending(vouchee.ID, region.ID)
 
 		defer suite.cleanup(voucher.ID, vouchee.ID)
 		defer suite.cleanupRegions(region.ID)
@@ -2968,10 +3033,9 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
 		}()
 
-		// Vouch request WITHOUT region_id - should auto-detect from verified region
 		body := map[string]interface{}{
-			"user_id": vouchee.ID,
-			// No region_id provided - this triggered the bug before the fix
+			"user_id":   vouchee.ID,
+			"region_id": region.ID,
 		}
 		bodyBytes, _ := json.Marshal(body)
 
@@ -2981,9 +3045,9 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           voucher.ID,
 			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    false, // Can vouch in bootstrap mode
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
+			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
 		req = req.WithContext(ctx)
@@ -2991,8 +3055,6 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 		rr := httptest.NewRecorder()
 		suite.handler.Vouch(rr, req)
 
-		// Before the fix, this returned 400 with "no_vouch_request"
-		// After the fix, it should succeed with 201
 		if rr.Code != http.StatusCreated {
 			t.Errorf("Expected status 201 (created), got %d. Body: %s", rr.Code, rr.Body.String())
 		}
@@ -3014,73 +3076,25 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 		}
 	})
 
-	t.Run("vouch still fails if user has no verified region", func(t *testing.T) {
-		// Ensure we still get the proper error when user truly has no region
+	t.Run("vouch fails if vouchee has no pending request", func(t *testing.T) {
+		// Ensure we get the proper error when vouchee has no pending region request
+		// Vouchee must share a region with voucher (verified status, not pending)
+		// so we pass the shared-region check and hit the not_eligible check.
 
-		voucher := suite.createTestUserWithFlags("vv_voucher2", true, false)
-		vouchee := suite.createTestUserWithFlags("vv_vouchee2", true, false)
+		voucher := suite.createTestUserWithFlags("vv_voucher2", false, false)
+		vouchee := suite.createTestUserWithFlags("vv_vouchee2", false, false)
 		region := suite.createTestRegion("VouchVerified City2", models.RegionTypeCity, nil, voucher.ID)
 
-		// Add only voucher to region - vouchee has no region at all
-		suite.addUserToRegion(voucher.ID, region.ID, false)
-
-		defer suite.cleanup(voucher.ID, vouchee.ID)
-		defer suite.cleanupRegions(region.ID)
-		defer func() {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", voucher.ID)
-		}()
-
-		body := map[string]interface{}{
-			"user_id": vouchee.ID,
-		}
-		bodyBytes, _ := json.Marshal(body)
-
-		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
-		req.Header.Set("Content-Type", "application/json")
-
-		claims := &middleware.Claims{
-			UserID:           voucher.ID,
-			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    false,
-		}
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-
-		rr := httptest.NewRecorder()
-		suite.handler.Vouch(rr, req)
-
-		// Should still fail with 400 since vouchee has no region
-		if rr.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400 (bad request), got %d. Body: %s", rr.Code, rr.Body.String())
-		}
-
-		var resp map[string]interface{}
-		_ = json.NewDecoder(rr.Body).Decode(&resp)
-		if resp["error"] != "no_vouch_request" {
-			t.Errorf("Expected error 'no_vouch_request', got '%v'", resp["error"])
-		}
-	})
-
-	t.Run("vouch with explicit region_id still works for verified user", func(t *testing.T) {
-		// Ensure explicit region_id still works as before
-
-		voucher := suite.createTestUserWithFlags("vv_voucher3", true, false)
-		vouchee := suite.createTestUserWithFlags("vv_vouchee3", true, false)
-		region := suite.createTestRegion("VouchVerified City3", models.RegionTypeCity, nil, voucher.ID)
-
+		// Add both voucher and vouchee to region as verified members (not pending)
 		suite.addUserToRegion(voucher.ID, region.ID, false)
 		suite.addUserToRegion(vouchee.ID, region.ID, false)
 
 		defer suite.cleanup(voucher.ID, vouchee.ID)
 		defer suite.cleanupRegions(region.ID)
 		defer func() {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ?", voucher.ID)
 			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
 		}()
 
-		// Provide explicit region_id
 		body := map[string]interface{}{
 			"user_id":   vouchee.ID,
 			"region_id": region.ID,
@@ -3093,8 +3107,8 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           voucher.ID,
 			Email:            voucher.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -3103,8 +3117,66 @@ func TestVerificationHandler_Vouch_VerifiedStatusUser(t *testing.T) {
 		rr := httptest.NewRecorder()
 		suite.handler.Vouch(rr, req)
 
-		if rr.Code != http.StatusCreated {
-			t.Errorf("Expected status 201 (created), got %d. Body: %s", rr.Code, rr.Body.String())
+		// Should fail since vouchee has no pending request
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 (bad request), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		if resp["error"] != "not_eligible" {
+			t.Errorf("Expected error 'not_eligible', got '%v'", resp["error"])
+		}
+	})
+
+	t.Run("vouch fails for verified-status user (requires pending)", func(t *testing.T) {
+		// Users with verified status should not be vouch-eligible
+		// Only pending users (from vouch request) can receive vouches
+
+		voucher := suite.createTestUserWithFlags("vv_voucher3", false, false)
+		vouchee := suite.createTestUserWithFlags("vv_vouchee3", false, false)
+		region := suite.createTestRegion("VouchVerified City3", models.RegionTypeCity, nil, voucher.ID)
+
+		suite.addUserToRegion(voucher.ID, region.ID, false)
+		suite.addUserToRegion(vouchee.ID, region.ID, false) // verified, not pending
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(region.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": region.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
+			VouchVerified:    false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		// Should fail since vouchee has verified (not pending) status
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 (bad request), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		if resp["error"] != "not_eligible" {
+			t.Errorf("Expected error 'not_eligible', got '%v'", resp["error"])
 		}
 	})
 }
@@ -3131,14 +3203,14 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 
 		// Create users
 		admin := suite.createTestUserWithFlags("sr_admin", true, true)
-		vouchee := suite.createTestUserWithFlags("sr_vouchee", true, false)
+		vouchee := suite.createTestUserWithFlags("sr_vouchee", false, false) // unverified, awaiting vouches
 
 		// Create region hierarchy: state -> county -> city
 		state, _, city, cleanupHierarchy := suite.createNestedRegionHierarchy("StatusRegion", admin.ID)
 		defer cleanupHierarchy()
 
-		// Add vouchee to the city (most specific region)
-		suite.addUserToRegion(vouchee.ID, city.ID, false)
+		// Add vouchee to the city with pending status (from vouch request)
+		suite.addUserToRegionPending(vouchee.ID, city.ID)
 
 		// Add admin to city as well (for shared region requirement)
 		suite.addUserToRegion(admin.ID, city.ID, true)
@@ -3157,8 +3229,8 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           vouchee.ID,
 			Email:            vouchee.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -3206,13 +3278,13 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 		// Ensure vouches in parent regions don't incorrectly count for the child
 
 		admin := suite.createTestUserWithFlags("sr_admin2", true, true)
-		vouchee := suite.createTestUserWithFlags("sr_vouchee2", true, false)
+		vouchee := suite.createTestUserWithFlags("sr_vouchee2", false, false) // unverified, awaiting vouches
 
 		state, _, city, cleanupHierarchy := suite.createNestedRegionHierarchy("StatusRegion2", admin.ID)
 		defer cleanupHierarchy()
 
-		// Add users to city
-		suite.addUserToRegion(vouchee.ID, city.ID, false)
+		// Add vouchee to city with pending status (from vouch request)
+		suite.addUserToRegionPending(vouchee.ID, city.ID)
 		suite.addUserToRegion(admin.ID, city.ID, true)
 
 		defer suite.cleanup(admin.ID, vouchee.ID)
@@ -3229,8 +3301,8 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           vouchee.ID,
 			Email:            vouchee.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -3257,12 +3329,12 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 		// Test that users with only one region still work correctly
 
 		admin := suite.createTestUserWithFlags("sr_admin3", true, true)
-		vouchee := suite.createTestUserWithFlags("sr_vouchee3", true, false)
+		vouchee := suite.createTestUserWithFlags("sr_vouchee3", false, false) // unverified, awaiting vouches
 
 		// Create just a city (no hierarchy)
 		city := suite.createTestRegion("StatusRegion Solo City", models.RegionTypeCity, nil, admin.ID)
 
-		suite.addUserToRegion(vouchee.ID, city.ID, false)
+		suite.addUserToRegionPending(vouchee.ID, city.ID)
 		suite.addUserToRegion(admin.ID, city.ID, true)
 
 		defer suite.cleanup(admin.ID, vouchee.ID)
@@ -3278,8 +3350,8 @@ func TestVerificationHandler_GetStatus_MostSpecificRegion(t *testing.T) {
 		claims := &middleware.Claims{
 			UserID:           vouchee.ID,
 			Email:            vouchee.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -3327,18 +3399,18 @@ func TestVerificationHandler_GetPendingVouchRequests_CircularVouchFilter(t *test
 		// users who had already vouched for the caller, which would create a
 		// circular vouch pattern if the caller tried to vouch for them.
 
-		// Create users - all postcard verified for bootstrap mode
-		caller := suite.createTestUserWithFlags("circ_caller", true, false)
-		userWhoVouchedForCaller := suite.createTestUserWithFlags("circ_vouched_caller", true, false)
-		eligibleUser := suite.createTestUserWithFlags("circ_eligible", true, false)
+		// Create users - unverified members in bootstrap mode
+		caller := suite.createTestUserWithFlags("circ_caller", false, false)
+		userWhoVouchedForCaller := suite.createTestUserWithFlags("circ_vouched_caller", false, false)
+		eligibleUser := suite.createTestUserWithFlags("circ_eligible", false, false)
 
 		// Create region (bootstrap mode - no full admins)
 		region := suite.createTestRegion("CircularTest City", models.RegionTypeCity, nil, caller.ID)
 
-		// Add all users to region with verified status
+		// Add caller as verified member, others as pending (from vouch request)
 		suite.addUserToRegion(caller.ID, region.ID, false)
-		suite.addUserToRegion(userWhoVouchedForCaller.ID, region.ID, false)
-		suite.addUserToRegion(eligibleUser.ID, region.ID, false)
+		suite.addUserToRegionPending(userWhoVouchedForCaller.ID, region.ID)
+		suite.addUserToRegionPending(eligibleUser.ID, region.ID)
 
 		// userWhoVouchedForCaller vouches for caller - this creates the constraint
 		suite.createVouch(userWhoVouchedForCaller.ID, caller.ID, region.ID)
@@ -3355,8 +3427,8 @@ func TestVerificationHandler_GetPendingVouchRequests_CircularVouchFilter(t *test
 		claims := &middleware.Claims{
 			UserID:           caller.ID,
 			Email:            caller.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)
@@ -3412,15 +3484,15 @@ func TestVerificationHandler_GetPendingVouchRequests_CircularVouchFilter(t *test
 	t.Run("pending list still excludes users caller has already vouched for", func(t *testing.T) {
 		// Verify that the original filter (caller already vouched for user) still works
 
-		caller := suite.createTestUserWithFlags("circ_caller2", true, false)
-		alreadyVouchedFor := suite.createTestUserWithFlags("circ_already_vouched", true, false)
-		eligibleUser := suite.createTestUserWithFlags("circ_eligible2", true, false)
+		caller := suite.createTestUserWithFlags("circ_caller2", false, false)
+		alreadyVouchedFor := suite.createTestUserWithFlags("circ_already_vouched", false, false)
+		eligibleUser := suite.createTestUserWithFlags("circ_eligible2", false, false)
 
 		region := suite.createTestRegion("CircularTest City2", models.RegionTypeCity, nil, caller.ID)
 
 		suite.addUserToRegion(caller.ID, region.ID, false)
-		suite.addUserToRegion(alreadyVouchedFor.ID, region.ID, false)
-		suite.addUserToRegion(eligibleUser.ID, region.ID, false)
+		suite.addUserToRegionPending(alreadyVouchedFor.ID, region.ID)
+		suite.addUserToRegionPending(eligibleUser.ID, region.ID)
 
 		// Caller has already vouched for alreadyVouchedFor
 		suite.createVouch(caller.ID, alreadyVouchedFor.ID, region.ID)
@@ -3436,8 +3508,8 @@ func TestVerificationHandler_GetPendingVouchRequests_CircularVouchFilter(t *test
 		claims := &middleware.Claims{
 			UserID:           caller.ID,
 			Email:            caller.Email,
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
 			VouchVerified:    false,
 		}
 		ctx := middleware.ContextWithUser(req.Context(), claims)

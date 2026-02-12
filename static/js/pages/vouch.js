@@ -45,6 +45,8 @@ const US_STATES = [
     { code: 'DC', name: 'District of Columbia' },
 ];
 
+const US_STATE_CODES = US_STATES.map(s => s.code);
+
 let verificationStatus = null;
 
 /**
@@ -75,8 +77,8 @@ export async function render(container) {
     const vouchesNeeded = bootstrapMode ? 3 : 2;
     const vouchProgress = Math.min((vouchCount / vouchesNeeded) * 100, 100);
 
-    // In bootstrap mode, postcard-only users can vouch (not just full admins)
-    const canVouch = userIsAdmin || (bootstrapMode && postcardVerified);
+    // In bootstrap mode, any member can vouch (not just full admins)
+    const canVouch = userIsAdmin || bootstrapMode;
 
     container.innerHTML = `
         <div class="page">
@@ -95,20 +97,20 @@ export async function render(container) {
                     </div>
                     <div class="card__body">
                         <div class="verification-overview">
-                            <div class="verification-item ${postcardVerified ? 'verification-item--complete' : ''}">
-                                <div class="verification-item__icon">${postcardVerified ? '&#x2713;' : '&#x1F4EC;'}</div>
-                                <div class="verification-item__content">
-                                    <strong>Postcard Verification</strong>
-                                    <p>${postcardVerified ? 'Complete' : 'Not verified'}</p>
-                                </div>
-                                ${!postcardVerified ? `<a href="/verify" class="btn btn--sm btn--secondary" data-link>Verify</a>` : ''}
-                            </div>
                             <div class="verification-item ${vouchVerified ? 'verification-item--complete' : ''}">
                                 <div class="verification-item__icon">${vouchVerified ? '&#x2713;' : '&#x1F91D;'}</div>
                                 <div class="verification-item__content">
-                                    <strong>Vouch Verification</strong>
-                                    <p>${vouchVerified ? 'Complete' : `${vouchCount} of ${vouchesNeeded} vouches received`}</p>
+                                    <strong>Step 1: Vouch Verification</strong>
+                                    <p>${vouchVerified ? 'Complete — you can view Signal groups' : `${vouchCount} of ${vouchesNeeded} vouches received`}</p>
                                 </div>
+                            </div>
+                            <div class="verification-item ${postcardVerified ? 'verification-item--complete' : ''}">
+                                <div class="verification-item__icon">${postcardVerified ? '&#x2713;' : '&#x1F4EC;'}</div>
+                                <div class="verification-item__content">
+                                    <strong>Step 2: Address Verification</strong>
+                                    <p>${postcardVerified ? 'Complete' : vouchVerified ? 'Ready — verify your address to become admin' : 'Requires vouch verification first'}</p>
+                                </div>
+                                ${!postcardVerified && vouchVerified ? `<a href="/verify" class="btn btn--sm btn--secondary" data-link>Verify</a>` : ''}
                             </div>
                         </div>
 
@@ -135,15 +137,15 @@ export async function render(container) {
                                 <div class="privacy-notice__icon">&#x2713;</div>
                                 <div class="privacy-notice__text">
                                     <strong>Full Admin Access</strong>
-                                    You have both postcard and vouch verification. You can create communities, manage Signal groups, and vouch for others.
+                                    You have both vouch and address verification. You can create communities, manage Signal groups, and vouch for others.
                                 </div>
                             </div>
-                        ` : postcardVerified && bootstrapMode ? `
+                        ` : bootstrapMode ? `
                             <div class="privacy-notice" style="margin-top: var(--space-4); background: #dbeafe;">
                                 <div class="privacy-notice__icon">&#x1F680;</div>
                                 <div class="privacy-notice__text">
                                     <strong>Bootstrap Mode Active</strong>
-                                    This community has fewer than 3 full admins. As a postcard-verified user, you can help bootstrap the community by vouching for others.
+                                    This community has fewer than 3 full admins. Any community member can help bootstrap by vouching for others.
                                     Requires 3 vouches (instead of 2) and a 1-hour cooldown between vouches.
                                 </div>
                             </div>
@@ -152,7 +154,7 @@ export async function render(container) {
                                 <div class="privacy-notice__icon">&#x1F511;</div>
                                 <div class="privacy-notice__text">
                                     <strong>Want admin access?</strong>
-                                    Complete both postcard and vouch verification to become a community admin.
+                                    Get vouched first, then verify your address via postcard to become a community admin.
                                 </div>
                             </div>
                         `}
@@ -187,18 +189,14 @@ export async function render(container) {
  */
 function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, postcardVerified = false) {
     const stateOptions = US_STATES.map(s =>
-        `<option value="${s.name}">${s.name}</option>`
+        `<option value="${s.code}">${s.name}</option>`
     ).join('');
 
     const hasPendingRequest = verificationStatus?.pending_vouch_region;
-    const autoEligible = verificationStatus?.auto_eligible || false;
     const pendingBootstrapMode = verificationStatus?.bootstrap_mode || bootstrapMode;
     const pendingVouchesRequired = verificationStatus?.vouches_required || vouchesNeeded;
 
-    // Postcard-verified users are automatically eligible for vouches in their region
-    // No need to fill out the city/state form
     if (hasPendingRequest) {
-        const isAutoEligible = autoEligible || postcardVerified;
         return `
             <div class="card">
                 <div class="card__header">
@@ -208,13 +206,11 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
                     <div style="text-align: center; padding: var(--space-4);">
                         <div style="font-size: 48px; margin-bottom: var(--space-4);">&#x23F3;</div>
                         <h3 style="font-size: var(--font-size-lg); margin-bottom: var(--space-2);">
-                            ${isAutoEligible ? 'Ready for Vouches' : 'Request Submitted'}
+                            Request Submitted
                         </h3>
                         <p style="color: var(--color-gray-600); margin-bottom: var(--space-4);">
-                            ${isAutoEligible
-                                ? `Since you're postcard verified in <strong>${escapeHtml(verificationStatus.pending_vouch_region.name)}</strong>, you're automatically eligible for vouches.`
-                                : `You've requested vouch verification for <strong>${escapeHtml(verificationStatus.pending_vouch_region.name)}</strong>.`}
-                            Connect with verified community members to receive vouches.
+                            You've requested vouch verification for <strong>${escapeHtml(verificationStatus.pending_vouch_region.name)}</strong>.
+                            Connect with community members to receive vouches.
                         </p>
                         <p style="font-size: var(--font-size-sm); color: var(--color-gray-500);">
                             ${verificationStatus.vouch_count || 0} of ${pendingVouchesRequired} vouches received
@@ -234,29 +230,49 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
         `;
     }
 
-    // Only show the request form for non-postcard-verified users
     return `
         <div class="card">
             <div class="card__header">
                 <h2 class="card__title">Request Vouch Verification</h2>
             </div>
             <div class="card__body">
-                ${!postcardVerified ? `
-                    <div class="privacy-notice" style="margin-bottom: var(--space-4); background: #fef3c7;">
-                        <div class="privacy-notice__icon">&#x26A0;</div>
-                        <div class="privacy-notice__text">
-                            <strong>Recommended: Postcard verify first</strong>
-                            New communities in bootstrap mode require postcard verification before you can receive vouches.
-                            <a href="/verify" data-link style="color: var(--color-primary-600);">Start postcard verification</a> for the fastest path to full access.
-                        </div>
+                <div class="privacy-notice" style="margin-bottom: var(--space-4);">
+                    <div class="privacy-notice__icon">&#x1F512;</div>
+                    <div class="privacy-notice__text">
+                        <strong>Your address is never stored</strong>
+                        Your address is used only to identify your community and is immediately discarded.
                     </div>
-                ` : ''}
+                </div>
 
                 <p style="margin-bottom: var(--space-4); color: var(--color-gray-600);">
-                    Enter the city where you want to be vouched. You'll need verified community members from that area to vouch for you.
+                    Enter your address to identify your community. Community members will then vouch for you.
                 </p>
 
                 <form id="request-vouch-form">
+                    <div class="form-group">
+                        <label for="vouch-line1" class="form-label form-label--required">Street Address</label>
+                        <input
+                            type="text"
+                            id="vouch-line1"
+                            name="line1"
+                            class="form-input"
+                            required
+                            placeholder="123 Main St"
+                            autocomplete="street-address"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vouch-line2" class="form-label">Unit/Apt (optional)</label>
+                        <input
+                            type="text"
+                            id="vouch-line2"
+                            name="line2"
+                            class="form-input"
+                            placeholder="Apt 4B"
+                        >
+                    </div>
+
                     <div class="form-group">
                         <label for="vouch-city" class="form-label form-label--required">City</label>
                         <input
@@ -270,12 +286,28 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
                         >
                     </div>
 
-                    <div class="form-group">
-                        <label for="vouch-state" class="form-label form-label--required">State</label>
-                        <select id="vouch-state" name="state" class="form-input" required>
-                            <option value="">Select state</option>
-                            ${stateOptions}
-                        </select>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);">
+                        <div class="form-group">
+                            <label for="vouch-state" class="form-label form-label--required">State</label>
+                            <select id="vouch-state" name="state" class="form-input" required>
+                                <option value="">Select state</option>
+                                ${stateOptions}
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="vouch-postal-code" class="form-label form-label--required">ZIP Code</label>
+                            <input
+                                type="text"
+                                id="vouch-postal-code"
+                                name="postal_code"
+                                class="form-input"
+                                required
+                                pattern="[0-9]{5}(-[0-9]{4})?"
+                                placeholder="12345"
+                                autocomplete="postal-code"
+                            >
+                        </div>
                     </div>
 
                     <div id="request-vouch-error" class="form-error hidden"></div>
@@ -284,10 +316,6 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
                         Request Vouch Verification
                     </button>
                 </form>
-
-                <p style="margin-top: var(--space-4); font-size: var(--font-size-sm); color: var(--color-gray-500); text-align: center;">
-                    The city must already exist in our system. If it doesn't, someone needs to verify via postcard first.
-                </p>
             </div>
         </div>
     `;
@@ -470,8 +498,13 @@ async function handleRequestVouchSubmit(event) {
     const submitButton = document.getElementById('request-vouch-btn');
     const errorElement = document.getElementById('request-vouch-error');
 
-    const city = form.city.value.trim();
-    const state = form.state.value;
+    const address = {
+        line1: form.line1.value.trim(),
+        line2: form.line2.value.trim() || undefined,
+        city: form.city.value.trim(),
+        state: form.state.value,
+        postal_code: form.postal_code.value.trim(),
+    };
 
     // Clear previous error
     errorElement.classList.add('hidden');
@@ -482,8 +515,8 @@ async function handleRequestVouchSubmit(event) {
     submitButton.classList.add('btn--loading');
 
     try {
-        const result = await requestVouchVerification(city, state);
-        toast.success(`Vouch request submitted for ${result.region_name || city}!`);
+        const result = await requestVouchVerification(address);
+        toast.success(`Vouch request submitted for ${result.region_name || address.city}!`);
 
         // Refresh the page to show pending status
         const container = document.getElementById('main');
@@ -492,24 +525,18 @@ async function handleRequestVouchSubmit(event) {
         }
     } catch (error) {
         let errorMessage = 'Failed to submit vouch request. Please try again.';
-        let showPostcardLink = false;
 
         if (error instanceof ApiError) {
-            if (error.status === 404) {
-                errorMessage = 'City not found. The city must already exist in our system. Try a different city or verify via postcard first.';
-            } else if (error.status === 403 && error.data?.error === 'bootstrap_requires_postcard') {
-                errorMessage = 'This community is in bootstrap mode (building its initial admin team). Please complete postcard verification first - you\'ll then be automatically eligible for vouches.';
-                showPostcardLink = true;
-            } else if (error.status === 409) {
+            if (error.status === 409) {
                 errorMessage = error.message || 'You already have a pending or verified membership in this region.';
+            } else if (error.status === 502) {
+                errorMessage = 'Failed to geocode your address. Please check your address and try again.';
             } else if (error.message) {
                 errorMessage = error.message;
             }
         }
 
-        errorElement.innerHTML = showPostcardLink
-            ? `${errorMessage} <a href="/verify" data-link style="color: var(--color-primary-600); text-decoration: underline;">Start postcard verification</a>`
-            : errorMessage;
+        errorElement.textContent = errorMessage;
         errorElement.classList.remove('hidden');
     } finally {
         submitButton.disabled = false;
