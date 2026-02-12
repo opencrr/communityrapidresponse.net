@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +35,7 @@ type E2ETestSuite struct {
 	schoolRepo      *database.SchoolRepository
 	districtRepo    *database.SchoolDistrictRepository
 	schoolVouchRepo *database.SchoolVouchRepository
+	mockMapbox      *mocks.MockMapboxService
 }
 
 // SetupE2ETest creates a new test suite
@@ -151,6 +151,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		schoolRepo:      schoolRepo,
 		districtRepo:    districtRepo,
 		schoolVouchRepo: schoolVouchRepo,
+		mockMapbox:      mockMapbox,
 	}
 
 	t.Cleanup(func() {
@@ -210,6 +211,16 @@ func (s *E2ETestSuite) disableMFA(userID string) {
 	_, _ = s.db.ExecContext(context.Background(), "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", userID)
 }
 
+// makeUserVouchVerified sets a user as vouch-verified in the database.
+// Call this BEFORE login/re-login so the JWT includes the correct claims.
+func (s *E2ETestSuite) makeUserVouchVerified(userID string) {
+	_, err := s.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+	if err != nil {
+		s.t.Fatalf("Failed to make user vouch-verified: %v", err)
+	}
+}
+
 // registerOrGetUser registers a new user or retrieves existing one, disables MFA, logs in, and returns userID + token
 func (s *E2ETestSuite) registerOrGetUser(username, email, password string) (string, string) {
 	resp := s.request("POST", "/api/v1/auth/register", map[string]string{
@@ -237,34 +248,6 @@ func (s *E2ETestSuite) registerOrGetUser(username, email, password string) (stri
 	var login models.LoginResponse
 	_ = json.NewDecoder(loginResp.Body).Decode(&login)
 	return userID, login.Token
-}
-
-// exitBootstrapMode creates 3 full admins in a region to take it out of bootstrap mode
-// Returns the user IDs for cleanup
-func (s *E2ETestSuite) exitBootstrapMode(regionID string) []string {
-	if regionID == "" {
-		s.t.Fatal("exitBootstrapMode called with empty regionID")
-	}
-	ctx := context.Background()
-	var userIDs []string
-	for i := 0; i < 3; i++ {
-		user := &models.User{
-			Username:         fmt.Sprintf("e2e_bootstrap_admin_%d_%s", i, regionID[:8]),
-			Email:            fmt.Sprintf("e2e_bootstrap_admin_%d_%s@test.com", i, regionID[:8]),
-			PasswordHash:     "$2a$12$test.hash.only",
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    true,
-		}
-		if err := s.userRepo.Create(ctx, user); err != nil {
-			s.t.Fatalf("Failed to create bootstrap admin: %v", err)
-		}
-		if err := s.regionRepo.AddUserToRegion(ctx, user.ID, regionID, true); err != nil {
-			s.t.Fatalf("Failed to add bootstrap admin to region: %v", err)
-		}
-		userIDs = append(userIDs, user.ID)
-	}
-	return userIDs
 }
 
 // School-specific helpers
@@ -561,10 +544,11 @@ func TestE2E_VerificationFlow(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
 	_ = resp.Body.Close()
 
-	// Disable MFA so login returns a full token
+	// Disable MFA and make vouch-verified so postcard request is allowed
 	suite.disableMFA(registerResp.UserID)
+	suite.makeUserVouchVerified(registerResp.UserID)
 
-	// Login
+	// Login (token will include vouch-verified claims)
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "verifyflow@test.com",
 		"password": "securepassword123",
@@ -788,9 +772,9 @@ func TestE2E_RegionUpdate(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
 	_ = resp.Body.Close()
 
-	// Disable MFA and upgrade user to Tier 1 and make superuser for testing
+	// Disable MFA and make superuser with full verification for testing
 	ctx := context.Background()
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, is_superuser = true WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = true WHERE id = ?", registerResp.UserID)
 
 	// Login to get token
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -858,8 +842,8 @@ func TestE2E_RegionDelete(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Disable MFA and make user superuser
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, is_superuser = true WHERE id = ?", registerResp.UserID)
+	// Disable MFA and make superuser with full verification
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = true WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -915,8 +899,8 @@ func TestE2E_RegionTypeHierarchy(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Disable MFA and make user superuser to bypass boundary validation (this test is about type hierarchy)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
+	// Disable MFA and make superuser with full verification to bypass boundary validation (this test is about type hierarchy)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1017,8 +1001,8 @@ func TestE2E_RegionGeometry(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Disable MFA and make user superuser to bypass boundary validation
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
+	// Disable MFA and make superuser with full verification to bypass boundary validation
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1112,7 +1096,7 @@ func TestE2E_SignalGroupsAdmin(t *testing.T) {
 	ctx := context.Background()
 
 	// Make user a superuser to bypass boundary validation for region creation
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1231,7 +1215,7 @@ func TestE2E_SignalGroupsEmptyResponse(t *testing.T) {
 	ctx := context.Background()
 
 	// Make user an admin (both postcard and vouch verified)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1301,7 +1285,7 @@ func TestE2E_AdminHierarchyPropagation(t *testing.T) {
 	ctx := context.Background()
 
 	// Make user an admin (both postcard and vouch verified) AND superuser initially to create regions
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1462,7 +1446,7 @@ func TestE2E_SuperuserBypass(t *testing.T) {
 	ctx := context.Background()
 
 	// Make user a superuser (but NOT an admin of any region)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", registerResp.UserID)
 	// Remove all user_regions to ensure they're NOT an admin
 	_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ?", registerResp.UserID)
 
@@ -1559,8 +1543,8 @@ func TestE2E_NonAdminCannotAccessAdminEndpoints(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Make user verified but NOT an admin (only one verification)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, postcard_verified = TRUE, vouch_verified = FALSE WHERE id = ?", registerResp.UserID)
+	// Make user vouch-verified but NOT an admin (needs postcard too for admin)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 1, postcard_verified = FALSE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
 
 	// Login
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1611,7 +1595,7 @@ func TestE2E_VouchVerificationFlow(t *testing.T) {
 	)
 
 	// Make superuser with all permissions
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", superUserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", superUserID)
 
 	// Re-login to get token with updated claims
 	superLoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1699,7 +1683,7 @@ func TestE2E_VouchVerificationFlow(t *testing.T) {
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucher1ID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucher1ID)
 	// Add to region as admin
 	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, TRUE, 'verified', NOW())", voucher1ID, cityRegionID)
 
@@ -1720,7 +1704,7 @@ func TestE2E_VouchVerificationFlow(t *testing.T) {
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucher2ID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucher2ID)
 	// Add to region as admin
 	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, TRUE, 'verified', NOW())", voucher2ID, cityRegionID)
 
@@ -1744,11 +1728,22 @@ func TestE2E_VouchVerificationFlow(t *testing.T) {
 
 	defer suite.cleanup(voucheeID)
 
+	// Configure mock Mapbox to return coordinates within the city region geometry
+	suite.mockMapbox.DefaultLatitude = 47.25
+	suite.mockMapbox.DefaultLongitude = -122.25
+	suite.mockMapbox.DefaultBoundaryType = "city"
+	suite.mockMapbox.DefaultBoundaryName = cityName
+	suite.mockMapbox.DefaultBoundaryState = stateName
+
 	t.Run("full vouch verification flow", func(t *testing.T) {
-		// Step 4: Vouchee requests vouch verification
-		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  cityName,
-			"state": stateName,
+		// Step 4: Vouchee requests vouch verification (address is geocoded to identify region)
+		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "123 Main St",
+				"city":        "Test City",
+				"state":       "WA",
+				"postal_code": "98101",
+			},
 		}, voucheeToken)
 		defer func() { _ = requestResp.Body.Close() }()
 
@@ -1865,7 +1860,7 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", superUserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", superUserID)
 
 	superLoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    fmt.Sprintf("admingrantsuper_%s@test.com", suffix),
@@ -1943,6 +1938,13 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", stateRegionID)
 	}()
 
+	// Configure mock Mapbox for vouch requests (coordinates inside city polygon)
+	suite.mockMapbox.DefaultLatitude = 47.25
+	suite.mockMapbox.DefaultLongitude = -122.25
+	suite.mockMapbox.DefaultBoundaryType = "city"
+	suite.mockMapbox.DefaultBoundaryName = cityName
+	suite.mockMapbox.DefaultBoundaryState = stateName
+
 	// Create vouchers (fully verified admins)
 	voucher1ID, _ := suite.registerOrGetUser(
 		fmt.Sprintf("admingrantvoucher1_%s", suffix),
@@ -1950,7 +1952,7 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucher1ID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucher1ID)
 	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, TRUE, 'verified', NOW())", voucher1ID, cityRegionID)
 
 	voucher1LoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1969,7 +1971,7 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucher2ID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucher2ID)
 	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, TRUE, 'verified', NOW())", voucher2ID, cityRegionID)
 
 	voucher2LoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
@@ -1982,16 +1984,16 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 	voucher2Token := voucher2Login.Token
 	defer suite.cleanup(voucher2ID)
 
-	t.Run("user with both verifications gets admin on vouch completion", func(t *testing.T) {
-		// Create a user who is ALREADY postcard-verified
+	t.Run("user with postcard already verified gets admin on vouch completion", func(t *testing.T) {
+		// Create a user who is ALREADY postcard-verified (e.g., migrated user)
 		voucheeID, _ := suite.registerOrGetUser(
 			fmt.Sprintf("postcardthenvouch_%s", suffix),
 			fmt.Sprintf("postcardthenvouch_%s@test.com", suffix),
 			"securepassword123",
 		)
 
-		// Mark as postcard verified (simulates having already done postcard verification)
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, verification_tier = 1 WHERE id = ?", voucheeID)
+		// Mark as postcard verified (simulates a migrated user who had postcard before vouch-first flow)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", voucheeID)
 
 		voucheeLoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 			"email":    fmt.Sprintf("postcardthenvouch_%s@test.com", suffix),
@@ -2003,10 +2005,14 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		voucheeToken := voucheeLogin.Token
 		defer suite.cleanup(voucheeID)
 
-		// Request vouch verification
-		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  cityName,
-			"state": stateName,
+		// Request vouch verification (now uses address + geocoding)
+		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "123 Admin Grant St",
+				"city":        cityName,
+				"state":       stateName,
+				"postal_code": "98101",
+			},
 		}, voucheeToken)
 		_ = requestResp.Body.Close()
 
@@ -2048,10 +2054,14 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 		)
 		defer suite.cleanup(voucheeID)
 
-		// Request vouch verification
-		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  cityName,
-			"state": stateName,
+		// Request vouch verification (now uses address + geocoding)
+		requestResp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "456 Vouch Only St",
+				"city":        cityName,
+				"state":       stateName,
+				"postal_code": "98101",
+			},
 		}, voucheeToken)
 		_ = requestResp.Body.Close()
 
@@ -2088,7 +2098,7 @@ func TestE2E_VouchAdminGrantWithBothVerifications(t *testing.T) {
 	})
 }
 
-func TestE2E_VouchRequestCaseInsensitive(t *testing.T) {
+func TestE2E_VouchRequestWithAddressGeocoding(t *testing.T) {
 	suite := SetupE2ETest(t)
 
 	ctx := context.Background()
@@ -2096,15 +2106,15 @@ func TestE2E_VouchRequestCaseInsensitive(t *testing.T) {
 
 	// Create region hierarchy using a superuser
 	superUserID, _ := suite.registerOrGetUser(
-		fmt.Sprintf("casesuperuser_%s", suffix),
-		fmt.Sprintf("casesuperuser_%s@test.com", suffix),
+		fmt.Sprintf("geocodesuperuser_%s", suffix),
+		fmt.Sprintf("geocodesuperuser_%s@test.com", suffix),
 		"securepassword123",
 	)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", superUserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", superUserID)
 
 	superLoginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
-		"email":    fmt.Sprintf("casesuperuser_%s@test.com", suffix),
+		"email":    fmt.Sprintf("geocodesuperuser_%s@test.com", suffix),
 		"password": "securepassword123",
 	}, "")
 	var superLogin models.LoginResponse
@@ -2114,12 +2124,11 @@ func TestE2E_VouchRequestCaseInsensitive(t *testing.T) {
 
 	defer suite.cleanup(superUserID)
 
-	// Use unique names that still test case-insensitivity
 	stateName := fmt.Sprintf("Washington %s", suffix)
 	countyName := fmt.Sprintf("King County %s", suffix)
 	cityName := fmt.Sprintf("Seattle %s", suffix)
 
-	// Create region hierarchy with mixed case names
+	// Create region hierarchy
 	stateResp := suite.request("POST", "/api/v1/communities", map[string]interface{}{
 		"name": stateName,
 		"type": "state",
@@ -2170,10 +2179,6 @@ func TestE2E_VouchRequestCaseInsensitive(t *testing.T) {
 		t.Fatal("Failed to create city region")
 	}
 
-	// Exit bootstrap mode so unverified users can request vouch verification
-	adminIDs := suite.exitBootstrapMode(cityRegionID)
-	defer suite.cleanup(adminIDs...)
-
 	defer func() {
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", cityRegionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", countyRegionID)
@@ -2183,20 +2188,30 @@ func TestE2E_VouchRequestCaseInsensitive(t *testing.T) {
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", stateRegionID)
 	}()
 
+	// Configure mock Mapbox for vouch requests (coordinates inside city polygon)
+	suite.mockMapbox.DefaultLatitude = 47.25
+	suite.mockMapbox.DefaultLongitude = -122.25
+	suite.mockMapbox.DefaultBoundaryType = "city"
+	suite.mockMapbox.DefaultBoundaryName = cityName
+	suite.mockMapbox.DefaultBoundaryState = stateName
+
 	// Register a test user
 	testUserID, userToken := suite.registerOrGetUser(
-		fmt.Sprintf("casetest_%s", suffix),
-		fmt.Sprintf("casetest_%s@test.com", suffix),
+		fmt.Sprintf("geocodetest_%s", suffix),
+		fmt.Sprintf("geocodetest_%s@test.com", suffix),
 		"securepassword123",
 	)
 
 	defer suite.cleanup(testUserID)
 
-	t.Run("vouch request works with different case", func(t *testing.T) {
-		// Request with lowercase city and state
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  strings.ToLower(cityName),
-			"state": strings.ToLower(stateName),
+	t.Run("vouch request geocodes address and creates pending membership", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "123 Test St",
+				"city":        cityName,
+				"state":       stateName,
+				"postal_code": "98101",
+			},
 		}, userToken)
 		defer func() { _ = resp.Body.Close() }()
 

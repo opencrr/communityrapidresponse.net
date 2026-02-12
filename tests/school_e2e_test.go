@@ -341,7 +341,7 @@ func TestE2E_SchoolSignalGroupFlow(t *testing.T) {
 	_ = resp.Body.Close()
 
 	ctx := context.Background()
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
 	suite.addUserToSchool(registerResp.UserID, schoolID, "verified", true)
 	defer suite.cleanup(registerResp.UserID)
 
@@ -539,7 +539,7 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 		_ = json.NewDecoder(resp.Body).Decode(&reg)
 		_ = resp.Body.Close()
 
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", reg.UserID)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", reg.UserID)
 		suite.addUserToSchool(reg.UserID, schoolID, "verified", true)
 		defer suite.cleanup(reg.UserID)
 

@@ -54,8 +54,8 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Must be at least postcard or vouch verified
-	if claims.VerificationTier < models.TierPostcard {
+	// Must be at least vouch verified (TierVouched or higher)
+	if claims.VerificationTier < models.TierVouched {
 		writeError(w, http.StatusForbidden, "forbidden", "Verification required to request sub-region membership")
 		return
 	}

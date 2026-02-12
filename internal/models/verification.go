@@ -148,21 +148,24 @@ const (
 	UserRegionStatusVerified UserRegionStatus = "verified"
 )
 
-// VouchVerificationRequest represents request to initiate vouch verification in a city
+// VouchVerificationRequest represents request to initiate vouch verification
+// User provides their address to identify their community; address is never stored
 type VouchVerificationRequest struct {
-	City  string `json:"city" validate:"required"`
-	State string `json:"state" validate:"required"`
+	Address Address `json:"address" validate:"required"`
 }
 
 // VouchVerificationResponse represents response after requesting vouch verification
 type VouchVerificationResponse struct {
-	UserRegionID    string `json:"user_region_id"`
-	RegionID        string `json:"region_id"`
-	RegionName      string `json:"region_name"`
-	Status          string `json:"status"`
-	VouchesNeeded   int    `json:"vouches_needed"`
-	Message         string `json:"message"`
-	BootstrapMode   bool   `json:"bootstrap_mode,omitempty"`
-	AdminCount      int    `json:"admin_count,omitempty"`
-	VouchesRequired int    `json:"vouches_required,omitempty"`
+	UserRegionID     string        `json:"user_region_id"`
+	RegionID         string        `json:"region_id"`
+	RegionName       string        `json:"region_name"`
+	Status           string        `json:"status"`
+	VouchesNeeded    int           `json:"vouches_needed"`
+	Message          string        `json:"message"`
+	BootstrapMode    bool          `json:"bootstrap_mode,omitempty"`
+	AdminCount       int           `json:"admin_count,omitempty"`
+	VouchesRequired  int           `json:"vouches_required,omitempty"`
+	PrivacyNotice    string        `json:"privacy_notice"`
+	DetectedBoundary *BoundaryInfo `json:"detected_boundary,omitempty"`
+	Region           *RegionInfo   `json:"region,omitempty"`
 }

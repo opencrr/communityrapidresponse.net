@@ -317,10 +317,23 @@ func TestIntegration_Lob_VerificationFlow_Success(t *testing.T) {
 	suite.mockMapbox.DefaultBoundaryName = "Lob Test City"
 	suite.mockMapbox.DefaultBoundaryState = "California"
 
-	userID, token := suite.registerUser("lobuser", "lob@test.com", "securepassword123")
+	userID, _ := suite.registerUser("lobuser", "lob@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "lob@test.com", "password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "Lob Test City",
 		RegionType: models.RegionTypeCity,
@@ -389,10 +402,23 @@ func TestIntegration_Lob_POBoxRejection(t *testing.T) {
 	suite.mockMail.DefaultDeliverable = true
 	suite.mockMail.DefaultIsPOBox = true // Lob detects PO Box via zip_code_type
 
-	userID, token := suite.registerUser("lobpobox", "lobpobox@test.com", "securepassword123")
+	userID, _ := suite.registerUser("lobpobox", "lobpobox@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "lobpobox@test.com", "password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "Lob PO Box City",
 		RegionType: models.RegionTypeCity,
@@ -432,10 +458,23 @@ func TestIntegration_Lob_CMRARejection(t *testing.T) {
 	suite.mockMail.DefaultDeliverable = true
 	suite.mockMail.DefaultIsCMRA = true // Lob detects CMRA via dpv_cmra field
 
-	userID, token := suite.registerUser("lobcmra", "lobcmra@test.com", "securepassword123")
+	userID, _ := suite.registerUser("lobcmra", "lobcmra@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "lobcmra@test.com", "password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "Lob CMRA City",
 		RegionType: models.RegionTypeCity,
@@ -469,10 +508,23 @@ func TestIntegration_Lob_CommercialRejection(t *testing.T) {
 	suite.mockMail.DefaultDeliverable = true
 	suite.mockMail.DefaultIsCommercial = true // Lob detects commercial via dpv_residential field
 
-	userID, token := suite.registerUser("lobcommercial", "lobcommercial@test.com", "securepassword123")
+	userID, _ := suite.registerUser("lobcommercial", "lobcommercial@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "lobcommercial@test.com", "password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "Lob Commercial City",
 		RegionType: models.RegionTypeCity,
@@ -512,10 +564,23 @@ func TestIntegration_Lob_ServiceFailure(t *testing.T) {
 	suite.mockMail.ShouldFail = true
 	suite.mockMail.FailError = fmt.Errorf("lob service unavailable")
 
-	userID, token := suite.registerUser("lobfail", "lobfail@test.com", "securepassword123")
+	userID, _ := suite.registerUser("lobfail", "lobfail@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "lobfail@test.com", "password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "Lob Fail City",
 		RegionType: models.RegionTypeCity,
@@ -848,10 +913,24 @@ func TestE2E_Lob_CompleteVerificationFlow(t *testing.T) {
 	suite.mockMapbox.DefaultBoundaryName = "E2E Test City"
 	suite.mockMapbox.DefaultBoundaryState = "California"
 
-	userID, token := suite.registerUser("e2elobuser", "e2elob@test.com", "securepassword123")
+	userID, _ := suite.registerUser("e2elobuser", "e2elob@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
 	ctx := context.Background()
+
+	// Make user vouch-verified (required before postcard request in vouch-first flow)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+
+	// Re-login to get fresh token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email":    "e2elob@test.com",
+		"password": "securepassword123",
+	}, "")
+	var loginBody models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+	_ = loginResp.Body.Close()
+	token := loginBody.Token
+
 	region := &models.GeographicRegion{
 		Name:       "E2E Test City",
 		RegionType: models.RegionTypeCity,

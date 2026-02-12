@@ -140,7 +140,7 @@ function renderRegionDetail(container, region, childRegions, groups) {
                             <div class="privacy-notice__icon">&#x1F680;</div>
                             <div class="privacy-notice__text">
                                 <strong>Bootstrap Mode Active</strong>
-                                This region has fewer than 3 fully verified admins. During bootstrap mode, postcard-verified users can vouch for others
+                                This region has fewer than 3 fully verified admins. During bootstrap mode, any community member can vouch for others
                                 (3 vouches required with 1-hour cooldown) to help establish the initial admin team.
                             </div>
                         </div>
@@ -220,7 +220,7 @@ function renderRegionDetail(container, region, childRegions, groups) {
                                 <div class="card">
                                     <div class="card__body">
                                         <p class="text-center" style="color: var(--color-gray-600);">
-                                            <a href="/verify" data-link>Verify your address</a> or get vouched to view Signal groups in this community.
+                                            <a href="/vouch" data-link>Get vouched by community members</a> to view Signal groups in this community.
                                         </p>
                                     </div>
                                 </div>
@@ -230,7 +230,7 @@ function renderRegionDetail(container, region, childRegions, groups) {
                                 <div class="card">
                                     <div class="card__body">
                                         <p class="text-center" style="color: var(--color-gray-600);">
-                                            <a href="/login" data-link>Log in</a> and verify your address to view Signal groups.
+                                            <a href="/login" data-link>Log in</a> and get vouched to view Signal groups.
                                         </p>
                                     </div>
                                 </div>
@@ -363,13 +363,13 @@ function renderJoinButton(region, authenticated, userHasReadAccess) {
         `;
     }
 
-    // User must have at least one verification
+    // User must have vouch verification (read access)
     if (!userHasReadAccess) {
         return `
             <div class="card" style="margin-top: var(--space-4);">
                 <div class="card__body text-center">
                     <p style="color: var(--color-gray-600);">
-                        <a href="/verify" data-link>Verify your address</a> to request membership in this community.
+                        <a href="/vouch" data-link>Get vouched by community members</a> to request membership in this community.
                     </p>
                 </div>
             </div>

@@ -229,6 +229,29 @@ func (s *IntegrationTestSuite) cleanup(userIDs ...string) {
 	}
 }
 
+// makeUserVouchVerified sets a user as vouch-verified in the database.
+// Call this BEFORE login/re-login so the JWT includes the correct claims.
+func (s *IntegrationTestSuite) makeUserVouchVerified(userID string) {
+	_, err := s.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+	if err != nil {
+		s.t.Fatalf("Failed to make user vouch-verified: %v", err)
+	}
+}
+
+// reloginUser logs in an existing user and returns a fresh token with updated claims.
+func (s *IntegrationTestSuite) reloginUser(email, password string) string {
+	resp := s.request("POST", "/api/v1/auth/login", map[string]string{
+		"email":    email,
+		"password": password,
+	}, "")
+	defer func() { _ = resp.Body.Close() }()
+
+	var loginResp models.LoginResponse
+	_ = json.NewDecoder(resp.Body).Decode(&loginResp)
+	return loginResp.Token
+}
+
 func (s *IntegrationTestSuite) cleanupRegion(regionID string) {
 	ctx := context.Background()
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id = ?", regionID)
@@ -282,9 +305,11 @@ func TestIntegration_VerificationFlow_Success(t *testing.T) {
 	suite.mockMapbox.DefaultBoundaryName = "San Francisco"
 	suite.mockMapbox.DefaultBoundaryState = "California"
 
-	// Register and login user
-	userID, token := suite.registerUser("verifyuser", "verify@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("verifyuser", "verify@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("verify@test.com", "securepassword123")
 
 	// Create a region that matches the mock geocode result
 	ctx := context.Background()
@@ -340,9 +365,11 @@ func TestIntegration_VerificationFlow_POBoxRejected(t *testing.T) {
 	suite.mockPostgrid.DefaultDeliverable = true
 	suite.mockPostgrid.DefaultIsPOBox = true // Force PO Box detection
 
-	// Register and login user
-	userID, token := suite.registerUser("poboxuser", "pobox@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("poboxuser", "pobox@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("pobox@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -390,9 +417,11 @@ func TestIntegration_VerificationFlow_CMRARejected(t *testing.T) {
 	suite.mockPostgrid.DefaultDeliverable = true
 	suite.mockPostgrid.DefaultIsCMRA = true
 
-	// Register and login user
-	userID, token := suite.registerUser("cmrauser", "cmra@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("cmrauser", "cmra@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("cmra@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -434,9 +463,11 @@ func TestIntegration_VerificationFlow_CommercialRejected(t *testing.T) {
 	suite.mockPostgrid.DefaultDeliverable = true
 	suite.mockPostgrid.DefaultIsCommercial = true
 
-	// Register and login user
-	userID, token := suite.registerUser("commercialuser", "commercial@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("commercialuser", "commercial@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("commercial@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -484,9 +515,11 @@ func TestIntegration_VerificationFlow_UndeliverableRejected(t *testing.T) {
 	// Configure mock to return undeliverable
 	suite.mockPostgrid.DefaultDeliverable = false
 
-	// Register and login user
-	userID, token := suite.registerUser("undelivuser", "undeliv@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("undelivuser", "undeliv@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("undeliv@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -526,9 +559,11 @@ func TestIntegration_VerificationFlow_ServiceFailure(t *testing.T) {
 	suite.mockPostgrid.ShouldFail = true
 	suite.mockPostgrid.FailError = fmt.Errorf("postgrid service unavailable")
 
-	// Register and login user
-	userID, token := suite.registerUser("failuser", "fail@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("failuser", "fail@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("fail@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -567,9 +602,11 @@ func TestIntegration_MockServiceTracking(t *testing.T) {
 	suite.mockPostgrid.Reset()
 	suite.mockMapbox.Reset()
 
-	// Register and login user
-	userID, token := suite.registerUser("trackuser", "track@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("trackuser", "track@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("track@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -637,9 +674,11 @@ func TestIntegration_CustomMockBehavior(t *testing.T) {
 	suite.mockPostgrid.Reset()
 	suite.mockMapbox.Reset()
 
-	// Register and login user
-	userID, token := suite.registerUser("customuser", "custom@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("customuser", "custom@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("custom@test.com", "securepassword123")
 
 	// Create a region
 	ctx := context.Background()
@@ -697,7 +736,7 @@ func TestIntegration_SignalGroupsAdmin(t *testing.T) {
 	// Create admin user - register and get initial userID
 	userID, _ := suite.registerUser("sgadminuser", "sgadmin@test.com", "securepassword123")
 	// Set both verifications BEFORE getting the token
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", userID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
 	// Re-login to get token with updated verification claims
 	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "sgadmin@test.com",
@@ -788,7 +827,7 @@ func TestIntegration_RegionsAdmin(t *testing.T) {
 	// Create admin user - register and get initial userID
 	userID, _ := suite.registerUser("regadminuser", "regadmin@test.com", "securepassword123")
 	// Set both verifications BEFORE getting the token
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", userID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
 	// Re-login to get token with updated verification claims
 	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "regadmin@test.com",
@@ -890,7 +929,7 @@ func TestIntegration_SignalGroupCreate_NameField(t *testing.T) {
 	// Create superuser (to bypass bootstrap mode restrictions for this test)
 	userID, _ := suite.registerUser("sgcreateuser", "sgcreate@test.com", "securepassword123")
 	defer suite.cleanup(userID)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", userID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
 	// Re-login to get token with updated superuser claim
 	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "sgcreate@test.com",
@@ -953,7 +992,7 @@ func TestIntegration_SuperuserBypass(t *testing.T) {
 	// Create superuser - register and get initial userID
 	userID, _ := suite.registerUser("superusertest", "superuser@test.com", "securepassword123")
 	// Set superuser status AND verifications (superusers should have both verifications per design)
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", userID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
 	// Re-login to get token with updated superuser claim
 	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "superuser@test.com",
@@ -1056,6 +1095,13 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 	_ = suite.regionRepo.Create(ctx, cityRegion, geoJSON)
 	defer suite.cleanupRegion(cityRegion.ID)
 
+	// Configure mock Mapbox to return coordinates within the region geometry
+	suite.mockMapbox.DefaultLatitude = 47.0
+	suite.mockMapbox.DefaultLongitude = -120.0
+	suite.mockMapbox.DefaultBoundaryType = "city"
+	suite.mockMapbox.DefaultBoundaryName = "Vouch Test City"
+	suite.mockMapbox.DefaultBoundaryState = "Vouch Test State"
+
 	// Exit bootstrap mode so unverified users can request vouch verification
 	adminIDs := suite.exitBootstrapMode(cityRegion.ID)
 	defer suite.cleanup(adminIDs...)
@@ -1064,11 +1110,17 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 	userID, token := suite.registerUser("vouchreqtest", "vouchreq@test.com", "securepassword123")
 	defer suite.cleanup(userID)
 
+	addressPayload := map[string]interface{}{
+		"address": map[string]string{
+			"line1":       "123 Main St",
+			"city":        "Vouch Test City",
+			"state":       "WA",
+			"postal_code": "98101",
+		},
+	}
+
 	t.Run("successful vouch request", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Vouch Test City",
-			"state": "Vouch Test State",
-		}, token)
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", addressPayload, token)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusCreated {
@@ -1089,6 +1141,9 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 		if body.VouchesNeeded != 2 {
 			t.Errorf("Expected 2 vouches needed, got %d", body.VouchesNeeded)
 		}
+		if body.PrivacyNotice == "" {
+			t.Error("Expected privacy_notice in response")
+		}
 
 		// Cleanup: remove the pending user_region entry
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ? AND region_id = ?", userID, cityRegion.ID)
@@ -1096,17 +1151,11 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 
 	t.Run("duplicate request fails with conflict", func(t *testing.T) {
 		// First request
-		resp1 := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Vouch Test City",
-			"state": "Vouch Test State",
-		}, token)
+		resp1 := suite.request("POST", "/api/v1/verification/vouch/request", addressPayload, token)
 		_ = resp1.Body.Close()
 
 		// Second request should fail
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Vouch Test City",
-			"state": "Vouch Test State",
-		}, token)
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", addressPayload, token)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusConflict {
@@ -1125,30 +1174,14 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ? AND region_id = ?", userID, cityRegion.ID)
 	})
 
-	t.Run("city not found returns 404", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Nonexistent City",
-			"state": "Vouch Test State",
-		}, token)
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusNotFound {
-			var body map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&body)
-			t.Errorf("Expected status 404, got %d: %v", resp.StatusCode, body)
-		}
-
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		if body["error"] != "region_not_found" {
-			t.Errorf("Expected error 'region_not_found', got '%v'", body["error"])
-		}
-	})
-
-	t.Run("missing fields returns 400", func(t *testing.T) {
-		// Missing state
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city": "Vouch Test City",
+	t.Run("missing address fields returns 400", func(t *testing.T) {
+		// Missing postal_code in address
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]interface{}{
+			"address": map[string]string{
+				"line1": "123 Main St",
+				"city":  "Vouch Test City",
+				"state": "WA",
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1164,10 +1197,7 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 	})
 
 	t.Run("unauthenticated request fails", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Vouch Test City",
-			"state": "Vouch Test State",
-		}, "")
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", addressPayload, "")
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusUnauthorized {
@@ -1179,10 +1209,7 @@ func TestIntegration_VouchVerificationRequest(t *testing.T) {
 		// Add user as verified member
 		_ = suite.regionRepo.AddUserToRegion(ctx, userID, cityRegion.ID, false)
 
-		resp := suite.request("POST", "/api/v1/verification/vouch/request", map[string]string{
-			"city":  "Vouch Test City",
-			"state": "Vouch Test State",
-		}, token)
+		resp := suite.request("POST", "/api/v1/verification/vouch/request", addressPayload, token)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusConflict {
@@ -1256,7 +1283,7 @@ func TestIntegration_VouchEligibility(t *testing.T) {
 		// Create postcard-only voucher
 		postcardEmail := fmt.Sprintf("postcardonly_%s@test.com", suffix)
 		voucherID, _ := suite.registerUser(fmt.Sprintf("postcardonly_%s", suffix), postcardEmail, "securepassword123")
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = FALSE, verification_tier = 1 WHERE id = ?", voucherID)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = FALSE, verification_tier = 2 WHERE id = ?", voucherID)
 		defer suite.cleanup(voucherID)
 
 		// Add voucher to region
@@ -1334,7 +1361,7 @@ func TestIntegration_VouchEligibility(t *testing.T) {
 		// Create fully verified voucher
 		fullverifiedEmail := fmt.Sprintf("fullverified_%s@test.com", suffix)
 		voucherID, _ := suite.registerUser(fmt.Sprintf("fullverified_%s", suffix), fullverifiedEmail, "securepassword123")
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucherID)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucherID)
 		defer suite.cleanup(voucherID)
 
 		// Add voucher to region as admin
@@ -1393,7 +1420,7 @@ func TestIntegration_VouchEligibility(t *testing.T) {
 		// Create fully verified voucher
 		fullverified2Email := fmt.Sprintf("fullverified2_%s@test.com", suffix)
 		voucherID, _ := suite.registerUser(fmt.Sprintf("fullverified2_%s", suffix), fullverified2Email, "securepassword123")
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 3 WHERE id = ?", voucherID)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", voucherID)
 		defer suite.cleanup(voucherID)
 
 		// Add voucher to region
@@ -1580,9 +1607,11 @@ func TestIntegration_PostcardVerification_UserAddedToCityRegion(t *testing.T) {
 	suite.mockMapbox.DefaultBoundaryName = "Postcard Test City"
 	suite.mockMapbox.DefaultBoundaryState = "Montana"
 
-	// Register and login user
-	userID, token := suite.registerUser("postcardcityuser", "postcardcity@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("postcardcityuser", "postcardcity@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("postcardcity@test.com", "securepassword123")
 
 	// Track created regions for cleanup
 	var createdRegionIDs []string
@@ -1791,9 +1820,11 @@ func TestIntegration_PostcardVerification_ExistingRegionHierarchy(t *testing.T) 
 	_ = suite.regionRepo.Create(ctx, cityRegion, cityGeoJSON)
 	defer suite.cleanupRegion(cityRegion.ID)
 
-	// Register and login user
-	userID, token := suite.registerUser("existinghierarchyuser", "existinghierarchy@test.com", "securepassword123")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("existinghierarchyuser", "existinghierarchy@test.com", "securepassword123")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("existinghierarchy@test.com", "securepassword123")
 
 	t.Run("uses existing city region when coordinates match", func(t *testing.T) {
 		// Request postcard verification WITHOUT specifying region_id
@@ -2041,9 +2072,11 @@ func TestIntegration_VerificationFlow_NYCLikeAddress(t *testing.T) {
 		}, nil
 	}
 
-	// Register a user
-	userID, token := suite.registerUser("nyc_verify_user", "nyc_verify@test.com", "TestPassword123!")
+	// Register user, make vouch-verified, then re-login for updated token
+	userID, _ := suite.registerUser("nyc_verify_user", "nyc_verify@test.com", "TestPassword123!")
 	defer suite.cleanup(userID)
+	suite.makeUserVouchVerified(userID)
+	token := suite.reloginUser("nyc_verify@test.com", "TestPassword123!")
 
 	t.Run("verification creates full 5-level hierarchy", func(t *testing.T) {
 		// Submit verification request with Brooklyn address

@@ -9,8 +9,8 @@ type VerificationTier int
 
 const (
 	TierUnverified VerificationTier = 0 // No verification
-	TierPostcard   VerificationTier = 1 // Postcard verified - admin rights
-	TierVouched    VerificationTier = 2 // Vouched by 2+ Tier 1 users - read access only
+	TierVouched    VerificationTier = 1 // First step: community trust (read-only access)
+	TierPostcard   VerificationTier = 2 // Second step: proven residency (admin rights)
 )
 
 // User represents a registered user in the system

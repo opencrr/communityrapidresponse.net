@@ -58,10 +58,12 @@ export async function render(container) {
                     <div class="help-highlight">
                         <h3>We never store your address</h3>
                         <p>
-                            When you verify your address, it exists in our server's memory only
-                            long enough to mail you a postcard. It is never written to our
-                            database. Once the postcard request is sent, your address is gone
-                            from our system entirely. Even our administrators cannot retrieve it.
+                            When you enter your address, it exists in our server's memory only
+                            long enough to identify your community or mail you a postcard. It is
+                            never written to our database. For vouch verification, your address is
+                            geocoded to find your community and then discarded. For postcard
+                            verification, it's sent to our mailing partner and then discarded.
+                            Even our administrators cannot retrieve it.
                         </p>
                     </div>
 
@@ -121,22 +123,25 @@ export async function render(container) {
 
                     <div class="help-cards">
                         <div class="help-card">
+                            <h3>Why vouching comes first</h3>
+                            <p>
+                                Vouching is the first step to joining a community because it puts
+                                a human gate on access. Anyone can send themselves a postcard, but
+                                a vouch means an actual person in the community recognizes you.
+                                By requiring community trust before granting any access to Signal
+                                groups, we prevent bad actors from seeing group invite links before
+                                anyone in the community has vetted them.
+                            </p>
+                        </div>
+                        <div class="help-card">
                             <h3>Why postcards?</h3>
                             <p>
                                 A physical postcard is one of the simplest ways to prove someone
                                 can receive mail at an address, without us needing to store that
                                 address. Digital verification methods (IP geolocation, phone GPS)
                                 are easy to fake and invasive to collect. A postcard leaves no
-                                digital trail in our system.
-                            </p>
-                        </div>
-                        <div class="help-card">
-                            <h3>Why vouching?</h3>
-                            <p>
-                                Vouching adds a human layer of trust. A postcard proves a mailing
-                                address; a vouch means an actual person in the community recognizes
-                                you. Requiring both for full admin access ensures that the people
-                                making decisions for a community are genuinely known there.
+                                digital trail in our system. Postcard verification is available
+                                after being vouched and upgrades you to admin.
                             </p>
                         </div>
                         <div class="help-card">

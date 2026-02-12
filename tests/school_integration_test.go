@@ -327,7 +327,7 @@ func TestIntegration_DistrictSignalGroupAccess(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&verifiedReg)
 	_ = resp.Body.Close()
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 3, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", verifiedReg.UserID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", verifiedReg.UserID)
 	suite.addUserToSchool(verifiedReg.UserID, schoolAID, "verified", true)
 	defer suite.cleanup(verifiedReg.UserID)
 

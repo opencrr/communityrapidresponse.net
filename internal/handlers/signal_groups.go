@@ -178,8 +178,8 @@ func (h *SignalGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only verified users (postcard or vouched) can see invite links
-	if claims.VerificationTier < models.TierPostcard {
+	// Only verified users (vouched or postcard) can see invite links
+	if claims.VerificationTier < models.TierVouched {
 		writeError(w, http.StatusForbidden, "forbidden", "Verification required to view Signal groups")
 		return
 	}

@@ -47,8 +47,8 @@ export async function render(container) {
     const bootstrapMode = detailedVerificationStatus?.bootstrap_mode || false;
     const vouchesRequired = detailedVerificationStatus?.vouches_required || (bootstrapMode ? 3 : 2);
 
-    // In bootstrap mode, postcard-only users can vouch (not just full admins)
-    const canVouch = userIsAdmin || (bootstrapMode && postcardVerified);
+    // In bootstrap mode, any member can vouch (not just full admins)
+    const canVouch = userIsAdmin || bootstrapMode;
 
     // Check if user is blocked
     const isBlocked = user?.is_blocked || false;
@@ -108,33 +108,17 @@ export async function render(container) {
                             <h2 class="card__title">Verification Status</h2>
                         </div>
                         <div class="card__body">
-                            <!-- Postcard Verification -->
-                            <div class="verification-status ${postcardVerified ? 'verification-status--verified' : ''}" style="margin-bottom: var(--space-4);">
-                                <div class="verification-status__icon">${postcardVerified ? '&#x2713;' : '&#x1F4EC;'}</div>
-                                <div style="flex: 1;">
-                                    <strong>Postcard Verification</strong>
-                                    <p style="font-size: var(--font-size-sm); color: var(--color-gray-600); margin-top: var(--space-1);">
-                                        ${postcardVerified
-                                            ? 'Your address has been verified via postcard.'
-                                            : 'Verify your address by receiving a postcard with a verification code.'}
-                                    </p>
-                                </div>
-                                ${!postcardVerified ? `
-                                    <a href="/verify" class="btn btn--sm btn--primary" data-link>Verify</a>
-                                ` : ''}
-                            </div>
-
-                            <!-- Vouch Verification -->
-                            <div class="verification-status ${vouchVerified ? 'verification-status--verified' : hasPendingVouchRequest ? 'verification-status--pending' : ''}">
+                            <!-- Vouch Verification (Step 1) -->
+                            <div class="verification-status ${vouchVerified ? 'verification-status--verified' : hasPendingVouchRequest ? 'verification-status--pending' : ''}" style="margin-bottom: var(--space-4);">
                                 <div class="verification-status__icon">${vouchVerified ? '&#x2713;' : hasPendingVouchRequest ? '&#x23F3;' : '&#x1F91D;'}</div>
                                 <div style="flex: 1;">
-                                    <strong>Vouch Verification</strong>
+                                    <strong>Step 1: Vouch Verification</strong>
                                     <p style="font-size: var(--font-size-sm); color: var(--color-gray-600); margin-top: var(--space-1);">
                                         ${vouchVerified
-                                            ? 'You have been vouched for by verified community members.'
+                                            ? 'You have been vouched for by community members. You can view Signal groups.'
                                             : hasPendingVouchRequest
                                                 ? `Waiting for vouches in <strong>${escapeHtml(pendingVouchRegion.name)}</strong> (${vouchCount}/${vouchesRequired} received)${bootstrapMode ? ' <em>(bootstrap mode)</em>' : ''}`
-                                                : `Get vouched for by ${vouchesRequired} verified members from your community.${bootstrapMode ? ' (bootstrap mode - community building initial admin team)' : ''}`}
+                                                : `Enter your address and get vouched by ${vouchesRequired} community members.${bootstrapMode ? ' (bootstrap mode - community building initial admin team)' : ''}`}
                                     </p>
                                     ${hasPendingVouchRequest && !vouchVerified ? `
                                         <div class="vouch-progress-mini" style="margin-top: var(--space-2);">
@@ -145,28 +129,44 @@ export async function render(container) {
                                     ` : ''}
                                 </div>
                                 ${!vouchVerified ? `
-                                    <a href="/vouch" class="btn btn--sm btn--primary" data-link>${hasPendingVouchRequest ? 'View' : 'Request'}</a>
+                                    <a href="/vouch" class="btn btn--sm btn--primary" data-link>${hasPendingVouchRequest ? 'View' : 'Start'}</a>
                                 ` : ''}
                             </div>
 
-                            ${!userIsAdmin && (postcardVerified || vouchVerified) ? `
+                            <!-- Postcard Verification (Step 2) -->
+                            <div class="verification-status ${postcardVerified ? 'verification-status--verified' : ''}">
+                                <div class="verification-status__icon">${postcardVerified ? '&#x2713;' : '&#x1F4EC;'}</div>
+                                <div style="flex: 1;">
+                                    <strong>Step 2: Address Verification</strong>
+                                    <p style="font-size: var(--font-size-sm); color: var(--color-gray-600); margin-top: var(--space-1);">
+                                        ${postcardVerified
+                                            ? 'Your address has been verified via postcard.'
+                                            : vouchVerified
+                                                ? 'Verify your address via postcard to become a community admin.'
+                                                : 'Complete vouch verification first, then verify your address to become admin.'}
+                                    </p>
+                                </div>
+                                ${!postcardVerified && vouchVerified ? `
+                                    <a href="/verify" class="btn btn--sm btn--primary" data-link>Verify</a>
+                                ` : ''}
+                            </div>
+
+                            ${!userIsAdmin && vouchVerified && !postcardVerified ? `
                                 <div class="privacy-notice" style="margin-top: var(--space-4); background: #fef3c7;">
                                     <div class="privacy-notice__icon">&#x1F511;</div>
                                     <div class="privacy-notice__text">
                                         <strong>Want admin access?</strong>
-                                        You need both postcard and vouch verification to create communities and manage Signal groups.
-                                        ${!postcardVerified ? 'Complete your postcard verification.' : ''}
-                                        ${!vouchVerified ? `Get vouched for by ${vouchesRequired} verified community members.` : ''}
+                                        Verify your address via postcard to become a community admin and manage Signal groups.
                                     </div>
                                 </div>
                             ` : ''}
 
-                            ${bootstrapMode && postcardVerified && !userIsAdmin ? `
+                            ${bootstrapMode && !userIsAdmin ? `
                                 <div class="privacy-notice" style="margin-top: var(--space-4); background: #dbeafe;">
                                     <div class="privacy-notice__icon">&#x1F680;</div>
                                     <div class="privacy-notice__text">
                                         <strong>Bootstrap Mode Active</strong>
-                                        This community is building its initial admin team. As a postcard-verified user, you can <a href="/vouch" data-link>vouch for others</a> to help establish the community.
+                                        This community is building its initial admin team. Any community member can <a href="/vouch" data-link>vouch for others</a> to help establish the community.
                                     </div>
                                 </div>
                             ` : ''}
@@ -190,7 +190,7 @@ export async function render(container) {
                         <h2 class="dashboard-section__title">Pending Vouch Requests</h2>
                         <p class="text-muted" style="margin-bottom: var(--space-4);">
                             Users waiting for vouches in your communities
-                            ${bootstrapMode && !userIsAdmin ? ' (bootstrap mode - you can vouch as a postcard-verified user)' : ''}
+                            ${bootstrapMode && !userIsAdmin ? ' (bootstrap mode - any member can vouch)' : ''}
                         </p>
                         <div id="pending-vouches-content" data-bootstrap-mode="${bootstrapMode}" data-vouches-required="${vouchesRequired}">
                             <div class="loading">

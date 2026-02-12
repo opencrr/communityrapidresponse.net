@@ -44,10 +44,13 @@ export async function render(container) {
                         <div class="help-highlight">
                             <h3>Your address is not stored in our database</h3>
                             <p>
-                                When you request postcard verification, your address exists only in our
-                                server's memory long enough to send it to our mailing partner. It is
-                                immediately discarded and never written to our database. Even our
-                                administrators cannot retrieve your address from our system.
+                                When you enter your address &mdash; whether for vouch verification (to
+                                identify your community) or postcard verification (to prove residency)
+                                &mdash; it exists only in our server's memory long enough to process
+                                the request. For vouch requests, your address is geocoded then immediately
+                                discarded. For postcard requests, it is sent to our mailing partner then
+                                discarded. Your address is never written to our database. Even our
+                                administrators cannot retrieve it.
                             </p>
                         </div>
                         <div class="help-card" style="margin: var(--space-4) 0;">
@@ -97,9 +100,10 @@ export async function render(container) {
                         <details class="faq-item">
                             <summary>How do I become an admin?</summary>
                             <p>
-                                <strong>For communities:</strong> Complete both postcard verification AND vouch
-                                verification. Once you have both, you automatically gain admin rights for
-                                your verified community.
+                                <strong>For communities:</strong> First, get vouched by community members
+                                to gain read-only access. Then, request postcard verification to prove your
+                                address. Once you have both vouch and postcard verification, you automatically
+                                gain admin rights for your verified community.
                             </p>
                             <p>
                                 <strong>For schools:</strong> Join a school and receive enough vouches from
@@ -127,29 +131,35 @@ export async function render(container) {
                     <section class="help-section">
                         <h2>How Community Verification Works</h2>
                         <p>
-                            We use a dual verification system to ensure community members are genuine neighbors:
+                            We use a two-step verification system to ensure community members are genuine
+                            neighbors. Vouching comes first to establish community trust, then address
+                            verification proves residency for admin access.
                         </p>
                         <div class="help-cards">
                             <div class="help-card">
-                                <h3>Postcard Verification</h3>
+                                <h3>Step 1: Vouch Verification</h3>
                                 <p>
-                                    We mail a postcard with a unique code to your address. Enter the code
-                                    to prove you can receive mail there. <strong>Your address is never stored</strong> -
-                                    it's only used to send the postcard.
+                                    Enter your address to identify your community (your address is used only
+                                    for geocoding and is never stored). Then get vouched for by existing members
+                                    who know you live in the area. Once vouched, you gain <strong>read-only
+                                    access</strong> to your community's Signal groups.
                                 </p>
                             </div>
                             <div class="help-card">
-                                <h3>Vouch Verification</h3>
+                                <h3>Step 2: Postcard Verification (optional)</h3>
                                 <p>
-                                    Get vouched for by existing verified members who know you live in the area.
-                                    This builds trust through community connections. The number of vouches required
-                                    depends on whether your community is in bootstrap mode (see below).
+                                    After being vouched, you can request address verification. We mail a postcard
+                                    with a unique code to your address. Enter the code to become a <strong>full
+                                    admin</strong> who can create communities and manage groups.
+                                    <strong>Your address is never stored.</strong>
                                 </p>
                             </div>
                         </div>
                         <p>
-                            Complete <strong>both</strong> verifications to become a full admin who can create
-                            communities and manage groups. Complete <strong>either one</strong> to access Signal groups.
+                            <strong>Why vouch first?</strong> Requiring community trust before granting any
+                            Signal group access prevents bad actors from seeing group invite links before
+                            anyone in the community has vetted them. A postcard alone only proves a mailing
+                            address &mdash; a vouch proves a real community connection.
                         </p>
                     </section>
 
@@ -167,8 +177,9 @@ export async function render(container) {
                             <li><strong>City Block</strong> - Most specific level</li>
                         </ul>
                         <p>
-                            When you verify your address, you are automatically assigned to the most specific
-                            community that contains your location.
+                            When you submit your address for vouch verification, it is geocoded to identify
+                            your community and then immediately discarded. You are assigned to the most
+                            specific community that contains your location.
                         </p>
                     </section>
 
@@ -181,9 +192,8 @@ export async function render(container) {
                             </p>
                             <ul class="help-list" style="margin-top: var(--space-2);">
                                 <li><strong>3 vouches required</strong> instead of the normal 2</li>
-                                <li><strong>Postcard-verified users can vouch</strong> (normally requires both verifications)</li>
+                                <li><strong>Any community member can vouch</strong> (normally only fully verified admins can vouch)</li>
                                 <li><strong>1-hour cooldown</strong> between vouches from the same person</li>
-                                <li><strong>Auto-eligibility:</strong> Postcard-verified users are automatically eligible for vouches without requesting</li>
                             </ul>
                             <p style="margin-top: var(--space-2); margin-bottom: 0;">
                                 Once your community has 3 or more full admins, normal verification rules apply.
@@ -222,10 +232,11 @@ export async function render(container) {
                         <details class="faq-item">
                             <summary>How do I find someone to vouch for me?</summary>
                             <p>
-                                Connect with verified neighbors through community events, local social media,
-                                or mutual friends. You need 2-3 different verified members from your community to
-                                vouch for you (3 in bootstrap mode, 2 otherwise). In bootstrap mode, postcard-verified
-                                users can vouch; otherwise, vouchers must have both verifications.
+                                Connect with neighbors through community events, local social media,
+                                or mutual friends. You need 2-3 different members from your community to
+                                vouch for you (3 in bootstrap mode, 2 otherwise). In bootstrap mode, any
+                                community member can vouch; once the community has 3+ admins, only
+                                fully verified admins can vouch.
                             </p>
                         </details>
 
@@ -253,7 +264,7 @@ export async function render(container) {
                             <p>
                                 Bootstrap mode helps new communities establish their first admins. When a community
                                 has fewer than 3 full admins, the verification requirements are adjusted:
-                                postcard-only verified users can vouch for others, but 3 vouches are required
+                                any community member can vouch for others, but 3 vouches are required
                                 instead of 2, and there's a 1-hour cooldown between vouches from the same person.
                                 This prevents a single bad actor from quickly verifying fake accounts while still
                                 allowing new communities to grow.
