@@ -26,14 +26,20 @@ type RegionLookup interface {
 	GetByID(ctx context.Context, id string) (*models.GeographicRegion, error)
 }
 
+// SecretKeyLookup provides user lookup for re-keying notifications
+type SecretKeyLookup interface {
+	GetUsersWithSharedSecrets(ctx context.Context, userID string) ([]string, error)
+}
+
 // NotificationWorker processes queued notifications in the background
 type NotificationWorker struct {
-	queue        NotificationQueue
-	emailService EmailServiceInterface
-	templates    *EmailTemplates
-	userLookup   UserLookup
-	regionLookup RegionLookup
-	cfg          *config.NotificationConfig
+	queue           NotificationQueue
+	emailService    EmailServiceInterface
+	templates       *EmailTemplates
+	userLookup      UserLookup
+	regionLookup    RegionLookup
+	secretKeyLookup SecretKeyLookup
+	cfg             *config.NotificationConfig
 }
 
 // NewNotificationWorker creates a new NotificationWorker
@@ -43,15 +49,17 @@ func NewNotificationWorker(
 	templates *EmailTemplates,
 	userLookup UserLookup,
 	regionLookup RegionLookup,
+	secretKeyLookup SecretKeyLookup,
 	cfg *config.NotificationConfig,
 ) *NotificationWorker {
 	return &NotificationWorker{
-		queue:        queue,
-		emailService: emailService,
-		templates:    templates,
-		userLookup:   userLookup,
-		regionLookup: regionLookup,
-		cfg:          cfg,
+		queue:           queue,
+		emailService:    emailService,
+		templates:       templates,
+		userLookup:      userLookup,
+		regionLookup:    regionLookup,
+		secretKeyLookup: secretKeyLookup,
+		cfg:             cfg,
 	}
 }
 
@@ -130,8 +138,16 @@ func (w *NotificationWorker) processQueue(ctx context.Context) error {
 
 	for _, n := range notifications {
 		// Check if this is a fan-out event (no user_id set)
-		if n.UserID == "" && n.NotificationType == models.NotificationTypeInviteLinkUpdated {
-			w.fanOutInviteLinkNotification(ctx, n)
+		if n.UserID == "" {
+			switch n.NotificationType {
+			case models.NotificationTypeInviteLinkUpdated:
+				w.fanOutInviteLinkNotification(ctx, n)
+			case models.NotificationTypeRekeyingNeeded:
+				w.fanOutRekeyingNotification(ctx, n)
+			default:
+				log.Printf("ERROR: Unknown fan-out event type: %s", n.NotificationType)
+				_ = w.queue.Nack(ctx, n.ID, "unknown fan-out type")
+			}
 			continue
 		}
 
@@ -192,6 +208,54 @@ func (w *NotificationWorker) fanOutInviteLinkNotification(ctx context.Context, e
 	// Ack the fan-out event
 	_ = w.queue.Ack(ctx, event.ID, "")
 	log.Printf("INFO: Fan-out complete for region %s: queued %d notifications", regionID, totalQueued)
+}
+
+// fanOutRekeyingNotification expands a re-keying event to individual user notifications
+// for all users sharing encrypted secrets with the user who rotated their keys
+func (w *NotificationWorker) fanOutRekeyingNotification(ctx context.Context, event *models.EmailNotification) {
+	if event.ResourceID == nil {
+		log.Printf("ERROR: Re-keying fan-out event %s missing user ID", event.ID)
+		_ = w.queue.Nack(ctx, event.ID, "missing user ID")
+		return
+	}
+
+	rotatedUserID := *event.ResourceID
+
+	if w.secretKeyLookup == nil {
+		log.Printf("ERROR: SecretKeyLookup not configured, cannot fan out re-keying notification")
+		_ = w.queue.Nack(ctx, event.ID, "secret key lookup not configured")
+		return
+	}
+
+	userIDs, err := w.secretKeyLookup.GetUsersWithSharedSecrets(ctx, rotatedUserID)
+	if err != nil {
+		log.Printf("ERROR: Failed to get users sharing secrets with %s: %v", rotatedUserID, err)
+		_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "fan_out_rekey_users")
+		_ = w.queue.Nack(ctx, event.ID, err.Error())
+		return
+	}
+
+	totalQueued := 0
+	resourceType := "encryption_key"
+	for _, userID := range userIDs {
+		notification := &models.EmailNotification{
+			ID:               uuid.New().String(),
+			UserID:           userID,
+			NotificationType: models.NotificationTypeRekeyingNeeded,
+			ResourceType:     &resourceType,
+			ResourceID:       event.ResourceID,
+			Status:           models.NotificationStatusQueued,
+			QueuedAt:         time.Now().UTC(),
+		}
+		if err := w.queue.Enqueue(ctx, notification); err != nil {
+			log.Printf("ERROR: Failed to queue re-keying notification for user %s: %v", userID, err)
+		} else {
+			totalQueued++
+		}
+	}
+
+	_ = w.queue.Ack(ctx, event.ID, "")
+	log.Printf("INFO: Re-keying fan-out complete for user %s: queued %d notifications", rotatedUserID, totalQueued)
 }
 
 // processNotification processes a single notification
@@ -303,6 +367,10 @@ func (w *NotificationWorker) enrichTemplateData(ctx context.Context, n *models.E
 	case models.NotificationTypeInviteLinkUpdated:
 		// Resource ID is region ID (for fan-out events) or group ID
 		// We don't include group names in emails for security
+
+	case models.NotificationTypeRekeyingNeeded:
+		// Resource ID is the user who rotated keys
+		// No sensitive data to enrich — email just tells user to log in
 
 	default:
 		// No enrichment needed

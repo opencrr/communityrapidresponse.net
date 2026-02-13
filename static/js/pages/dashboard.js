@@ -6,9 +6,11 @@
 import { store, getUser, isPostcardVerified, isVouchVerified, hasReadAccess, isAdmin, isSuperuser, getVerificationStatus as getVerificationStatusFromStore } from '../utils/store.js';
 import { getMyRegions } from '../api/regions.js';
 import { getGroups } from '../api/signalGroups.js';
+import { listMeshtasticChannels } from '../api/meshtastic.js';
 import { getVerificationStatus as getVerificationStatusAPI, getPendingVouchRequests, vouchForUser } from '../api/verification.js';
 import { listMyRequests, listMyInvitations } from '../api/membership.js';
 import { getMySchools } from '../api/schools.js';
+import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
 import { navigate } from '../app.js';
@@ -211,6 +213,16 @@ export async function render(container) {
                         </div>
                     </div>
 
+                    <!-- My Meshtastic Channels Section -->
+                    <div class="dashboard-section mt-6">
+                        <h2 class="dashboard-section__title">My Meshtastic Channels</h2>
+                        <div id="my-meshtastic-channels">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Sub-Region Membership Section -->
                     <div class="dashboard-section mt-6">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-4);">
@@ -268,6 +280,15 @@ export async function render(container) {
                                     <h3 style="font-weight: 600; margin-bottom: var(--space-1);">Manage Groups</h3>
                                     <p style="font-size: var(--font-size-sm); color: var(--color-gray-600);">
                                         Create and manage Signal groups for your communities.
+                                    </p>
+                                </div>
+                            </a>
+                            <a href="/admin/meshtastic" class="card card--interactive" data-link>
+                                <div class="card__body">
+                                    <div style="font-size: 32px; margin-bottom: var(--space-2);">&#x1F4E1;</div>
+                                    <h3 style="font-weight: 600; margin-bottom: var(--space-1);">Manage Meshtastic</h3>
+                                    <p style="font-size: var(--font-size-sm); color: var(--color-gray-600);">
+                                        Create and manage Meshtastic mesh networking channels.
                                     </p>
                                 </div>
                             </a>
@@ -364,6 +385,7 @@ export async function render(container) {
     loadPromises.push(loadMySchools());
     if (userHasReadAccess) {
         loadPromises.push(loadMyGroups());
+        loadPromises.push(loadMyMeshtasticChannels());
         loadPromises.push(loadMyMembershipRequests());
     }
     if (userIsAdmin) {
@@ -685,9 +707,22 @@ async function loadMyGroups() {
             return;
         }
 
+        // Decrypt invite links
+        const privateKey = await getPrivateKey();
+        const decryptedGroups = await Promise.all(groups.map(async (group) => {
+            let link = null;
+            const secret = group.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...group, _decryptedLink: link };
+        }));
+
         groupsContainer.innerHTML = `
             <div class="dashboard-grid">
-                ${groups.map(group => `
+                ${decryptedGroups.map(group => `
                     <div class="card group-card">
                         <div class="card__body">
                             <div class="group-card__header">
@@ -702,9 +737,9 @@ async function loadMyGroups() {
                                 </p>
                             ` : ''}
                             <div class="group-invite">
-                                <span class="group-invite__link">${escapeHtml(group.invite_link || 'Invite link hidden')}</span>
-                                ${group.invite_link ? `
-                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group.invite_link)}">
+                                <span class="group-invite__link">${escapeHtml(group._decryptedLink || 'Invite link hidden')}</span>
+                                ${group._decryptedLink ? `
+                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group._decryptedLink)}">
                                         Copy
                                     </button>
                                 ` : ''}
@@ -732,6 +767,99 @@ async function loadMyGroups() {
         console.error('Failed to load groups:', error);
         groupsContainer.innerHTML = `
             <p class="form-error">Failed to load Signal groups.</p>
+        `;
+    }
+}
+
+/**
+ * Load user's Meshtastic channels
+ */
+async function loadMyMeshtasticChannels() {
+    const channelsContainer = document.getElementById('my-meshtastic-channels');
+    if (!channelsContainer) return;
+
+    try {
+        const response = await listMeshtasticChannels();
+        const channels = response.channels || [];
+
+        if (channels.length === 0) {
+            channelsContainer.innerHTML = `
+                <div class="card">
+                    <div class="card__body">
+                        <div class="empty-state">
+                            <div class="empty-state__icon">&#x1F4E1;</div>
+                            <h3 class="empty-state__title">No Meshtastic Channels</h3>
+                            <p class="empty-state__description">
+                                No Meshtastic channels have been set up for your communities yet.
+                            </p>
+                            <a href="/meshtastic" class="btn btn--primary" data-link>Browse Channels</a>
+                        </div>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        // Decrypt channel URLs
+        const privateKey = await getPrivateKey();
+        const decryptedChannels = await Promise.all(channels.map(async (channel) => {
+            let decryptedURL = null;
+            const secret = channel.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    decryptedURL = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...channel, _decryptedURL: decryptedURL };
+        }));
+
+        channelsContainer.innerHTML = `
+            <div class="dashboard-grid">
+                ${decryptedChannels.map(channel => `
+                    <div class="card channel-card">
+                        <div class="card__body">
+                            <div class="group-card__header">
+                                <div>
+                                    <div class="group-card__name">${escapeHtml(channel.name)}${channel.has_pending_deletion ? '<span class="badge badge--danger" style="margin-left: var(--space-2);">Delete Proposed</span>' : ''}</div>
+                                    <div class="group-card__region">${escapeHtml(channel.region_name || channel.school_name || channel.district_name || '')}</div>
+                                </div>
+                            </div>
+                            ${channel.description ? `
+                                <p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">
+                                    ${escapeHtml(channel.description)}
+                                </p>
+                            ` : ''}
+                            <div class="group-invite">
+                                <span class="group-invite__link">${escapeHtml(channel._decryptedURL || 'Channel URL hidden')}</span>
+                                ${channel._decryptedURL ? `
+                                    <button class="btn btn--sm btn--secondary copy-url-btn" data-url="${escapeHtml(channel._decryptedURL)}">
+                                        Copy
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // Bind copy buttons
+        const copyButtons = channelsContainer.querySelectorAll('.copy-url-btn');
+        copyButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const url = btn.dataset.url;
+                try {
+                    await navigator.clipboard.writeText(url);
+                    toast.success('Channel URL copied to clipboard');
+                } catch (error) {
+                    toast.error('Failed to copy URL');
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Failed to load Meshtastic channels:', error);
+        channelsContainer.innerHTML = `
+            <p class="form-error">Failed to load Meshtastic channels.</p>
         `;
     }
 }

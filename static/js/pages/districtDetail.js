@@ -4,9 +4,13 @@
  */
 
 import { getDistrict, getDistrictMembers, getDistrictSignalGroups, createDistrictSignalGroup, districtToFeature } from '../api/schools.js';
+import { listMeshtasticChannels } from '../api/meshtastic.js';
 import { createDistrictReport } from '../api/reports.js';
 import { initMap, addRegionsLayer, fitToBounds, destroyMap } from '../components/map.js';
+import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
 import { isAuthenticated, getUser } from '../utils/store.js';
+import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
+import { getPublicKeys } from '../api/encryption.js';
 import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -143,6 +147,16 @@ async function renderDistrictPage(container) {
         </section>
     `;
 
+    // Meshtastic channels section
+    html += `
+        <section style="margin-bottom: var(--space-8);">
+            <h2 style="margin-bottom: var(--space-4);">District Meshtastic Channels</h2>
+            <div id="district-meshtastic-channels">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </section>
+    `;
+
     html += '</div></div>';
     container.innerHTML = html;
 
@@ -156,6 +170,7 @@ async function renderDistrictPage(container) {
         loadMembers(districtId);
     }
     await loadSignalGroups();
+    await loadMeshtasticChannels();
 }
 
 /**
@@ -372,15 +387,28 @@ async function loadSignalGroups() {
                 </div>
             `;
         } else {
+            // Decrypt invite links
+            const privateKey = await getPrivateKey();
+            const decryptedGroups = await Promise.all(groups.map(async (group) => {
+                let link = null;
+                const secret = group.encrypted_secret;
+                if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                    try {
+                        link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                    } catch (e) { /* decryption failed */ }
+                }
+                return { ...group, _decryptedLink: link };
+            }));
+
             let groupsHtml = '<div class="card-list">';
-            for (const group of groups) {
+            for (const group of decryptedGroups) {
                 groupsHtml += `
                     <div class="card">
                         <div class="card__body">
                             <h3 class="card__title">${escapeHtml(group.name)}${group.has_pending_deletion ? '<span class="badge badge--danger" style="margin-left: var(--space-2);">Delete Proposed</span>' : ''}</h3>
                             ${group.description ? `<p class="card__meta">${escapeHtml(group.description)}</p>` : ''}
-                            ${group.invite_link ? `
-                                <a href="${escapeHtml(group.invite_link)}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" style="margin-top: var(--space-2);">
+                            ${group._decryptedLink ? `
+                                <a href="${escapeHtml(group._decryptedLink)}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" style="margin-top: var(--space-2);">
                                     Join Signal Group
                                 </a>
                             ` : ''}
@@ -446,6 +474,102 @@ async function loadSignalGroups() {
 }
 
 /**
+ * Load and render Meshtastic channels for the district
+ */
+async function loadMeshtasticChannels() {
+    const channelsContainer = document.getElementById('district-meshtastic-channels');
+    if (!channelsContainer) return;
+
+    if (!isAuthenticated()) {
+        channelsContainer.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state__icon">&#x1F4E1;</div>
+                <p class="empty-state__description">
+                    <a href="/login" data-link>Log in</a> and become a verified member of a school in this district to see Meshtastic channels.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    try {
+        const response = await listMeshtasticChannels({ district_id: districtId });
+        const channels = response.channels || [];
+
+        if (channels.length === 0) {
+            channelsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon">&#x1F4E1;</div>
+                    <h3 class="empty-state__title">No Meshtastic Channels Yet</h3>
+                    <p class="empty-state__description">
+                        No district-level Meshtastic channels have been created yet.
+                    </p>
+                </div>
+            `;
+        } else {
+            // Decrypt channel URLs
+            const privateKey = await getPrivateKey();
+            const decryptedChannels = await Promise.all(channels.map(async (channel) => {
+                let url = null;
+                const secret = channel.encrypted_secret;
+                if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                    try {
+                        url = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                    } catch (e) { /* decryption failed */ }
+                }
+                return { ...channel, _decryptedURL: url };
+            }));
+
+            channelsContainer.innerHTML = `
+                <div class="dashboard-grid">
+                    ${decryptedChannels.map(channel => renderMeshtasticCardHTML(channel, channel._decryptedURL)).join('')}
+                </div>
+            `;
+
+            // Init QR codes and bind copy buttons
+            for (const channel of decryptedChannels) {
+                if (channel._decryptedURL) {
+                    initMeshtasticCardQR(channel.id, channel._decryptedURL);
+                }
+            }
+            bindMeshtasticCopyButtons(channelsContainer);
+        }
+
+        // Add admin create link if user can create
+        if (response.can_create) {
+            channelsContainer.insertAdjacentHTML('beforeend', `
+                <div style="margin-top: var(--space-4);">
+                    <a href="/admin/meshtastic?district=${districtId}" class="btn btn--secondary" data-link>
+                        Create Meshtastic Channel
+                    </a>
+                </div>
+            `);
+        }
+    } catch (error) {
+        console.error('Failed to load district Meshtastic channels:', error);
+        if (error.status === 403) {
+            channelsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon">&#x1F512;</div>
+                    <p class="empty-state__description">
+                        You must be a verified member of a school in this district to view Meshtastic channels.
+                    </p>
+                </div>
+            `;
+        } else {
+            channelsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon">&#x26A0;</div>
+                    <p class="empty-state__description">
+                        Failed to load Meshtastic channels. Please try again.
+                    </p>
+                </div>
+            `;
+        }
+    }
+}
+
+/**
  * Handle create district signal group form submission
  */
 async function handleCreateDistrictGroup(event) {
@@ -463,11 +587,29 @@ async function handleCreateDistrictGroup(event) {
     const submitBtn = event.target.querySelector('button[type="submit"]');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Creating...';
+        submitBtn.textContent = 'Encrypting & creating...';
     }
 
     try {
-        const data = { name, invite_link: inviteLink };
+        // Fetch public keys for district members and encrypt
+        const publicKeysResponse = await getPublicKeys({ district_id: districtId });
+        const memberKeys = publicKeysResponse.public_keys || [];
+        if (memberKeys.length === 0) {
+            toast.error('No members with encryption keys found. Members need to log in to set up encryption.');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Group';
+            }
+            return;
+        }
+        const encrypted = await encryptForMembers(inviteLink, memberKeys);
+
+        const data = {
+            name,
+            encrypted_payload: encrypted.ciphertext,
+            encryption_iv: encrypted.iv,
+            wrapped_keys: encrypted.wrappedKeys,
+        };
         if (description) data.description = description;
 
         await createDistrictSignalGroup(districtId, data);

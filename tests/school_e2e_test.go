@@ -330,22 +330,17 @@ func TestE2E_SchoolSignalGroupFlow(t *testing.T) {
 		}
 	}()
 
-	// Create an admin user with login
-	resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "e2e_sg_admin",
-		"email":    "e2e_sg_admin@test.com",
-		"password": "securepassword123",
-	}, "")
-	var registerResp models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
-	_ = resp.Body.Close()
-
 	ctx := context.Background()
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", registerResp.UserID)
-	suite.addUserToSchool(registerResp.UserID, schoolID, "verified", true)
-	defer suite.cleanup(registerResp.UserID)
 
-	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
+	// Create an admin user with login (handles pre-existing users from prior runs)
+	adminUserID := suite.registerOrGetUserID("e2e_sg_admin", "e2e_sg_admin@test.com", "securepassword123")
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", adminUserID)
+	// Clean up stale school membership before re-adding
+	_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", adminUserID, schoolID)
+	suite.addUserToSchool(adminUserID, schoolID, "verified", true)
+	defer suite.cleanup(adminUserID)
+
+	resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "e2e_sg_admin@test.com",
 		"password": "securepassword123",
 	}, "")
@@ -355,18 +350,11 @@ func TestE2E_SchoolSignalGroupFlow(t *testing.T) {
 	adminToken := loginResp.Token
 
 	// Create a verified member user
-	resp = suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "e2e_sg_member",
-		"email":    "e2e_sg_member@test.com",
-		"password": "securepassword123",
-	}, "")
-	var memberRegResp models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&memberRegResp)
-	_ = resp.Body.Close()
-
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", memberRegResp.UserID)
-	suite.addUserToSchool(memberRegResp.UserID, schoolID, "verified", false)
-	defer suite.cleanup(memberRegResp.UserID)
+	memberUserID := suite.registerOrGetUserID("e2e_sg_member", "e2e_sg_member@test.com", "securepassword123")
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", memberUserID)
+	_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", memberUserID, schoolID)
+	suite.addUserToSchool(memberUserID, schoolID, "verified", false)
+	defer suite.cleanup(memberUserID)
 
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "e2e_sg_member@test.com",
@@ -378,18 +366,11 @@ func TestE2E_SchoolSignalGroupFlow(t *testing.T) {
 	memberToken := memberLoginResp.Token
 
 	// Create an unverified member
-	resp = suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "e2e_sg_pending",
-		"email":    "e2e_sg_pending@test.com",
-		"password": "securepassword123",
-	}, "")
-	var pendingRegResp models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&pendingRegResp)
-	_ = resp.Body.Close()
-
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", pendingRegResp.UserID)
-	suite.addUserToSchool(pendingRegResp.UserID, schoolID, "pending", false)
-	defer suite.cleanup(pendingRegResp.UserID)
+	pendingUserID := suite.registerOrGetUserID("e2e_sg_pending", "e2e_sg_pending@test.com", "securepassword123")
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", pendingUserID)
+	_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", pendingUserID, schoolID)
+	suite.addUserToSchool(pendingUserID, schoolID, "pending", false)
+	defer suite.cleanup(pendingUserID)
 
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "e2e_sg_pending@test.com",
@@ -402,8 +383,12 @@ func TestE2E_SchoolSignalGroupFlow(t *testing.T) {
 
 	t.Run("admin creates signal group", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/schools/"+schoolID+"/signal-groups", map[string]interface{}{
-			"name":        "E2E School Signal Group",
-			"invite_link": "https://signal.group/e2e123",
+			"name":              "E2E School Signal Group",
+			"encrypted_payload": "dGVzdC1zY2hvb2wtZW5jcnlwdGVkLXBheWxvYWQ=",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": adminUserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, adminToken)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -497,21 +482,14 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 	})
 
 	t.Run("verified member can list district signal groups", func(t *testing.T) {
-		// Create a user with verified school membership
-		resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
-			"username": "e2edistmember",
-			"email":    "e2edistmember@test.com",
-			"password": "securepassword123",
-		}, "")
-		var reg models.RegisterResponse
-		_ = json.NewDecoder(resp.Body).Decode(&reg)
-		_ = resp.Body.Close()
+		// Create a user with verified school membership (handles pre-existing users)
+		memberID := suite.registerOrGetUserID("e2edistmember", "e2edistmember@test.com", "securepassword123")
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", memberID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", memberID, schoolID)
+		suite.addUserToSchool(memberID, schoolID, "verified", false)
+		defer suite.cleanup(memberID)
 
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", reg.UserID)
-		suite.addUserToSchool(reg.UserID, schoolID, "verified", false)
-		defer suite.cleanup(reg.UserID)
-
-		resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 			"email":    "e2edistmember@test.com",
 			"password": "securepassword123",
 		}, "")
@@ -530,20 +508,13 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 	})
 
 	t.Run("admin creates district signal group", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
-			"username": "e2edistadmin",
-			"email":    "e2edistadmin@test.com",
-			"password": "securepassword123",
-		}, "")
-		var reg models.RegisterResponse
-		_ = json.NewDecoder(resp.Body).Decode(&reg)
-		_ = resp.Body.Close()
+		adminID := suite.registerOrGetUserID("e2edistadmin", "e2edistadmin@test.com", "securepassword123")
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", adminID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", adminID, schoolID)
+		suite.addUserToSchool(adminID, schoolID, "verified", true)
+		defer suite.cleanup(adminID)
 
-		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", reg.UserID)
-		suite.addUserToSchool(reg.UserID, schoolID, "verified", true)
-		defer suite.cleanup(reg.UserID)
-
-		resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 			"email":    "e2edistadmin@test.com",
 			"password": "securepassword123",
 		}, "")
@@ -552,8 +523,12 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 		_ = resp.Body.Close()
 
 		resp = suite.request("POST", "/api/v1/school-districts/"+districtID+"/signal-groups", map[string]interface{}{
-			"name":        "E2E District Signal Group",
-			"invite_link": "https://signal.group/e2edist",
+			"name":              "E2E District Signal Group",
+			"encrypted_payload": "dGVzdC1kaXN0cmljdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": adminID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, login.Token)
 		defer func() { _ = resp.Body.Close() }()
 

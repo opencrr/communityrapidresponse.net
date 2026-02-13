@@ -65,7 +65,6 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -91,7 +90,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, proposalRepo, regionRepo, nil, consensusConfig,
+		nil, groupRepo, nil, regionRepo, nil,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -113,7 +112,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, proposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
@@ -126,7 +125,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, jwtAuth, nil, nil, csrfConfig,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

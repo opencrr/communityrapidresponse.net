@@ -428,6 +428,7 @@ func TestStress_WorkerProcessing(t *testing.T) {
 		templates,
 		suite.userRepo,
 		nil, // regionRepo not needed for this test
+		nil,
 		cfg,
 	)
 

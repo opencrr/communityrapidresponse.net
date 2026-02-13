@@ -132,3 +132,26 @@ func (s *NotificationService) QueueSubRegionInvitation(ctx context.Context, user
 	log.Printf("INFO: Queued sub-region invitation notification for user %s from inviter %s", userID, inviterID)
 	return nil
 }
+
+// QueueRekeyingNeededEvent queues a fan-out event to notify members sharing secrets with a user
+// who has rotated their encryption keys. The worker expands this to per-user notifications.
+func (s *NotificationService) QueueRekeyingNeededEvent(ctx context.Context, userID string) error {
+	resourceType := "encryption_key"
+	notification := &models.EmailNotification{
+		ID:               uuid.New().String(),
+		UserID:           "", // Empty user_id indicates fan-out event
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &userID, // Store the user who rotated keys
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+
+	if err := s.queue.Enqueue(ctx, notification); err != nil {
+		log.Printf("ERROR: Failed to queue re-keying needed event for user %s: %v", userID, err)
+		return err
+	}
+
+	log.Printf("INFO: Queued re-keying needed event for user %s", userID)
+	return nil
+}

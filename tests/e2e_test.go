@@ -22,20 +22,22 @@ import (
 
 // E2ETestSuite holds all dependencies for e2e tests
 type E2ETestSuite struct {
-	t               *testing.T
-	db              *database.DB
-	server          *httptest.Server
-	userRepo        *database.UserRepository
-	regionRepo      *database.RegionRepository
-	verifyRepo      *database.VerificationRepository
-	vouchRepo       *database.VouchRepository
-	groupRepo       *database.SignalGroupRepository
-	proposalRepo    *database.InviteLinkProposalRepository
-	jwtAuth         *middleware.JWTAuth
-	schoolRepo      *database.SchoolRepository
-	districtRepo    *database.SchoolDistrictRepository
-	schoolVouchRepo *database.SchoolVouchRepository
-	mockMapbox      *mocks.MockMapboxService
+	t                   *testing.T
+	db                  *database.DB
+	server              *httptest.Server
+	userRepo            *database.UserRepository
+	regionRepo          *database.RegionRepository
+	verifyRepo          *database.VerificationRepository
+	vouchRepo           *database.VouchRepository
+	groupRepo           *database.SignalGroupRepository
+	jwtAuth             *middleware.JWTAuth
+	schoolRepo          *database.SchoolRepository
+	districtRepo        *database.SchoolDistrictRepository
+	schoolVouchRepo     *database.SchoolVouchRepository
+	encryptedSecretRepo *database.EncryptedSecretRepository
+	encryptionKeyRepo   *database.EncryptionKeyRepository
+	meshtasticRepo      *database.MeshtasticChannelRepository
+	mockMapbox          *mocks.MockMapboxService
 }
 
 // SetupE2ETest creates a new test suite
@@ -70,12 +72,14 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
+	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
+	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 
 	// Create JWT auth
 	jwtConfig := &config.JWTConfig{
@@ -99,7 +103,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, proposalRepo, regionRepo, nil, consensusConfig,
+		db, groupRepo, encryptedSecretRepo, regionRepo, auditRepo,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -123,14 +127,19 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, proposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
+
+	meshtasticHandler := handlers.NewMeshtasticHandler(
+		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
+	)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -138,20 +147,22 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	server := httptest.NewServer(handler)
 
 	suite := &E2ETestSuite{
-		t:               t,
-		db:              db,
-		server:          server,
-		userRepo:        userRepo,
-		regionRepo:      regionRepo,
-		verifyRepo:      verifyRepo,
-		vouchRepo:       vouchRepo,
-		groupRepo:       groupRepo,
-		proposalRepo:    proposalRepo,
-		jwtAuth:         jwtAuth,
-		schoolRepo:      schoolRepo,
-		districtRepo:    districtRepo,
-		schoolVouchRepo: schoolVouchRepo,
-		mockMapbox:      mockMapbox,
+		t:                   t,
+		db:                  db,
+		server:              server,
+		userRepo:            userRepo,
+		regionRepo:          regionRepo,
+		verifyRepo:          verifyRepo,
+		vouchRepo:           vouchRepo,
+		groupRepo:           groupRepo,
+		jwtAuth:             jwtAuth,
+		schoolRepo:          schoolRepo,
+		districtRepo:        districtRepo,
+		schoolVouchRepo:     schoolVouchRepo,
+		encryptedSecretRepo: encryptedSecretRepo,
+		encryptionKeyRepo:   encryptionKeyRepo,
+		meshtasticRepo:      meshtasticChannelRepo,
+		mockMapbox:          mockMapbox,
 	}
 
 	t.Cleanup(func() {
@@ -197,6 +208,8 @@ func (s *E2ETestSuite) request(method, path string, body interface{}, token stri
 func (s *E2ETestSuite) cleanup(userIDs ...string) {
 	ctx := context.Background()
 	for _, id := range userIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE user_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE voucher_user_id = ? OR vouched_user_id = ?", id, id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ?", id)
@@ -250,6 +263,27 @@ func (s *E2ETestSuite) registerOrGetUser(username, email, password string) (stri
 	return userID, login.Token
 }
 
+// registerOrGetUserID registers a new user or retrieves existing one, returns just the userID (no login).
+// Useful when you need to set verification flags before login.
+func (s *E2ETestSuite) registerOrGetUserID(username, email, password string) string {
+	resp := s.request("POST", "/api/v1/auth/register", map[string]string{
+		"username": username, "email": email, "password": password,
+	}, "")
+	defer func() { _ = resp.Body.Close() }()
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
+	userID := registerResp.UserID
+
+	if userID == "" {
+		var id string
+		_ = s.db.QueryRowContext(context.Background(), "SELECT id FROM users WHERE email = ?", email).Scan(&id)
+		userID = id
+	}
+
+	return userID
+}
+
 // School-specific helpers
 
 func (s *E2ETestSuite) createSchool(name, state string) string {
@@ -299,6 +333,23 @@ func (s *E2ETestSuite) addUserToSchool(userID, schoolID string, status string, i
 func (s *E2ETestSuite) cleanupSchools(schoolIDs ...string) {
 	ctx := context.Background()
 	for _, schoolID := range schoolIDs {
+		// Clean up meshtastic channel encrypted secrets and channels
+		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+			WHERE mc.school_id = ?`, schoolID)
+		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+			WHERE mc.school_id = ?`, schoolID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE school_id = ?", schoolID)
+		// Clean up signal group encrypted secrets
+		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+			WHERE sg.school_id = ?`, schoolID)
+		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+			WHERE sg.school_id = ?`, schoolID)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE school_id = ?", schoolID)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE school_id = ?", schoolID)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_blocked_users WHERE school_id = ?", schoolID)
@@ -310,6 +361,23 @@ func (s *E2ETestSuite) cleanupSchools(schoolIDs ...string) {
 func (s *E2ETestSuite) cleanupDistricts(districtIDs ...string) {
 	ctx := context.Background()
 	for _, districtID := range districtIDs {
+		// Clean up meshtastic channel encrypted secrets and channels
+		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+			WHERE mc.district_id = ?`, districtID)
+		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+			WHERE mc.district_id = ?`, districtID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE district_id = ?", districtID)
+		// Clean up signal group encrypted secrets
+		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+			WHERE sg.district_id = ?`, districtID)
+		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+			WHERE sg.district_id = ?`, districtID)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE district_id = ?", districtID)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_districts WHERE id = ?", districtID)
 	}
@@ -1126,6 +1194,7 @@ func TestE2E_SignalGroupsAdmin(t *testing.T) {
 	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verified_at) VALUES (UUID(), ?, ?, TRUE, NOW()) ON DUPLICATE KEY UPDATE is_admin = TRUE", registerResp.UserID, regionID)
 
 	defer func() {
+		suite.cleanupSignalGroupSecrets(regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id = ?", regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
@@ -1154,12 +1223,16 @@ func TestE2E_SignalGroupsAdmin(t *testing.T) {
 		_ = groups
 	})
 
-	t.Run("create signal group with name field", func(t *testing.T) {
+	t.Run("create signal group with encrypted payload", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
-			"region_id":   regionID,
-			"name":        "Test Signal Group",
-			"invite_link": "https://signal.group/test123",
-			"description": "A test group",
+			"region_id":         regionID,
+			"name":              "Test Signal Group",
+			"description":       "A test group",
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": registerResp.UserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1364,6 +1437,8 @@ func TestE2E_AdminHierarchyPropagation(t *testing.T) {
 	token = loginResp.Token
 
 	defer func() {
+		suite.cleanupSignalGroupSecrets(parentRegionID)
+		suite.cleanupSignalGroupSecrets(childRegionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id IN (?, ?)", parentRegionID, childRegionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id IN (?, ?)", parentRegionID, childRegionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", childRegionID)
@@ -1375,10 +1450,14 @@ func TestE2E_AdminHierarchyPropagation(t *testing.T) {
 
 	t.Run("admin of child can create signal group in parent region", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
-			"region_id":   parentRegionID,
-			"name":        "Parent Region Group",
-			"invite_link": "https://signal.group/parent123",
-			"description": "Group in parent region",
+			"region_id":         parentRegionID,
+			"name":              "Parent Region Group",
+			"description":       "Group in parent region",
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": registerResp.UserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1475,6 +1554,7 @@ func TestE2E_SuperuserBypass(t *testing.T) {
 	regionID := createBody["region_id"]
 
 	defer func() {
+		suite.cleanupSignalGroupSecrets(regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id = ?", regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", regionID)
 		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
@@ -1483,10 +1563,14 @@ func TestE2E_SuperuserBypass(t *testing.T) {
 
 	t.Run("superuser can create signal group in any region", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
-			"region_id":   regionID,
-			"name":        "Superuser Created Group",
-			"invite_link": "https://signal.group/superuser123",
-			"description": "Group created by superuser",
+			"region_id":         regionID,
+			"name":              "Superuser Created Group",
+			"description":       "Group created by superuser",
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": registerResp.UserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -2226,6 +2310,559 @@ func TestE2E_VouchRequestWithAddressGeocoding(t *testing.T) {
 
 		if body.RegionID != cityRegionID {
 			t.Errorf("Expected region ID %s, got %s", cityRegionID, body.RegionID)
+		}
+	})
+}
+
+// =============================================================================
+// Cleanup helpers for encrypted secrets and meshtastic channels
+// =============================================================================
+
+func (s *E2ETestSuite) cleanupMeshtasticChannels(regionID string) {
+	ctx := context.Background()
+	// Delete encrypted_secret_keys and encrypted_secrets for meshtastic channels in this region
+	_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+		INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+		INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+		WHERE mc.region_id = ?`, regionID)
+	_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+		INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
+		WHERE mc.region_id = ?`, regionID)
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE region_id = ?", regionID)
+}
+
+func (s *E2ETestSuite) cleanupSignalGroupSecrets(regionID string) {
+	ctx := context.Background()
+	_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
+		INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE sg.region_id = ?`, regionID)
+	_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE sg.region_id = ?`, regionID)
+}
+
+func (s *E2ETestSuite) cleanupEncryptionKeys(userID string) {
+	_, _ = s.db.ExecContext(context.Background(), "DELETE FROM user_encryption_keys WHERE user_id = ?", userID)
+}
+
+// =============================================================================
+// Meshtastic Channel CRUD E2E Tests
+// =============================================================================
+
+func TestE2E_MeshtasticChannelCRUD(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Register and setup admin user
+	adminEmail := fmt.Sprintf("meshtastic_admin_%s@test.com", suffix)
+	userID, _ := suite.registerOrGetUser(
+		fmt.Sprintf("mesh_admin_%s", suffix),
+		adminEmail,
+		"securepassword123",
+	)
+
+	// Make user a superuser with full verification
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", userID)
+
+	// Re-login to get token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": adminEmail, "password": "securepassword123",
+	}, "")
+	var login models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&login)
+	_ = loginResp.Body.Close()
+	token := login.Token
+
+	// Create a region
+	createRegionResp := suite.request("POST", "/api/v1/communities", map[string]interface{}{
+		"name": fmt.Sprintf("Meshtastic Test Region %s", suffix),
+		"type": "city",
+		"geometry": map[string]interface{}{
+			"type":        "Polygon",
+			"coordinates": [][][]float64{{{-99.0, 30.0}, {-98.0, 30.0}, {-98.0, 31.0}, {-99.0, 31.0}, {-99.0, 30.0}}},
+		},
+	}, token)
+	var regionBody map[string]string
+	_ = json.NewDecoder(createRegionResp.Body).Decode(&regionBody)
+	_ = createRegionResp.Body.Close()
+	regionID := regionBody["region_id"]
+
+	if regionID == "" {
+		t.Fatal("Failed to create region for meshtastic test")
+	}
+
+	// Make user admin of this region
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verified_at) VALUES (UUID(), ?, ?, TRUE, NOW()) ON DUPLICATE KEY UPDATE is_admin = TRUE", userID, regionID)
+
+	defer func() {
+		suite.cleanupMeshtasticChannels(regionID)
+		suite.cleanupSignalGroupSecrets(regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id = ?", regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
+		suite.cleanup(userID)
+	}()
+
+	var channelID string
+
+	t.Run("create meshtastic channel", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/meshtastic-channels", map[string]interface{}{
+			"region_id":         regionID,
+			"name":              "Test Meshtastic Channel",
+			"description":       "A test channel",
+			"encrypted_payload": "dGVzdC1tZXNodGFzdGljLXBheWxvYWQ=",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": userID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Fatalf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["channel_id"] == nil || body["channel_id"] == "" {
+			t.Error("Expected channel_id in response")
+		}
+		channelID = body["channel_id"].(string)
+
+		if body["region_id"] != regionID {
+			t.Errorf("Expected region_id %s, got %v", regionID, body["region_id"])
+		}
+		if body["channel_name"] != "Test Meshtastic Channel" {
+			t.Errorf("Expected channel_name 'Test Meshtastic Channel', got %v", body["channel_name"])
+		}
+		if body["created_at"] == nil {
+			t.Error("Expected created_at in response")
+		}
+	})
+
+	t.Run("list meshtastic channels as verified user", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/meshtastic-channels?region_id="+regionID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 200, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		channels, ok := body["channels"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected 'channels' array, got %T", body["channels"])
+		}
+		if len(channels) == 0 {
+			t.Error("Expected at least one channel in list")
+		}
+	})
+
+	t.Run("list meshtastic channels on admin endpoint", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/meshtastic-channels/admin", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 200, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		channels, ok := body["channels"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected 'channels' array, got %T", body["channels"])
+		}
+		if len(channels) == 0 {
+			t.Error("Expected at least one channel in admin list")
+		}
+	})
+
+	t.Run("update meshtastic channel metadata", func(t *testing.T) {
+		if channelID == "" {
+			t.Skip("No channel ID from create test")
+		}
+
+		updatedName := "Updated Meshtastic Channel"
+		updatedDesc := "Updated description"
+		resp := suite.request("PUT", "/api/v1/meshtastic-channels/"+channelID, map[string]interface{}{
+			"name":        updatedName,
+			"description": updatedDesc,
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 200, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["channel_name"] != updatedName {
+			t.Errorf("Expected channel_name '%s', got %v", updatedName, body["channel_name"])
+		}
+	})
+}
+
+// =============================================================================
+// Encrypted Secret Flow E2E Tests
+// =============================================================================
+
+func TestE2E_EncryptedSecretFlow(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Register and setup admin user
+	adminEmail := fmt.Sprintf("enc_admin_%s@test.com", suffix)
+	userID, _ := suite.registerOrGetUser(
+		fmt.Sprintf("enc_admin_%s", suffix),
+		adminEmail,
+		"securepassword123",
+	)
+
+	// Make user a superuser with full verification
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", userID)
+
+	// Re-login to get token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": adminEmail, "password": "securepassword123",
+	}, "")
+	var login models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&login)
+	_ = loginResp.Body.Close()
+	token := login.Token
+
+	// Create a region
+	createRegionResp := suite.request("POST", "/api/v1/communities", map[string]interface{}{
+		"name": fmt.Sprintf("Encryption Test Region %s", suffix),
+		"type": "city",
+		"geometry": map[string]interface{}{
+			"type":        "Polygon",
+			"coordinates": [][][]float64{{{-95.0, 29.0}, {-94.0, 29.0}, {-94.0, 30.0}, {-95.0, 30.0}, {-95.0, 29.0}}},
+		},
+	}, token)
+	var regionBody map[string]string
+	_ = json.NewDecoder(createRegionResp.Body).Decode(&regionBody)
+	_ = createRegionResp.Body.Close()
+	regionID := regionBody["region_id"]
+
+	if regionID == "" {
+		t.Fatal("Failed to create region for encryption test")
+	}
+
+	// Make user admin of this region
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verified_at) VALUES (UUID(), ?, ?, TRUE, NOW()) ON DUPLICATE KEY UPDATE is_admin = TRUE", userID, regionID)
+
+	defer func() {
+		suite.cleanupEncryptionKeys(userID)
+		suite.cleanupSignalGroupSecrets(regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id = ?", regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", regionID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
+		suite.cleanup(userID)
+	}()
+
+	t.Run("signal group creation stores encrypted payload", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
+			"region_id":         regionID,
+			"name":              "Encrypted Signal Group",
+			"description":       "Group with encrypted secret",
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtc2lnbmFs",
+			"encryption_iv":     "dGVzdC1pdi1zaWduYWw=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": userID, "wrapped_dek": "dGVzdC13cmFwcGVkLXNpZ25hbA=="},
+			},
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Fatalf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["group_id"] == nil || body["group_id"] == "" {
+			t.Error("Expected group_id in response")
+		}
+	})
+
+	t.Run("listing groups returns encrypted payload and wrapped DEK", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/signal-groups?region_id="+regionID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, ok := body["groups"].([]interface{})
+		if !ok || len(groups) == 0 {
+			t.Fatal("Expected at least one group in list")
+		}
+
+		group := groups[0].(map[string]interface{})
+		encSecret, ok := group["encrypted_secret"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected 'encrypted_secret' object in group response")
+		}
+
+		if encSecret["encrypted_payload"] == nil || encSecret["encrypted_payload"] == "" {
+			t.Error("Expected encrypted_payload in encrypted_secret")
+		}
+		if encSecret["encryption_iv"] == nil || encSecret["encryption_iv"] == "" {
+			t.Error("Expected encryption_iv in encrypted_secret")
+		}
+	})
+
+	t.Run("encryption key upload", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/encryption/keys", map[string]interface{}{
+			"public_key":          "test-public-key-base64",
+			"wrapped_private_key": "test-wrapped-private-key",
+			"key_salt":            "test-salt-12345678901234",
+			"key_iv":              "test-iv-12345678",
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("encryption key retrieval", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/encryption/keys", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Fatalf("Expected status 200, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["public_key"] != "test-public-key-base64" {
+			t.Errorf("Expected public_key 'test-public-key-base64', got %v", body["public_key"])
+		}
+		if body["wrapped_private_key"] != "test-wrapped-private-key" {
+			t.Errorf("Expected wrapped_private_key 'test-wrapped-private-key', got %v", body["wrapped_private_key"])
+		}
+		if body["key_salt"] != "test-salt-12345678901234" {
+			t.Errorf("Expected key_salt 'test-salt-12345678901234', got %v", body["key_salt"])
+		}
+		if body["key_iv"] != "test-iv-12345678" {
+			t.Errorf("Expected key_iv 'test-iv-12345678', got %v", body["key_iv"])
+		}
+	})
+
+	t.Run("encryption key password change update", func(t *testing.T) {
+		resp := suite.request("PUT", "/api/v1/encryption/keys", map[string]interface{}{
+			"wrapped_private_key": "updated-wrapped-private-key",
+			"key_salt":            "updated-salt-1234567890",
+			"key_iv":              "updated-iv-1234",
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 200, got %d: %v", resp.StatusCode, body)
+		}
+
+		// Verify the updated values
+		getResp := suite.request("GET", "/api/v1/encryption/keys", nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&body)
+
+		if body["wrapped_private_key"] != "updated-wrapped-private-key" {
+			t.Errorf("Expected updated wrapped_private_key, got %v", body["wrapped_private_key"])
+		}
+		if body["key_salt"] != "updated-salt-1234567890" {
+			t.Errorf("Expected updated key_salt, got %v", body["key_salt"])
+		}
+	})
+}
+
+// =============================================================================
+// Meshtastic Channel Scoping E2E Tests
+// =============================================================================
+
+func TestE2E_MeshtasticChannelScoping(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	// Register and setup admin user
+	adminEmail := fmt.Sprintf("mesh_scope_admin_%s@test.com", suffix)
+	adminUserID, _ := suite.registerOrGetUser(
+		fmt.Sprintf("mesh_scope_%s", suffix),
+		adminEmail,
+		"securepassword123",
+	)
+
+	// Make user a superuser with full verification
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", adminUserID)
+
+	// Re-login to get token with updated claims
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": adminEmail, "password": "securepassword123",
+	}, "")
+	var login models.LoginResponse
+	_ = json.NewDecoder(loginResp.Body).Decode(&login)
+	_ = loginResp.Body.Close()
+	adminToken := login.Token
+
+	// Create school and district for scoping tests
+	schoolID := suite.createSchool(fmt.Sprintf("MeshSchool %s", suffix), "TX")
+	districtID := suite.createDistrict(fmt.Sprintf("MeshDist %s", suffix), "TX")
+	suite.linkSchoolToDistrict(schoolID, districtID)
+	suite.addUserToSchool(adminUserID, schoolID, "verified", true)
+
+	defer func() {
+		suite.cleanupSchools(schoolID)
+		suite.cleanupDistricts(districtID)
+		suite.cleanup(adminUserID)
+	}()
+
+	t.Run("school-scoped meshtastic channel creation", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/meshtastic-channels", map[string]interface{}{
+			"school_id":         schoolID,
+			"name":              "School Meshtastic Channel",
+			"description":       "Channel for school",
+			"encrypted_payload": "dGVzdC1zY2hvb2wtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi1zY2hvb2w=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": adminUserID, "wrapped_dek": "dGVzdC13cmFwcGVkLXNjaG9vbA=="},
+			},
+		}, adminToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["channel_id"] == nil || body["channel_id"] == "" {
+			t.Error("Expected channel_id in response")
+		}
+		if body["school_id"] != schoolID {
+			t.Errorf("Expected school_id %s, got %v", schoolID, body["school_id"])
+		}
+	})
+
+	t.Run("district-scoped meshtastic channel creation", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/meshtastic-channels", map[string]interface{}{
+			"district_id":       districtID,
+			"name":              "District Meshtastic Channel",
+			"description":       "Channel for district",
+			"encrypted_payload": "dGVzdC1kaXN0cmljdC1wYXlsb2Fk",
+			"encryption_iv":     "dGVzdC1pdi1kaXN0",
+			"wrapped_keys": []map[string]string{
+				{"user_id": adminUserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRpc3Q="},
+			},
+		}, adminToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		if body["channel_id"] == nil || body["channel_id"] == "" {
+			t.Error("Expected channel_id in response")
+		}
+		if body["district_id"] != districtID {
+			t.Errorf("Expected district_id %s, got %v", districtID, body["district_id"])
+		}
+	})
+
+	t.Run("non-admin cannot create channels", func(t *testing.T) {
+		// Register a regular user (not admin of any school)
+		regularEmail := fmt.Sprintf("mesh_regular_%s@test.com", suffix)
+		regularUserID, _ := suite.registerOrGetUser(
+			fmt.Sprintf("mesh_reg_%s", suffix),
+			regularEmail,
+			"securepassword123",
+		)
+
+		// Make them vouch-verified but not admin
+		_, _ = suite.db.ExecContext(ctx, "UPDATE users SET verification_tier = 1, vouch_verified = TRUE WHERE id = ?", regularUserID)
+		// Re-login for updated claims
+		reloginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": regularEmail, "password": "securepassword123",
+		}, "")
+		var relogin models.LoginResponse
+		_ = json.NewDecoder(reloginResp.Body).Decode(&relogin)
+		_ = reloginResp.Body.Close()
+		regularToken := relogin.Token
+
+		defer suite.cleanup(regularUserID)
+
+		resp := suite.request("POST", "/api/v1/meshtastic-channels", map[string]interface{}{
+			"school_id":         schoolID,
+			"name":              "Should Fail Channel",
+			"encrypted_payload": "dGVzdC1mYWls",
+			"encryption_iv":     "dGVzdC1pdi1mYWls",
+			"wrapped_keys": []map[string]string{
+				{"user_id": regularUserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWZhaWw="},
+			},
+		}, regularToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("unverified user cannot list channels", func(t *testing.T) {
+		// Register an unverified user
+		unverifiedEmail := fmt.Sprintf("mesh_unverified_%s@test.com", suffix)
+		unverifiedUserID, unverifiedToken := suite.registerOrGetUser(
+			fmt.Sprintf("mesh_unv_%s", suffix),
+			unverifiedEmail,
+			"securepassword123",
+		)
+		defer suite.cleanup(unverifiedUserID)
+
+		resp := suite.request("GET", "/api/v1/meshtastic-channels?school_id="+schoolID, nil, unverifiedToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d", resp.StatusCode)
 		}
 	})
 }

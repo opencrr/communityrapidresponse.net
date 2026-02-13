@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,7 +114,7 @@ func TestNotificationWorker_ProcessNotification(t *testing.T) {
 		RetryFailedAfter:  time.Hour,
 	}
 
-	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, cfg)
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, nil, cfg)
 
 	// Set up test user
 	userLookup.users["user-123"] = &models.User{
@@ -174,7 +176,7 @@ func TestNotificationWorker_RateLimiting(t *testing.T) {
 		RetryFailedAfter:  time.Hour,
 	}
 
-	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, cfg)
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, nil, cfg)
 
 	// Set up test user
 	userLookup.users["user-123"] = &models.User{
@@ -224,7 +226,7 @@ func TestNotificationWorker_BlockedUser(t *testing.T) {
 		RetryFailedAfter:  time.Hour,
 	}
 
-	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, cfg)
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, nil, cfg)
 
 	// Set up blocked user
 	userLookup.users["user-123"] = &models.User{
@@ -272,7 +274,7 @@ func TestNotificationWorker_FanOut(t *testing.T) {
 		RetryFailedAfter:  time.Hour,
 	}
 
-	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, cfg)
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, nil, cfg)
 
 	// Set up verified users in region
 	userLookup.verifiedUsers["region-456"] = []*models.User{
@@ -342,5 +344,449 @@ func TestHashEmailContent(t *testing.T) {
 	// Hash should be 64 characters (SHA-256 hex)
 	if len(hash1) != 64 {
 		t.Errorf("Expected hash length 64, got %d", len(hash1))
+	}
+}
+
+// mockSecretKeyLookup implements SecretKeyLookup for testing
+type mockSecretKeyLookup struct {
+	sharedUsers map[string][]string // userID → list of user IDs sharing secrets
+	err         error
+}
+
+func newMockSecretKeyLookup() *mockSecretKeyLookup {
+	return &mockSecretKeyLookup{sharedUsers: make(map[string][]string)}
+}
+
+func (m *mockSecretKeyLookup) GetUsersWithSharedSecrets(ctx context.Context, userID string) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.sharedUsers[userID], nil
+}
+
+// nackTrackingQueue wraps mockQueue to track Nack calls for test assertions
+type nackTrackingQueue struct {
+	*mockQueue
+	nacks []nackRecord
+}
+
+type nackRecord struct {
+	id       string
+	errorMsg string
+}
+
+func newNackTrackingQueue() *nackTrackingQueue {
+	return &nackTrackingQueue{
+		mockQueue: newMockQueue(),
+		nacks:     make([]nackRecord, 0),
+	}
+}
+
+func (q *nackTrackingQueue) Nack(ctx context.Context, id string, errorMsg string) error {
+	q.nacks = append(q.nacks, nackRecord{id: id, errorMsg: errorMsg})
+	return nil
+}
+
+// ackTrackingQueue wraps mockQueue to track Ack calls for test assertions
+type ackTrackingQueue struct {
+	*mockQueue
+	acks []string
+}
+
+func newAckTrackingQueue() *ackTrackingQueue {
+	return &ackTrackingQueue{
+		mockQueue: newMockQueue(),
+		acks:      make([]string, 0),
+	}
+}
+
+func (q *ackTrackingQueue) Ack(ctx context.Context, id string, contentHash string) error {
+	q.acks = append(q.acks, id)
+	return q.mockQueue.Ack(ctx, id, contentHash)
+}
+
+func TestNotificationWorker_RekeyingFanOut(t *testing.T) {
+	ctx := context.Background()
+	queue := newMockQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+	secretKeyLookup := newMockSecretKeyLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	// Set up users sharing secrets with the rotated user
+	secretKeyLookup.sharedUsers["rotated-user-1"] = []string{"user-a", "user-b", "user-c"}
+
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, secretKeyLookup, cfg)
+
+	// Queue a rekeying fan-out event (empty UserID = fan-out)
+	resourceType := "encryption_key"
+	rotatedUserID := "rotated-user-1"
+	fanOutEvent := &models.EmailNotification{
+		ID:               "rekey-fanout-1",
+		UserID:           "", // Empty = fan-out event
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &rotatedUserID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = queue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue - this should expand the fan-out event
+	_ = worker.processQueue(ctx)
+
+	// Check that individual notifications were queued for each user sharing secrets
+	notifications, _ := queue.Dequeue(ctx, 100)
+
+	if len(notifications) != 3 {
+		t.Fatalf("Expected 3 notifications after rekeying fan-out, got %d", len(notifications))
+	}
+
+	expectedUserIDs := map[string]bool{"user-a": true, "user-b": true, "user-c": true}
+	for i, n := range notifications {
+		if n.UserID == "" {
+			t.Errorf("Notification %d: expected non-empty UserID", i)
+		}
+		if !expectedUserIDs[n.UserID] {
+			t.Errorf("Notification %d: unexpected UserID '%s'", i, n.UserID)
+		}
+		if n.NotificationType != models.NotificationTypeRekeyingNeeded {
+			t.Errorf("Notification %d: expected type 'rekeying_needed', got '%s'", i, n.NotificationType)
+		}
+		if n.ResourceID == nil || *n.ResourceID != "rotated-user-1" {
+			t.Errorf("Notification %d: expected ResourceID 'rotated-user-1', got '%v'", i, n.ResourceID)
+		}
+		if n.ResourceType == nil || *n.ResourceType != "encryption_key" {
+			t.Errorf("Notification %d: expected ResourceType 'encryption_key', got '%v'", i, n.ResourceType)
+		}
+	}
+}
+
+func TestNotificationWorker_RekeyingFanOut_NoSharedSecrets(t *testing.T) {
+	ctx := context.Background()
+	trackingQueue := newAckTrackingQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+	secretKeyLookup := newMockSecretKeyLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	// No shared users for this user (empty slice)
+	secretKeyLookup.sharedUsers["lonely-user"] = []string{}
+
+	worker := NewNotificationWorker(trackingQueue, emailService, templates, userLookup, regionLookup, secretKeyLookup, cfg)
+
+	// Queue a rekeying fan-out event
+	resourceType := "encryption_key"
+	rotatedUserID := "lonely-user"
+	fanOutEvent := &models.EmailNotification{
+		ID:               "rekey-fanout-empty",
+		UserID:           "",
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &rotatedUserID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = trackingQueue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Verify the fan-out event was acked
+	if len(trackingQueue.acks) != 1 {
+		t.Fatalf("Expected 1 ack call, got %d", len(trackingQueue.acks))
+	}
+	if trackingQueue.acks[0] != "rekey-fanout-empty" {
+		t.Errorf("Expected ack for 'rekey-fanout-empty', got '%s'", trackingQueue.acks[0])
+	}
+
+	// Verify no per-user notifications were queued
+	remaining, _ := trackingQueue.Dequeue(ctx, 100)
+	if len(remaining) != 0 {
+		t.Fatalf("Expected 0 notifications queued, got %d", len(remaining))
+	}
+}
+
+func TestNotificationWorker_RekeyingFanOut_MissingResourceID(t *testing.T) {
+	ctx := context.Background()
+	trackingQueue := newNackTrackingQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+	secretKeyLookup := newMockSecretKeyLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	worker := NewNotificationWorker(trackingQueue, emailService, templates, userLookup, regionLookup, secretKeyLookup, cfg)
+
+	// Queue a rekeying fan-out event with nil ResourceID
+	fanOutEvent := &models.EmailNotification{
+		ID:               "rekey-fanout-no-resource",
+		UserID:           "",
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     nil,
+		ResourceID:       nil, // Missing!
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = trackingQueue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Verify the event was nacked
+	if len(trackingQueue.nacks) != 1 {
+		t.Fatalf("Expected 1 nack call, got %d", len(trackingQueue.nacks))
+	}
+	if trackingQueue.nacks[0].id != "rekey-fanout-no-resource" {
+		t.Errorf("Expected nack for 'rekey-fanout-no-resource', got '%s'", trackingQueue.nacks[0].id)
+	}
+	if !strings.Contains(trackingQueue.nacks[0].errorMsg, "missing user ID") {
+		t.Errorf("Expected nack error to contain 'missing user ID', got '%s'", trackingQueue.nacks[0].errorMsg)
+	}
+}
+
+func TestNotificationWorker_RekeyingFanOut_NilSecretKeyLookup(t *testing.T) {
+	ctx := context.Background()
+	trackingQueue := newNackTrackingQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	// Pass nil for secretKeyLookup
+	worker := NewNotificationWorker(trackingQueue, emailService, templates, userLookup, regionLookup, nil, cfg)
+
+	// Queue a rekeying fan-out event
+	resourceType := "encryption_key"
+	rotatedUserID := "some-user"
+	fanOutEvent := &models.EmailNotification{
+		ID:               "rekey-fanout-nil-lookup",
+		UserID:           "",
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &rotatedUserID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = trackingQueue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Verify the event was nacked
+	if len(trackingQueue.nacks) != 1 {
+		t.Fatalf("Expected 1 nack call, got %d", len(trackingQueue.nacks))
+	}
+	if trackingQueue.nacks[0].id != "rekey-fanout-nil-lookup" {
+		t.Errorf("Expected nack for 'rekey-fanout-nil-lookup', got '%s'", trackingQueue.nacks[0].id)
+	}
+	if !strings.Contains(trackingQueue.nacks[0].errorMsg, "secret key lookup not configured") {
+		t.Errorf("Expected nack error to contain 'secret key lookup not configured', got '%s'", trackingQueue.nacks[0].errorMsg)
+	}
+}
+
+func TestNotificationWorker_RekeyingFanOut_LookupError(t *testing.T) {
+	ctx := context.Background()
+	trackingQueue := newNackTrackingQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+	secretKeyLookup := newMockSecretKeyLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	// Configure the lookup to return an error
+	secretKeyLookup.err = fmt.Errorf("database connection failed")
+
+	worker := NewNotificationWorker(trackingQueue, emailService, templates, userLookup, regionLookup, secretKeyLookup, cfg)
+
+	// Queue a rekeying fan-out event
+	resourceType := "encryption_key"
+	rotatedUserID := "some-user"
+	fanOutEvent := &models.EmailNotification{
+		ID:               "rekey-fanout-lookup-error",
+		UserID:           "",
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &rotatedUserID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = trackingQueue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Verify the event was nacked with the error message
+	if len(trackingQueue.nacks) != 1 {
+		t.Fatalf("Expected 1 nack call, got %d", len(trackingQueue.nacks))
+	}
+	if trackingQueue.nacks[0].id != "rekey-fanout-lookup-error" {
+		t.Errorf("Expected nack for 'rekey-fanout-lookup-error', got '%s'", trackingQueue.nacks[0].id)
+	}
+	if !strings.Contains(trackingQueue.nacks[0].errorMsg, "database connection failed") {
+		t.Errorf("Expected nack error to contain 'database connection failed', got '%s'", trackingQueue.nacks[0].errorMsg)
+	}
+}
+
+func TestNotificationWorker_RekeyingEmail(t *testing.T) {
+	ctx := context.Background()
+	queue := newMockQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+	secretKeyLookup := newMockSecretKeyLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	worker := NewNotificationWorker(queue, emailService, templates, userLookup, regionLookup, secretKeyLookup, cfg)
+
+	// Set up test user who will receive the rekeying notification
+	userLookup.users["user-recipient"] = &models.User{
+		ID:       "user-recipient",
+		Email:    "recipient@example.com",
+		Username: "recipient",
+	}
+
+	// Queue a per-user rekeying notification (already fanned out)
+	resourceType := "encryption_key"
+	rotatedUserID := "rotated-user-1"
+	notification := &models.EmailNotification{
+		ID:               "rekey-notif-1",
+		UserID:           "user-recipient",
+		NotificationType: models.NotificationTypeRekeyingNeeded,
+		ResourceType:     &resourceType,
+		ResourceID:       &rotatedUserID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = queue.Enqueue(ctx, notification)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Check that exactly one email was sent
+	if len(emailService.sentEmails) != 1 {
+		t.Fatalf("Expected 1 email sent, got %d", len(emailService.sentEmails))
+	}
+
+	email := emailService.sentEmails[0]
+
+	// Verify email recipient
+	if email.To != "recipient@example.com" {
+		t.Errorf("Expected email to 'recipient@example.com', got '%s'", email.To)
+	}
+
+	// Verify subject contains re-keying
+	if !strings.Contains(email.Subject, "Re-keying") {
+		t.Errorf("Expected subject to contain 'Re-keying', got '%s'", email.Subject)
+	}
+
+	// Verify text content contains re-keying information
+	if !strings.Contains(email.TextContent, "re-keying") {
+		t.Errorf("Expected text content to contain 're-keying', got '%s'", email.TextContent)
+	}
+
+	// Verify text content contains login URL
+	if !strings.Contains(email.TextContent, "http://localhost/login") {
+		t.Errorf("Expected text content to contain login URL, got '%s'", email.TextContent)
+	}
+
+	// Verify HTML content also exists
+	if email.HTMLContent == "" {
+		t.Error("Expected non-empty HTML content")
+	}
+}
+
+func TestNotificationWorker_UnknownFanOutType(t *testing.T) {
+	ctx := context.Background()
+	trackingQueue := newNackTrackingQueue()
+	emailService := newMockEmailService()
+	templates := NewEmailTemplates("Test App", "http://localhost/login")
+	userLookup := newMockUserLookup()
+	regionLookup := newMockRegionLookup()
+
+	cfg := &config.NotificationConfig{
+		WorkerInterval:    time.Minute,
+		BatchSize:         10,
+		RateLimitDuration: 24 * time.Hour,
+		RetryFailedAfter:  time.Hour,
+	}
+
+	worker := NewNotificationWorker(trackingQueue, emailService, templates, userLookup, regionLookup, nil, cfg)
+
+	// Queue a fan-out event with an unknown notification type
+	resourceType := "unknown_resource"
+	resourceID := "some-id"
+	fanOutEvent := &models.EmailNotification{
+		ID:               "fanout-unknown-type",
+		UserID:           "", // Empty = fan-out event
+		NotificationType: models.NotificationType("totally_unknown_type"),
+		ResourceType:     &resourceType,
+		ResourceID:       &resourceID,
+		Status:           models.NotificationStatusQueued,
+		QueuedAt:         time.Now().UTC(),
+	}
+	_ = trackingQueue.Enqueue(ctx, fanOutEvent)
+
+	// Process the queue
+	_ = worker.processQueue(ctx)
+
+	// Verify the event was nacked with "unknown fan-out type"
+	if len(trackingQueue.nacks) != 1 {
+		t.Fatalf("Expected 1 nack call, got %d", len(trackingQueue.nacks))
+	}
+	if trackingQueue.nacks[0].id != "fanout-unknown-type" {
+		t.Errorf("Expected nack for 'fanout-unknown-type', got '%s'", trackingQueue.nacks[0].id)
+	}
+	if !strings.Contains(trackingQueue.nacks[0].errorMsg, "unknown fan-out type") {
+		t.Errorf("Expected nack error to contain 'unknown fan-out type', got '%s'", trackingQueue.nacks[0].errorMsg)
+	}
+
+	// Verify no emails were sent
+	if len(emailService.sentEmails) != 0 {
+		t.Errorf("Expected 0 emails sent, got %d", len(emailService.sentEmails))
 	}
 }

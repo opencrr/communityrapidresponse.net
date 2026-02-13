@@ -43,6 +43,7 @@ type AuthHandler struct {
 	passwordResetRepo *database.PasswordResetRepository
 	emailTemplates    *services.EmailTemplates
 	baseURL           string
+	encryptionKeyRepo *database.EncryptionKeyRepository
 }
 
 // NewAuthHandler creates a new auth handler
@@ -78,6 +79,7 @@ func NewAuthHandlerWithEmailService(
 	passwordResetRepo *database.PasswordResetRepository,
 	emailTemplates *services.EmailTemplates,
 	baseURL string,
+	encryptionKeyRepo *database.EncryptionKeyRepository,
 ) *AuthHandler {
 	return &AuthHandler{
 		db:                db,
@@ -91,6 +93,7 @@ func NewAuthHandlerWithEmailService(
 		passwordResetRepo: passwordResetRepo,
 		emailTemplates:    emailTemplates,
 		baseURL:           baseURL,
+		encryptionKeyRepo: encryptionKeyRepo,
 	}
 }
 
@@ -349,19 +352,29 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionUserLogin, nil, nil, nil), "user_login")
 	}
 
+	// Check if user has encryption keys
+	hasEncryptionKeys := false
+	if h.encryptionKeyRepo != nil {
+		_, keyErr := h.encryptionKeyRepo.GetByUserID(r.Context(), user.ID)
+		if keyErr == nil {
+			hasEncryptionKeys = true
+		}
+	}
+
 	// Return response with full user info
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token": token,
 		"user": map[string]interface{}{
-			"id":                user.ID,
-			"username":          user.Username,
-			"email":             user.Email,
-			"verification_tier": user.VerificationTier,
-			"postcard_verified": user.PostcardVerified,
-			"vouch_verified":    user.VouchVerified,
-			"is_superuser":      user.IsSuperuser,
-			"mfa_enabled":       user.MFAEnabled,
-			"email_verified":    user.EmailVerified,
+			"id":                  user.ID,
+			"username":            user.Username,
+			"email":               user.Email,
+			"verification_tier":   user.VerificationTier,
+			"postcard_verified":   user.PostcardVerified,
+			"vouch_verified":      user.VouchVerified,
+			"is_superuser":        user.IsSuperuser,
+			"mfa_enabled":         user.MFAEnabled,
+			"email_verified":      user.EmailVerified,
+			"has_encryption_keys": hasEncryptionKeys,
 		},
 	})
 }

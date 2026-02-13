@@ -31,7 +31,6 @@ type NotificationE2ETestSuite struct {
 	verifyRepo          *database.VerificationRepository
 	vouchRepo           *database.VouchRepository
 	groupRepo           *database.SignalGroupRepository
-	proposalRepo        *database.InviteLinkProposalRepository
 	membershipRepo      *database.MembershipRepository
 	notificationQueue   *database.DatabaseQueue
 	notificationService *services.NotificationService
@@ -123,7 +122,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -161,9 +159,8 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, proposalRepo, regionRepo, nil, consensusConfig,
+		nil, groupRepo, nil, regionRepo, nil,
 	)
-	signalGroupHandler.SetNotificationService(notificationService)
 
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -188,14 +185,14 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, proposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
 	// Create router
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -217,6 +214,7 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 		templates,
 		userRepo,
 		regionRepo,
+		nil,
 		notificationCfg,
 	)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
@@ -231,7 +229,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 		verifyRepo:          verifyRepo,
 		vouchRepo:           vouchRepo,
 		groupRepo:           groupRepo,
-		proposalRepo:        proposalRepo,
 		membershipRepo:      membershipRepo,
 		notificationQueue:   notificationQueue,
 		notificationService: notificationService,
@@ -253,8 +250,8 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 func (s *NotificationE2ETestSuite) cleanup() {
 	ctx := context.Background()
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM email_notifications WHERE user_id LIKE 'e2e-%' OR user_id = ''")
-	_, _ = s.db.ExecContext(ctx, "DELETE FROM invite_link_proposal_votes WHERE voter_id LIKE 'e2e-%'")
-	_, _ = s.db.ExecContext(ctx, "DELETE FROM invite_link_update_proposals WHERE proposed_by LIKE 'e2e-%'")
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM secret_update_votes WHERE voter_id LIKE 'e2e-%'")
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM secret_update_proposals WHERE proposed_by LIKE 'e2e-%'")
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id LIKE 'e2e-%'")
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM vouches WHERE voucher_user_id LIKE 'e2e-%' OR vouched_user_id LIKE 'e2e-%'")
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM verification_requests WHERE user_id LIKE 'e2e-%'")
@@ -355,21 +352,20 @@ func (s *NotificationE2ETestSuite) addUserToRegion(userID, regionID string, isAd
 }
 
 // createSignalGroup creates a Signal group for a region
-func (s *NotificationE2ETestSuite) createSignalGroup(id, regionID, name, inviteLink, createdBy string) *models.SignalGroup {
+func (s *NotificationE2ETestSuite) createSignalGroup(id, regionID, name, _ string, createdBy string) *models.SignalGroup {
 	ctx := context.Background()
 	group := &models.SignalGroup{
-		ID:         id,
-		RegionID:   &regionID,
-		GroupName:  name,
-		InviteLink: inviteLink,
-		CreatedBy:  &createdBy,
-		CreatedAt:  time.Now().UTC(),
+		ID:        id,
+		RegionID:  &regionID,
+		GroupName: name,
+		CreatedBy: &createdBy,
+		CreatedAt: time.Now().UTC(),
 	}
 
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO signal_groups (id, region_id, group_name, invite_link, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, group.ID, group.RegionID, group.GroupName, group.InviteLink, createdBy, group.CreatedAt)
+		INSERT INTO signal_groups (id, region_id, group_name, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, group.ID, group.RegionID, group.GroupName, createdBy, group.CreatedAt)
 
 	if err != nil {
 		s.t.Fatalf("Failed to create signal group: %v", err)
@@ -378,42 +374,28 @@ func (s *NotificationE2ETestSuite) createSignalGroup(id, regionID, name, inviteL
 	return group
 }
 
-// createInviteLinkProposal creates a proposal for changing an invite link
-func (s *NotificationE2ETestSuite) createInviteLinkProposal(id, groupID, regionID, proposedBy, newLink string) string {
-	ctx := context.Background()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO invite_link_update_proposals (id, signal_group_id, region_id, proposed_by, new_invite_link, status, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, 'pending', NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))
-	`, id, groupID, regionID, proposedBy, newLink)
-
-	if err != nil {
-		s.t.Fatalf("Failed to create proposal: %v", err)
-	}
-
-	return id
-}
+// createInviteLinkProposal is no longer used - invite_link_update_proposals table
+// was replaced by secret_update_proposals in the E2E encryption migration.
 
 // =============================================================================
 // E2E Tests: Invite Link Update Notifications
 // =============================================================================
 
-func TestE2E_InviteLinkUpdate_TriggersNotification(t *testing.T) {
+func TestE2E_SecretUpdate_TriggersNotification(t *testing.T) {
 	suite := SetupNotificationE2ETest(t)
 	ctx := context.Background()
 
 	// Create region with multiple verified users
 	region := suite.createRegion("e2e-region-invite", "Invite Test Region", nil)
 
-	// Create 3 admin users for consensus
-	adminTokens := make([]string, 3)
+	// Create 3 admin users
 	for i := 0; i < 3; i++ {
-		token, user := suite.createUser(
+		_, user := suite.createUser(
 			fmt.Sprintf("e2e-admin-%d", i),
 			fmt.Sprintf("admin%d@e2e.test", i),
 			fmt.Sprintf("admin%d", i),
 			true, true, false,
 		)
-		adminTokens[i] = token
 		suite.addUserToRegion(user.ID, region.ID, true)
 	}
 
@@ -429,20 +411,16 @@ func TestE2E_InviteLinkUpdate_TriggersNotification(t *testing.T) {
 	}
 
 	// Create signal group
-	group := suite.createSignalGroup("e2e-group-1", region.ID, "Test Group", "https://signal.group/old", "e2e-admin-0")
-
-	// Create proposal
-	proposalID := suite.createInviteLinkProposal("e2e-proposal-1", group.ID, region.ID, "e2e-admin-0", "https://signal.group/new")
+	group := suite.createSignalGroup("e2e-group-1", region.ID, "Test Group", "", "e2e-admin-0")
 
 	// Reset email tracker
 	suite.emailTracker.Reset()
 
-	// All 3 admins vote to approve
-	for i := 0; i < 3; i++ {
-		resp := suite.request("POST", fmt.Sprintf("/api/v1/signal-groups/invite-link-proposals/%s/vote?id=%s", proposalID, proposalID), map[string]interface{}{
-			"vote": true,
-		}, adminTokens[i])
-		_ = resp.Body.Close()
+	// Directly queue the invite link updated event (simulating what happens
+	// after a secret update proposal is finalized)
+	err := suite.notificationService.QueueInviteLinkUpdatedEvent(ctx, group.ID, region.ID)
+	if err != nil {
+		t.Fatalf("Failed to queue notification: %v", err)
 	}
 
 	// Wait for worker to process notifications
@@ -450,7 +428,7 @@ func TestE2E_InviteLinkUpdate_TriggersNotification(t *testing.T) {
 
 	// Check that notifications were queued
 	var queuedCount int
-	err := suite.db.QueryRowContext(ctx, `
+	err = suite.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM email_notifications
 		WHERE notification_type = 'invite_link_updated'
 		AND (user_id LIKE 'e2e-%' OR user_id = '')
@@ -460,20 +438,17 @@ func TestE2E_InviteLinkUpdate_TriggersNotification(t *testing.T) {
 	}
 
 	if queuedCount == 0 {
-		t.Error("Expected notifications to be queued for invite link update")
+		t.Error("Expected notifications to be queued for secret update")
 	}
 
 	// Check emails were sent (at least to some users)
 	emails := suite.emailTracker.GetSent()
 	if len(emails) == 0 {
-		t.Error("Expected emails to be sent for invite link update")
+		t.Error("Expected emails to be sent for secret update")
 	}
 
-	// Verify emails don't contain the actual invite link
+	// Verify emails don't contain sensitive data and instruct user to log in
 	for _, email := range emails {
-		if contains(email.Body, "signal.group/new") {
-			t.Error("Email should NOT contain the actual invite link")
-		}
 		if !contains(email.Body, "log in") && !contains(email.Body, "Log In") {
 			t.Error("Email should instruct user to log in")
 		}

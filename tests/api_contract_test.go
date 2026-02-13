@@ -62,7 +62,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -94,6 +93,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		nil,
 		nil,
 		"http://localhost:3000",
+		nil,
 	)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
@@ -101,9 +101,10 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		mockPostgrid, mockMapbox, nil,
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, proposalRepo, regionRepo, nil, consensusConfig,
+		db, groupRepo, encryptedSecretRepo, regionRepo, nil,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -127,7 +128,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	rateLimiter := services.NewNoOpRateLimiter()
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, proposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
@@ -143,6 +144,9 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		nil, // deletionProposalHandler
 		schoolHandler,
 		nil, // userReportHandler
+		nil, // encryptionHandler
+		nil, // secretUpdateHandler
+		nil, // meshtasticHandler
 		jwtAuth,
 		rateLimiter,
 		nil,           // rateLimitConfig
@@ -575,12 +579,16 @@ func TestAPIContract_SignalGroups_ResponseFormat(t *testing.T) {
 	defer func() { _, _ = suite.db.Exec("DELETE FROM signal_groups WHERE region_id LIKE 'contract-test-%'") }()
 
 	t.Run("create_group_request_uses_name_field", func(t *testing.T) {
-		// Frontend sends: name, region_id, invite_link (NOT group_name)
-		// See: static/js/pages/admin/manageGroups.js line 293-298
+		// Frontend sends: name, region_id, encrypted_payload, encryption_iv, wrapped_keys
+		// See: static/js/pages/admin/manageGroups.js
 		payload := map[string]interface{}{
-			"name":        "Test Signal Group",
-			"region_id":   region.ID,
-			"invite_link": "https://signal.group/test",
+			"name":              "Test Signal Group",
+			"region_id":         region.ID,
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": adminUser.ID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}
 		body, _ := json.Marshal(payload)
 

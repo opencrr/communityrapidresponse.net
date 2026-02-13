@@ -43,6 +43,8 @@ func (t *EmailTemplates) Build(n *models.EmailNotification, data *TemplateData) 
 		return t.buildVouchComplete(data)
 	case models.NotificationTypeSubRegionInvitation:
 		return t.buildSubRegionInvitation(data)
+	case models.NotificationTypeRekeyingNeeded:
+		return t.buildRekeyingNeeded(data)
 	default:
 		return t.buildGeneric(n, data)
 	}
@@ -252,6 +254,43 @@ Invitations expire after 7 days if not accepted.
 </body>
 </html>`,
 		html.EscapeString(inviterInfo),
+		html.EscapeString(t.loginURL),
+		html.EscapeString(t.appName))
+
+	return &EmailMessage{
+		To:          data.UserEmail,
+		Subject:     subject,
+		TextContent: textContent,
+		HTMLContent: htmlContent,
+	}
+}
+
+// buildRekeyingNeeded generates email when a community member needs encryption re-keying
+func (t *EmailTemplates) buildRekeyingNeeded(data *TemplateData) *EmailMessage {
+	subject := fmt.Sprintf("Encryption Re-keying Needed - %s", t.appName)
+
+	textContent := fmt.Sprintf(`A member of your community has rotated their encryption keys and needs re-keying assistance.
+
+To help restore their access to shared encrypted data, please log in to your %s account:
+%s
+
+Re-keying happens automatically when you log in - no manual action is required.
+
+- The %s Team`,
+		t.appName, t.loginURL, t.appName)
+
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+<h2 style="color: #1976d2;">Encryption Re-keying Needed</h2>
+<p>A member of your community has rotated their encryption keys and needs re-keying assistance.</p>
+<p>To help restore their access to shared encrypted data, please log in:</p>
+<p><a href="%s" style="display: inline-block; background: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">Log In</a></p>
+<p style="color: #666; font-size: 14px;"><em>Re-keying happens automatically when you log in — no manual action is required.</em></p>
+<p>- The %s Team</p>
+</body>
+</html>`,
 		html.EscapeString(t.loginURL),
 		html.EscapeString(t.appName))
 

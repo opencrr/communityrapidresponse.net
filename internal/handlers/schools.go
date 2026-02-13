@@ -34,7 +34,7 @@ type SchoolHandler struct {
 	districtRepo             *database.SchoolDistrictRepository
 	schoolVouchRepo          *database.SchoolVouchRepository
 	signalGroupRepo          *database.SignalGroupRepository
-	proposalRepo             *database.InviteLinkProposalRepository
+	encryptedSecretRepo      *database.EncryptedSecretRepository
 	userRepo                 *database.UserRepository
 	auditRepo                *database.AuditRepository
 	ncesService              services.NCESServiceInterface
@@ -51,7 +51,7 @@ func NewSchoolHandler(
 	districtRepo *database.SchoolDistrictRepository,
 	schoolVouchRepo *database.SchoolVouchRepository,
 	signalGroupRepo *database.SignalGroupRepository,
-	proposalRepo *database.InviteLinkProposalRepository,
+	encryptedSecretRepo *database.EncryptedSecretRepository,
 	userRepo *database.UserRepository,
 	auditRepo *database.AuditRepository,
 	ncesService services.NCESServiceInterface,
@@ -65,7 +65,7 @@ func NewSchoolHandler(
 		districtRepo:             districtRepo,
 		schoolVouchRepo:          schoolVouchRepo,
 		signalGroupRepo:          signalGroupRepo,
-		proposalRepo:             proposalRepo,
+		encryptedSecretRepo:      encryptedSecretRepo,
 		userRepo:                 userRepo,
 		auditRepo:                auditRepo,
 		ncesService:              ncesService,
@@ -738,10 +738,10 @@ func (h *SchoolHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Convert to response format with invite links
-	response := []models.SignalGroupWithInvite{}
+	// Convert to response format with encrypted secrets
+	response := []models.SignalGroupWithSecret{}
 	for _, g := range groups {
-		response = append(response, models.SignalGroupWithInvite{
+		sgws := models.SignalGroupWithSecret{
 			SignalGroupPublic: models.SignalGroupPublic{
 				ID:                 g.ID,
 				SchoolID:           g.SchoolID,
@@ -750,8 +750,17 @@ func (h *SchoolHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request)
 				CreatedAt:          g.CreatedAt,
 				HasPendingDeletion: g.HasPendingDeletion,
 			},
-			InviteLink: g.InviteLink,
-		})
+		}
+		if secret, secretErr := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), g.ID); secretErr == nil {
+			wrappedDEK, _ := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
+			sgws.EncryptedSecret = &models.EncryptedSecretResponse{
+				SecretID:         secret.ID,
+				EncryptedPayload: secret.EncryptedPayload,
+				EncryptionIV:     secret.EncryptionIV,
+				WrappedDEK:       wrappedDEK,
+			}
+		}
+		response = append(response, sgws)
 	}
 
 	writeJSON(w, http.StatusOK, models.SignalGroupListResponse{Groups: response})
@@ -777,8 +786,8 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.Name == "" || req.InviteLink == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name and invite link are required")
+	if req.Name == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Group name, encrypted payload, IV, and wrapped keys are required")
 		return
 	}
 
@@ -812,14 +821,12 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Check group limit + create atomically to prevent race condition
+	// Check group limit + create group + encrypted secret atomically
 	group := &models.SignalGroup{
-		SchoolID:            &schoolID,
-		GroupName:           req.Name,
-		InviteLink:          req.InviteLink,
-		InviteLinkUpdatedBy: &claims.UserID,
-		Description:         req.Description,
-		CreatedBy:           &claims.UserID,
+		SchoolID:    &schoolID,
+		GroupName:   req.Name,
+		Description: req.Description,
+		CreatedBy:   &claims.UserID,
 	}
 
 	if h.db != nil {
@@ -831,7 +838,17 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 			if count >= maxGroupsPerSchool {
 				return database.ErrLimitReached
 			}
-			return h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group)
+			if txErr := h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group); txErr != nil {
+				return txErr
+			}
+			secret := &models.EncryptedSecret{
+				SecretType:       models.SecretTypeSignalInvite,
+				SignalGroupID:    &group.ID,
+				EncryptedPayload: req.EncryptedPayload,
+				EncryptionIV:     req.EncryptionIV,
+				UpdatedBy:        claims.UserID,
+			}
+			return h.encryptedSecretRepo.CreateTx(r.Context(), tx, secret, req.WrappedKeys)
 		})
 		if errors.Is(err, database.ErrLimitReached) {
 			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this school")
@@ -853,6 +870,17 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 		}
 		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
 			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_signal_group")
+			return
+		}
+		secret := &models.EncryptedSecret{
+			SecretType:       models.SecretTypeSignalInvite,
+			SignalGroupID:    &group.ID,
+			EncryptedPayload: req.EncryptedPayload,
+			EncryptionIV:     req.EncryptionIV,
+			UpdatedBy:        claims.UserID,
+		}
+		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
+			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
 			return
 		}
 	}
@@ -1091,10 +1119,10 @@ func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Convert to response format with invite links
-	response := []models.SignalGroupWithInvite{}
+	// Convert to response format with encrypted secrets
+	response := []models.SignalGroupWithSecret{}
 	for _, g := range groups {
-		response = append(response, models.SignalGroupWithInvite{
+		sgws := models.SignalGroupWithSecret{
 			SignalGroupPublic: models.SignalGroupPublic{
 				ID:                 g.ID,
 				DistrictID:         g.DistrictID,
@@ -1103,8 +1131,17 @@ func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.
 				CreatedAt:          g.CreatedAt,
 				HasPendingDeletion: g.HasPendingDeletion,
 			},
-			InviteLink: g.InviteLink,
-		})
+		}
+		if secret, secretErr := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), g.ID); secretErr == nil {
+			wrappedDEK, _ := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
+			sgws.EncryptedSecret = &models.EncryptedSecretResponse{
+				SecretID:         secret.ID,
+				EncryptedPayload: secret.EncryptedPayload,
+				EncryptionIV:     secret.EncryptionIV,
+				WrappedDEK:       wrappedDEK,
+			}
+		}
+		response = append(response, sgws)
 	}
 
 	writeJSON(w, http.StatusOK, models.SignalGroupListResponse{Groups: response})
@@ -1130,8 +1167,8 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 		return
 	}
 
-	if req.Name == "" || req.InviteLink == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name and invite link are required")
+	if req.Name == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Group name, encrypted payload, IV, and wrapped keys are required")
 		return
 	}
 
@@ -1156,14 +1193,12 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Check group limit + create atomically to prevent race condition
+	// Check group limit + create group + encrypted secret atomically
 	group := &models.SignalGroup{
-		DistrictID:          &districtID,
-		GroupName:           req.Name,
-		InviteLink:          req.InviteLink,
-		InviteLinkUpdatedBy: &claims.UserID,
-		Description:         req.Description,
-		CreatedBy:           &claims.UserID,
+		DistrictID:  &districtID,
+		GroupName:   req.Name,
+		Description: req.Description,
+		CreatedBy:   &claims.UserID,
 	}
 
 	if h.db != nil {
@@ -1175,7 +1210,17 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 			if count >= maxGroupsPerDistrict {
 				return database.ErrLimitReached
 			}
-			return h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group)
+			if txErr := h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group); txErr != nil {
+				return txErr
+			}
+			secret := &models.EncryptedSecret{
+				SecretType:       models.SecretTypeSignalInvite,
+				SignalGroupID:    &group.ID,
+				EncryptedPayload: req.EncryptedPayload,
+				EncryptionIV:     req.EncryptionIV,
+				UpdatedBy:        claims.UserID,
+			}
+			return h.encryptedSecretRepo.CreateTx(r.Context(), tx, secret, req.WrappedKeys)
 		})
 		if errors.Is(err, database.ErrLimitReached) {
 			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this district")
@@ -1197,6 +1242,17 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 		}
 		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
 			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_district_signal_group")
+			return
+		}
+		secret := &models.EncryptedSecret{
+			SecretType:       models.SecretTypeSignalInvite,
+			SignalGroupID:    &group.ID,
+			EncryptedPayload: req.EncryptedPayload,
+			EncryptionIV:     req.EncryptionIV,
+			UpdatedBy:        claims.UserID,
+		}
+		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
+			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
 			return
 		}
 	}

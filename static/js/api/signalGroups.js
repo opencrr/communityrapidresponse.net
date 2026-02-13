@@ -10,7 +10,7 @@ import { setSignalGroups } from '../utils/store.js';
  * Returns empty array if no groups exist (handles 404 gracefully)
  * @param {Object} [params] - Query parameters
  * @param {string} [params.region_id] - Filter by region ID
- * @returns {Promise<Object[]>} Array of Signal groups
+ * @returns {Promise<Object[]>} Array of Signal groups (with encrypted_secret if verified)
  */
 export async function getGroups(params = {}) {
     try {
@@ -42,7 +42,9 @@ export async function getGroup(groupId) {
  * @param {Object} data - Group data
  * @param {string} data.name - Group name
  * @param {string} data.region_id - Associated region UUID
- * @param {string} data.invite_link - Signal invite link
+ * @param {string} data.encrypted_payload - Encrypted invite link (base64)
+ * @param {string} data.encryption_iv - Encryption IV (base64)
+ * @param {Array<{user_id: string, wrapped_dek: string}>} data.wrapped_keys - Wrapped DEKs for members
  * @param {string} [data.description] - Group description
  * @returns {Promise<Object>} Created group
  */
@@ -69,88 +71,6 @@ export async function updateGroup(groupId, data) {
  */
 export async function deleteGroup(groupId) {
     await del(`/signal-groups/${groupId}`);
-}
-
-/**
- * Propose a new invite link for a Signal group
- * @param {string} groupId - Group UUID
- * @param {string} newInviteLink - New Signal invite link
- * @returns {Promise<Object>} Proposal data
- */
-export async function proposeInviteLinkUpdate(groupId, newInviteLink) {
-    const response = await post(`/signal-groups/${groupId}/invite-link-proposals`, {
-        invite_link: newInviteLink,
-    });
-    return response.proposal || response;
-}
-
-/**
- * Get pending invite link proposals for a group
- * Returns empty array if no proposals (handles 404 gracefully)
- * @param {string} groupId - Group UUID
- * @returns {Promise<Object[]>} Array of proposals
- */
-export async function getInviteLinkProposals(groupId) {
-    try {
-        const response = await get(`/signal-groups/${groupId}/invite-link-proposals`);
-        return response.proposals || response || [];
-    } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
-            return [];
-        }
-        throw error;
-    }
-}
-
-/**
- * Vote on an invite link proposal
- * @param {string} proposalId - Proposal UUID
- * @param {boolean} approve - True to approve, false to reject
- * @returns {Promise<Object>} Updated proposal
- */
-export async function voteOnInviteLinkProposal(proposalId, approve) {
-    const response = await post(`/signal-groups/invite-link-proposals/${proposalId}/vote`, {
-        vote: approve,
-    });
-    return response.proposal || response;
-}
-
-/**
- * Get all invite link proposals the user can see
- * Admins see proposals for their regions, superusers see all
- * @param {Object} [params] - Query parameters
- * @param {string} [params.status] - Filter by status (pending, approved, expired, rejected)
- * @param {string} [params.signal_group_id] - Filter by signal group
- * @param {string} [params.region_id] - Filter by region
- * @returns {Promise<Object[]>} Array of proposals
- */
-export async function getAllInviteLinkProposals(params = {}) {
-    const query = new URLSearchParams();
-    if (params.status) query.set('status', params.status);
-    if (params.signal_group_id) query.set('signal_group_id', params.signal_group_id);
-    if (params.region_id) query.set('region_id', params.region_id);
-    const queryString = query.toString();
-    const url = queryString ? `/signal-groups/invite-link-proposals?${queryString}` : '/signal-groups/invite-link-proposals';
-    const response = await get(url);
-    return response.proposals || [];
-}
-
-/**
- * Get full details of an invite link proposal
- * @param {string} proposalId - Proposal UUID
- * @returns {Promise<Object>} Proposal details with votes
- */
-export async function getInviteLinkProposalDetails(proposalId) {
-    return await get(`/signal-groups/invite-link-proposals/${proposalId}`);
-}
-
-/**
- * Expire an invite link proposal (superuser only)
- * @param {string} proposalId - Proposal UUID
- * @returns {Promise<Object>} Result
- */
-export async function expireInviteLinkProposal(proposalId) {
-    return await post(`/signal-groups/invite-link-proposals/${proposalId}/expire`);
 }
 
 /**
@@ -193,12 +113,6 @@ export default {
     createGroup,
     updateGroup,
     deleteGroup,
-    proposeInviteLinkUpdate,
-    getInviteLinkProposals,
-    voteOnInviteLinkProposal,
-    getAllInviteLinkProposals,
-    getInviteLinkProposalDetails,
-    expireInviteLinkProposal,
     getGroupsByRegion,
     getAdminGroups,
 };

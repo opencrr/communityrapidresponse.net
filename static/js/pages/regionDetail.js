@@ -5,10 +5,13 @@
 
 import { getRegion, updateRegion, deleteRegion, regionToFeature, getRegionMembers } from '../api/regions.js';
 import { getGroupsByRegion } from '../api/signalGroups.js';
+import { listMeshtasticChannels } from '../api/meshtastic.js';
 import { createReport } from '../api/reports.js';
 import { requestMembership } from '../api/membership.js';
 import { initMap, addRegionsLayer, destroyMap, fitToBounds } from '../components/map.js';
+import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
 import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser, getUser } from '../utils/store.js';
+import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
 import { navigate } from '../app.js';
@@ -37,17 +40,46 @@ export async function render(container, params) {
 
     try {
         // Load region data
-        const [region, groups] = await Promise.all([
+        const canViewSecrets = isAuthenticated() && hasReadAccess();
+        const [region, groups, meshtasticResponse] = await Promise.all([
             getRegion(regionId),
-            isAuthenticated() && hasReadAccess()
+            canViewSecrets
                 ? getGroupsByRegion(regionId).catch(() => [])
                 : Promise.resolve([]),
+            canViewSecrets
+                ? listMeshtasticChannels({ region_id: regionId }).catch(() => ({ channels: [] }))
+                : Promise.resolve({ channels: [] }),
         ]);
 
         // Use sub_regions from the region response (uses ST_Contains for geographic containment)
         const childRegions = Array.isArray(region.sub_regions) ? region.sub_regions : [];
 
-        renderRegionDetail(container, region, childRegions, groups);
+        // Decrypt invite links and meshtastic channel URLs
+        const privateKey = await getPrivateKey();
+        const decryptedGroups = await Promise.all(groups.map(async (group) => {
+            let link = null;
+            const secret = group.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...group, _decryptedLink: link };
+        }));
+
+        const meshtasticChannels = meshtasticResponse.channels || [];
+        const decryptedMeshtastic = await Promise.all(meshtasticChannels.map(async (channel) => {
+            let url = null;
+            const secret = channel.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    url = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...channel, _decryptedURL: url };
+        }));
+
+        renderRegionDetail(container, region, childRegions, decryptedGroups, decryptedMeshtastic);
     } catch (error) {
         console.error('Failed to load region:', error);
         container.innerHTML = `
@@ -71,8 +103,9 @@ export async function render(container, params) {
  * @param {Object} region - Region data
  * @param {Object[]} childRegions - Child regions
  * @param {Object[]} groups - Signal groups in this region
+ * @param {Object[]} meshtasticChannels - Meshtastic channels in this region
  */
-function renderRegionDetail(container, region, childRegions, groups) {
+function renderRegionDetail(container, region, childRegions, groups, meshtasticChannels = []) {
     const authenticated = isAuthenticated();
     const userHasReadAccess = hasReadAccess();
     const userIsAdmin = isAdmin();
@@ -128,6 +161,10 @@ function renderRegionDetail(container, region, childRegions, groups) {
                         <div class="region-stat">
                             <div class="region-stat__value">${groups.length}</div>
                             <div class="region-stat__label">Signal Groups</div>
+                        </div>
+                        <div class="region-stat">
+                            <div class="region-stat__value">${meshtasticChannels.length}</div>
+                            <div class="region-stat__label">Meshtastic</div>
                         </div>
                         <div class="region-stat">
                             <div class="region-stat__value">${region.full_admin_count || 0}</div>
@@ -193,9 +230,9 @@ function renderRegionDetail(container, region, childRegions, groups) {
                                                     </p>
                                                 ` : ''}
                                                 <div class="group-invite">
-                                                    <span class="group-invite__link">${escapeHtml(group.invite_link || 'Invite link hidden')}</span>
-                                                    ${group.invite_link ? `
-                                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group.invite_link)}">
+                                                    <span class="group-invite__link">${escapeHtml(group._decryptedLink || 'Invite link hidden')}</span>
+                                                    ${group._decryptedLink ? `
+                                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group._decryptedLink)}">
                                                             Copy
                                                         </button>
                                                     ` : ''}
@@ -209,6 +246,26 @@ function renderRegionDetail(container, region, childRegions, groups) {
                                     <div class="card__body">
                                         <p class="text-center" style="color: var(--color-gray-600);">
                                             No Signal groups have been created for this community yet.
+                                        </p>
+                                    </div>
+                                </div>
+                            `}
+                        </div>
+
+                        <!-- Meshtastic Channels -->
+                        <div class="mt-6" id="meshtastic-section">
+                            <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-4);">
+                                Meshtastic Channels
+                            </h2>
+                            ${meshtasticChannels.length > 0 ? `
+                                <div class="dashboard-grid">
+                                    ${meshtasticChannels.map(channel => renderMeshtasticCardHTML(channel, channel._decryptedURL)).join('')}
+                                </div>
+                            ` : `
+                                <div class="card">
+                                    <div class="card__body">
+                                        <p class="text-center" style="color: var(--color-gray-600);">
+                                            No Meshtastic channels have been created for this community yet.
                                         </p>
                                     </div>
                                 </div>
@@ -252,6 +309,9 @@ function renderRegionDetail(container, region, childRegions, groups) {
                             <a href="/admin/groups?region=${region.id}" class="btn btn--secondary" data-link>
                                 Create Signal Group
                             </a>
+                            <a href="/admin/meshtastic?region=${region.id}" class="btn btn--secondary" data-link>
+                                Create Meshtastic Channel
+                            </a>
                             ${userIsSuperuser ? `
                                 <button class="btn btn--danger" id="delete-region-btn">
                                     Delete Community
@@ -266,6 +326,17 @@ function renderRegionDetail(container, region, childRegions, groups) {
 
     // Initialize map
     initRegionMap(region, childRegions);
+
+    // Init Meshtastic QR codes and copy buttons
+    for (const channel of meshtasticChannels) {
+        if (channel._decryptedURL) {
+            initMeshtasticCardQR(channel.id, channel._decryptedURL);
+        }
+    }
+    const meshtasticSection = container.querySelector('#meshtastic-section');
+    if (meshtasticSection) {
+        bindMeshtasticCopyButtons(meshtasticSection);
+    }
 
     // Bind copy buttons
     const copyButtons = container.querySelectorAll('.copy-link-btn');
@@ -285,7 +356,7 @@ function renderRegionDetail(container, region, childRegions, groups) {
     const editNameBtn = container.querySelector('#edit-name-btn');
     if (editNameBtn) {
         editNameBtn.addEventListener('click', () => {
-            showEditNameModal(region, container, childRegions, groups);
+            showEditNameModal(region, container, childRegions, groups, meshtasticChannels);
         });
     }
 
@@ -566,8 +637,9 @@ function showReportModal(regionId, userId, username) {
  * @param {HTMLElement} container - Container element
  * @param {Object[]} childRegions - Child regions (for re-render)
  * @param {Object[]} groups - Signal groups (for re-render)
+ * @param {Object[]} meshtasticChannels - Meshtastic channels (for re-render)
  */
-function showEditNameModal(region, container, childRegions, groups) {
+function showEditNameModal(region, container, childRegions, groups, meshtasticChannels = []) {
     const modalContainer = document.getElementById('modal-container');
 
     modalContainer.innerHTML = `
@@ -648,7 +720,7 @@ function showEditNameModal(region, container, childRegions, groups) {
             // Update the region object and re-render
             region.name = newName;
             closeModal();
-            renderRegionDetail(container, region, childRegions, groups);
+            renderRegionDetail(container, region, childRegions, groups, meshtasticChannels);
         } catch (error) {
             console.error('Failed to update region name:', error);
             toast.error(error.message || 'Failed to update community name');

@@ -1,7 +1,7 @@
 /**
  * Help/FAQ page
  * Provides information about the platform and answers common questions.
- * Uses a tabbed layout: General, Communities, Schools, Signal Safety.
+ * Uses a tabbed layout: General, Communities, Schools, Meshtastic, Signal Safety.
  */
 
 /**
@@ -23,6 +23,7 @@ export async function render(container) {
                     <button class="tab tab--active" data-tab="general">General</button>
                     <button class="tab" data-tab="regions">Communities</button>
                     <button class="tab" data-tab="schools">Schools</button>
+                    <button class="tab" data-tab="meshtastic">Meshtastic</button>
                     <button class="tab" data-tab="signal-safety">Signal Safety</button>
                 </div>
 
@@ -70,7 +71,7 @@ export async function render(container) {
                         <ul class="help-list">
                             <li>We only store your community membership (e.g., "member of Downtown neighborhood")</li>
                             <li>All accounts require multi-factor authentication (MFA)</li>
-                            <li>Signal group invite links are only visible to verified members</li>
+                            <li>Signal group invite links and Meshtastic channel URLs are end-to-end encrypted &mdash; the server never sees the plaintext</li>
                             <li>Sensitive data is never sent via email</li>
                         </ul>
                     </section>
@@ -372,6 +373,136 @@ export async function render(container) {
                                 No. School verification is entirely vouch-based. You just need other verified
                                 school members to vouch for you. Postcard verification is only used for
                                 geographic community verification.
+                            </p>
+                        </details>
+                    </section>
+                </div>
+
+                <!-- Meshtastic Tab -->
+                <div class="help-tab-content" id="tab-meshtastic" style="display: none;">
+                    <section class="help-section">
+                        <h2>What is Meshtastic?</h2>
+                        <p>
+                            <a href="https://meshtastic.org" target="_blank" rel="noopener">Meshtastic</a> is
+                            an open-source mesh networking project that uses affordable LoRa radios to create
+                            long-range, off-grid communication networks. Unlike cellular or Wi-Fi, Meshtastic
+                            works without any internet infrastructure &mdash; messages hop between radios to
+                            reach their destination.
+                        </p>
+                        <p>
+                            Meshtastic complements Signal by providing a communication fallback when internet
+                            and cellular networks are unavailable. This is especially valuable during natural
+                            disasters, power outages, or in remote areas with no cell coverage.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>How Meshtastic Channels Work</h2>
+                        <div class="help-cards">
+                            <div class="help-card">
+                                <h3>Channel URLs</h3>
+                                <p>
+                                    Each Meshtastic channel is configured via a URL that encodes the channel
+                                    name, encryption key, radio settings, and region. Community admins share
+                                    these URLs so members can join the same mesh channel.
+                                </p>
+                            </div>
+                            <div class="help-card">
+                                <h3>QR Codes</h3>
+                                <p>
+                                    Channel URLs are displayed as scannable QR codes. Open the Meshtastic app
+                                    on your phone, scan the QR code, and your radio will be configured
+                                    automatically.
+                                </p>
+                            </div>
+                            <div class="help-card">
+                                <h3>Channel Details</h3>
+                                <p>
+                                    Each channel displays its parsed settings: encryption type and strength,
+                                    modem preset (range vs speed), radio region, and hop limit. This helps
+                                    you understand the channel's configuration at a glance.
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>End-to-End Encryption</h2>
+                        <div class="help-highlight">
+                            <h3>Channel URLs Are Encrypted</h3>
+                            <p>
+                                Meshtastic channel URLs (like Signal group invite links) are stored using
+                                end-to-end encryption. The server never sees the plaintext URL &mdash;
+                                it is encrypted in your browser before being sent, and only decrypted
+                                in the browsers of verified community members.
+                            </p>
+                        </div>
+                        <ul class="help-list">
+                            <li>Each user has a unique encryption keypair generated in their browser</li>
+                            <li>Secrets are encrypted with a random key (DEK), and the DEK is wrapped for each member's public key</li>
+                            <li>Even server administrators and superusers cannot decrypt channel URLs</li>
+                            <li>If you reset your password, community members automatically re-encrypt secrets for your new key when they log in</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>Meshtastic FAQ</h2>
+
+                        <details class="faq-item">
+                            <summary>What hardware do I need?</summary>
+                            <p>
+                                You need a Meshtastic-compatible LoRa radio (such as a Heltec V3 or LilyGo
+                                T-Beam) and a phone with the
+                                <a href="https://meshtastic.org/docs/software" target="_blank" rel="noopener">Meshtastic app</a>.
+                                Radios typically cost $20&ndash;$50 and communicate over license-free radio
+                                frequencies.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>How far can Meshtastic radios reach?</summary>
+                            <p>
+                                Range depends on terrain and antenna placement. Line-of-sight range can be
+                                several miles (or tens of miles with elevated antennas). In urban areas,
+                                expect 1&ndash;3 miles between nodes. The mesh network extends range by
+                                hopping messages through intermediate radios.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Is Meshtastic encrypted?</summary>
+                            <p>
+                                Yes. Meshtastic channels use AES-256 encryption by default. Each channel
+                                has its own encryption key (PSK). The platform shows you the encryption
+                                type and warns if a channel uses weak or default keys.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>How do I scan a channel QR code?</summary>
+                            <p>
+                                Open the Meshtastic app on your phone, go to the channel settings, and
+                                use the "Scan QR Code" option. The app will configure your radio with
+                                the correct channel name, encryption key, and radio settings automatically.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Can I be in multiple Meshtastic channels?</summary>
+                            <p>
+                                Yes. Most Meshtastic radios support up to 8 channels simultaneously. Your
+                                community may have separate channels for different purposes (e.g., general
+                                chat, emergency alerts).
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>What are security warnings about?</summary>
+                            <p>
+                                The platform analyzes each channel's encryption key and warns about insecure
+                                configurations: channels using the default key (which anyone can read),
+                                channels with no encryption, or channels using weaker AES-128 keys. Admins
+                                should use strong, unique AES-256 keys for community channels.
                             </p>
                         </details>
                     </section>

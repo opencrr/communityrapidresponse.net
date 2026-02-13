@@ -8,10 +8,11 @@ import (
 type ProposalStatus string
 
 const (
-	ProposalStatusPending  ProposalStatus = "pending"
-	ProposalStatusApproved ProposalStatus = "approved"
-	ProposalStatusRejected ProposalStatus = "rejected"
-	ProposalStatusExpired  ProposalStatus = "expired"
+	ProposalStatusPending                  ProposalStatus = "pending"
+	ProposalStatusApproved                 ProposalStatus = "approved"
+	ProposalStatusRejected                 ProposalStatus = "rejected"
+	ProposalStatusExpired                  ProposalStatus = "expired"
+	ProposalStatusApprovedPendingFinalization ProposalStatus = "approved_pending_finalization"
 )
 
 // AssetType represents the type of asset being proposed for deletion

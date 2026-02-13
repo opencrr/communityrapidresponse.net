@@ -7,6 +7,8 @@ import { store, isAuthenticated, setUser, clearUser, hasReadAccess, isAdmin, isS
 import { getCurrentUser } from './api/auth.js';
 import { renderHeader } from './components/header.js';
 import { renderFooter } from './components/footer.js';
+import { hasLocalKey } from './crypto/index.js';
+import { checkAndPerformRekeys } from './crypto/rekey.js';
 
 // Page imports
 import homePage from './pages/home.js';
@@ -20,12 +22,14 @@ import regionDetailPage from './pages/regionDetail.js';
 import verificationPage from './pages/verification.js';
 import vouchPage from './pages/vouch.js';
 import groupsPage from './pages/groups.js';
+import meshtasticPage from './pages/meshtastic.js';
 import verifyEmailPage from './pages/verifyEmail.js';
 import createRegionPage from './pages/admin/createRegion.js';
 import manageGroupsPage from './pages/admin/manageGroups.js';
+import manageMeshtasticPage from './pages/admin/manageMeshtastic.js';
 import manageUsersPage from './pages/admin/manageUsers.js';
 import auditLogsPage from './pages/admin/auditLogs.js';
-import inviteLinkProposalsPage from './pages/admin/inviteLinkProposals.js';
+import secretProposalsPage from './pages/admin/secretProposals.js';
 import blocklistProposalsPage from './pages/admin/blocklistProposals.js';
 import deletionProposalsPage from './pages/admin/deletionProposals.js';
 import userReportsPage from './pages/admin/userReports.js';
@@ -72,9 +76,11 @@ const routes = [
     { path: '/verify', page: verificationPage, auth: true },
     { path: '/vouch', page: vouchPage, auth: true },
     { path: '/groups', page: groupsPage, auth: true, requiresReadAccess: true },
+    { path: '/meshtastic', page: meshtasticPage, auth: true, requiresReadAccess: true },
     { path: '/admin/communities', page: createRegionPage, auth: true, requiresAdmin: true },
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/proposals', page: inviteLinkProposalsPage, auth: true, requiresAdmin: true },
+    { path: '/admin/meshtastic', page: manageMeshtasticPage, auth: true, requiresAdmin: true },
+    { path: '/admin/proposals', page: secretProposalsPage, auth: true, requiresAdmin: true },
     { path: '/admin/blocklist-proposals', page: blocklistProposalsPage, auth: true, requiresAdmin: true },
     { path: '/admin/deletion-proposals', page: deletionProposalsPage, auth: true, requiresAdmin: true },
     { path: '/admin/reports', page: userReportsPage, auth: true, requiresAdmin: true },
@@ -97,6 +103,17 @@ async function init() {
         await getCurrentUser();
     } catch (error) {
         clearUser();
+    }
+
+    // For returning authenticated users, check for pending re-keys in background
+    if (isAuthenticated()) {
+        hasLocalKey().then(hasKey => {
+            if (hasKey) {
+                checkAndPerformRekeys().catch(err => {
+                    console.error('Background re-key check failed:', err);
+                });
+            }
+        }).catch(() => {});
     }
 
     // Render initial header and footer

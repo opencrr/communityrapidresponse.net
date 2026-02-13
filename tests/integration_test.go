@@ -30,7 +30,6 @@ type IntegrationTestSuite struct {
 	verifyRepo      *database.VerificationRepository
 	vouchRepo       *database.VouchRepository
 	groupRepo       *database.SignalGroupRepository
-	proposalRepo    *database.InviteLinkProposalRepository
 	jwtAuth         *middleware.JWTAuth
 	mockPostgrid    *mocks.MockPostgridService
 	mockMapbox      *mocks.MockMapboxService
@@ -68,12 +67,14 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
+	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
+	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 
 	// Create JWT auth
 	jwtConfig := &config.JWTConfig{
@@ -97,7 +98,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, proposalRepo, regionRepo, nil, consensusConfig,
+		db, groupRepo, encryptedSecretRepo, regionRepo, auditRepo,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -121,14 +122,19 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, proposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
+
+	meshtasticHandler := handlers.NewMeshtasticHandler(
+		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
+	)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -144,7 +150,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		verifyRepo:      verifyRepo,
 		vouchRepo:       vouchRepo,
 		groupRepo:       groupRepo,
-		proposalRepo:    proposalRepo,
 		jwtAuth:         jwtAuth,
 		mockPostgrid:    mockPostgrid,
 		mockMapbox:      mockMapbox,
@@ -778,19 +783,17 @@ func TestIntegration_SignalGroupsAdmin(t *testing.T) {
 
 	// Create signal groups
 	cityGroup := &models.SignalGroup{
-		RegionID:   &cityRegion.ID,
-		GroupName:  "City Signal Group",
-		InviteLink: "https://signal.group/intcity",
-		CreatedBy:  &userID,
+		RegionID:  &cityRegion.ID,
+		GroupName: "City Signal Group",
+		CreatedBy: &userID,
 	}
 	_ = suite.groupRepo.Create(ctx, cityGroup)
 	defer func() { _, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE id = ?", cityGroup.ID) }()
 
 	countyGroup := &models.SignalGroup{
-		RegionID:   &countyRegion.ID,
-		GroupName:  "County Signal Group",
-		InviteLink: "https://signal.group/intcounty",
-		CreatedBy:  &userID,
+		RegionID:  &countyRegion.ID,
+		GroupName: "County Signal Group",
+		CreatedBy: &userID,
 	}
 	_ = suite.groupRepo.Create(ctx, countyGroup)
 	defer func() { _, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE id = ?", countyGroup.ID) }()
@@ -953,10 +956,14 @@ func TestIntegration_SignalGroupCreate_NameField(t *testing.T) {
 	_ = suite.regionRepo.AddUserToRegion(ctx, userID, region.ID, true)
 
 	t.Run("create with name field succeeds", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/signal-groups", map[string]string{
-			"region_id":   region.ID,
-			"name":        "New Signal Group",
-			"invite_link": "https://signal.group/newgroup",
+		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "New Signal Group",
+			"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": userID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1014,10 +1021,14 @@ func TestIntegration_SuperuserBypass(t *testing.T) {
 	defer suite.cleanupRegion(region.ID)
 
 	t.Run("superuser can create group in any region", func(t *testing.T) {
-		resp := suite.request("POST", "/api/v1/signal-groups", map[string]string{
-			"region_id":   region.ID,
-			"name":        "Superuser Created Group",
-			"invite_link": "https://signal.group/superuser",
+		resp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "Superuser Created Group",
+			"encrypted_payload": "dGVzdC1zdXBlcnVzZXItcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": userID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, token)
 		defer func() { _ = resp.Body.Close() }()
 

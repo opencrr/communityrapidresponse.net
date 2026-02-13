@@ -656,6 +656,7 @@ func TestIntegration_NotificationWorker_ProcessesSubRegionInvitation(t *testing.
 		templates,
 		suite.userRepo,
 		suite.regionRepo,
+		nil,
 		cfg,
 	)
 
@@ -724,6 +725,7 @@ func TestIntegration_NotificationWorker_ProcessesQueue(t *testing.T) {
 		templates,
 		suite.userRepo,
 		suite.regionRepo,
+		nil,
 		cfg,
 	)
 
@@ -807,6 +809,7 @@ func TestIntegration_NotificationWorker_FanOutExpansion(t *testing.T) {
 		templates,
 		suite.userRepo,
 		suite.regionRepo,
+		nil,
 		cfg,
 	)
 
@@ -876,6 +879,7 @@ func TestIntegration_NotificationWorker_SkipsBlockedUsers(t *testing.T) {
 		templates,
 		suite.userRepo,
 		suite.regionRepo,
+		nil,
 		cfg,
 	)
 
@@ -933,6 +937,7 @@ func TestIntegration_NotificationWorker_RateLimitingPreventsDoubleEmails(t *test
 		templates,
 		suite.userRepo,
 		suite.regionRepo,
+		nil,
 		cfg,
 	)
 
