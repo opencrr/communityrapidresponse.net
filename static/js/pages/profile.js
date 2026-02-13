@@ -9,6 +9,7 @@ import { ApiError } from '../api/client.js';
 import toast from '../components/toast.js';
 import * as modal from '../components/modal.js';
 import { navigate } from '../app.js';
+import { rewrapBackup } from '../crypto/index.js';
 
 /**
  * Render the profile page
@@ -193,6 +194,9 @@ async function handleChangePassword(event) {
             current_password: currentPassword,
             new_password: newPassword,
         });
+
+        // Re-wrap encryption key backup with new password
+        await rewrapBackup(newPassword);
 
         toast.success('Password changed successfully');
 

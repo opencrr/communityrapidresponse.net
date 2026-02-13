@@ -106,7 +106,9 @@ export async function getSchoolSignalGroups(schoolId) {
  * @param {string} schoolId - School UUID
  * @param {Object} data - Signal group data
  * @param {string} data.name - Group name
- * @param {string} data.invite_link - Signal invite link
+ * @param {string} data.encrypted_payload - Encrypted invite link (base64)
+ * @param {string} data.encryption_iv - Encryption IV (base64)
+ * @param {Array<{user_id: string, wrapped_dek: string}>} data.wrapped_keys - Wrapped DEKs
  * @param {string} [data.description] - Group description
  * @returns {Promise<Object>} Created group
  */

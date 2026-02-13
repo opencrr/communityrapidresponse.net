@@ -5,9 +5,13 @@
  */
 
 import { getSchool, joinSchool, leaveSchool, vouchForSchoolMember, getPendingSchoolVouches, getSchoolMembers, getSchoolSignalGroups, createSchoolSignalGroup, getDistrict, districtToFeature } from '../api/schools.js';
+import { listMeshtasticChannels } from '../api/meshtastic.js';
 import { createSchoolReport } from '../api/reports.js';
 import { initMap, addRegionsLayer, fitToBounds, destroyMap, showPopup } from '../components/map.js';
+import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
 import { isAuthenticated, getUser } from '../utils/store.js';
+import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
+import { getPublicKeys } from '../api/encryption.js';
 import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -150,6 +154,11 @@ function renderSchoolDetail(container, school) {
                         <div id="signal-groups-section" class="mt-6"></div>
                     ` : ''}
 
+                    <!-- Meshtastic Channels -->
+                    ${isVerified ? `
+                        <div id="meshtastic-section" class="mt-6"></div>
+                    ` : ''}
+
                     <!-- Admin Actions -->
                     ${isSchoolAdmin ? `
                         <div id="admin-section" class="mt-6"></div>
@@ -182,6 +191,7 @@ function renderSchoolDetail(container, school) {
     }
     if (isVerified) {
         loadSignalGroups(school);
+        loadMeshtasticChannels(school);
     }
     if (isSchoolAdmin) {
         loadAdminSection(school);
@@ -563,13 +573,26 @@ async function loadSignalGroups(school) {
         const response = await getSchoolSignalGroups(school.id);
         const groups = response.groups || [];
 
+        // Decrypt invite links
+        const privateKey = await getPrivateKey();
+        const decryptedGroups = await Promise.all(groups.map(async (group) => {
+            let link = null;
+            const secret = group.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...group, _decryptedLink: link };
+        }));
+
         section.innerHTML = `
             <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-4);">
                 Signal Groups
             </h2>
-            ${groups.length > 0 ? `
+            ${decryptedGroups.length > 0 ? `
                 <div class="dashboard-grid">
-                    ${groups.map(group => `
+                    ${decryptedGroups.map(group => `
                         <div class="card group-card">
                             <div class="card__body">
                                 <div class="group-card__name">${escapeHtml(group.name)}${group.has_pending_deletion ? '<span class="badge badge--danger" style="margin-left: var(--space-2);">Delete Proposed</span>' : ''}</div>
@@ -579,9 +602,9 @@ async function loadSignalGroups(school) {
                                     </p>
                                 ` : ''}
                                 <div class="group-invite">
-                                    <span class="group-invite__link">${escapeHtml(group.invite_link || 'Invite link hidden')}</span>
-                                    ${group.invite_link ? `
-                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group.invite_link)}">
+                                    <span class="group-invite__link">${escapeHtml(group._decryptedLink || 'Invite link hidden')}</span>
+                                    ${group._decryptedLink ? `
+                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group._decryptedLink)}">
                                             Copy
                                         </button>
                                     ` : ''}
@@ -620,6 +643,61 @@ async function loadSignalGroups(school) {
 }
 
 /**
+ * Load Meshtastic channels for this school
+ */
+async function loadMeshtasticChannels(school) {
+    const section = document.getElementById('meshtastic-section');
+    if (!section) return;
+
+    try {
+        const response = await listMeshtasticChannels({ school_id: school.id });
+        const channels = response.channels || [];
+
+        // Decrypt channel URLs
+        const privateKey = await getPrivateKey();
+        const decryptedChannels = await Promise.all(channels.map(async (channel) => {
+            let url = null;
+            const secret = channel.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    url = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                } catch (e) { /* decryption failed */ }
+            }
+            return { ...channel, _decryptedURL: url };
+        }));
+
+        section.innerHTML = `
+            <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-4);">
+                Meshtastic Channels
+            </h2>
+            ${decryptedChannels.length > 0 ? `
+                <div class="dashboard-grid">
+                    ${decryptedChannels.map(channel => renderMeshtasticCardHTML(channel, channel._decryptedURL)).join('')}
+                </div>
+            ` : `
+                <div class="card">
+                    <div class="card__body">
+                        <p class="text-center" style="color: var(--color-gray-600);">
+                            No Meshtastic channels have been created for this school yet.
+                        </p>
+                    </div>
+                </div>
+            `}
+        `;
+
+        // Init QR codes and bind copy buttons
+        for (const channel of decryptedChannels) {
+            if (channel._decryptedURL) {
+                initMeshtasticCardQR(channel.id, channel._decryptedURL);
+            }
+        }
+        bindMeshtasticCopyButtons(section);
+    } catch (error) {
+        console.error('Failed to load Meshtastic channels:', error);
+    }
+}
+
+/**
  * Load admin section
  */
 async function loadAdminSection(school) {
@@ -648,6 +726,15 @@ async function loadAdminSection(school) {
                     </div>
                     <button class="btn btn--primary" id="create-group-btn">Create Signal Group</button>
                 </div>
+                <div style="margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--color-gray-200);">
+                    <h3>Meshtastic Channels</h3>
+                    <p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">
+                        Create and manage Meshtastic mesh networking channels for this school.
+                    </p>
+                    <a href="/admin/meshtastic?school=${school.id}" class="btn btn--secondary" style="margin-top: var(--space-3);" data-link>
+                        Manage Meshtastic Channels
+                    </a>
+                </div>
             </div>
         </div>
     `;
@@ -665,11 +752,24 @@ async function loadAdminSection(school) {
             }
 
             createBtn.disabled = true;
-            createBtn.textContent = 'Creating...';
+            createBtn.textContent = 'Encrypting & creating...';
             try {
+                // Fetch public keys for school members and encrypt
+                const publicKeysResponse = await getPublicKeys({ school_id: school.id });
+                const memberKeys = publicKeysResponse.public_keys || [];
+                if (memberKeys.length === 0) {
+                    toast.error('No members with encryption keys found. Members need to log in to set up encryption.');
+                    createBtn.disabled = false;
+                    createBtn.textContent = 'Create Signal Group';
+                    return;
+                }
+                const encrypted = await encryptForMembers(inviteLink, memberKeys);
+
                 await createSchoolSignalGroup(school.id, {
                     name,
-                    invite_link: inviteLink,
+                    encrypted_payload: encrypted.ciphertext,
+                    encryption_iv: encrypted.iv,
+                    wrapped_keys: encrypted.wrappedKeys,
                     description: description || undefined,
                 });
                 toast.success('Signal group created!');

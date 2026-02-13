@@ -5,6 +5,7 @@
 
 import { validateResetToken, resetPassword } from '../api/auth.js';
 import { ApiError } from '../api/client.js';
+import { rotateKeys } from '../crypto/index.js';
 
 /**
  * Render the reset password page
@@ -180,6 +181,9 @@ async function handleSubmit(event, token) {
 
     try {
         await resetPassword({ token, password: newPassword });
+
+        // Rotate encryption keys (generate new keypair with new password)
+        await rotateKeys(newPassword);
 
         // Hide form, show success
         form.classList.add('hidden');

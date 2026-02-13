@@ -6,6 +6,8 @@ import { login } from '../api/auth.js';
 import { ApiError } from '../api/client.js';
 import toast from '../components/toast.js';
 import { navigate } from '../app.js';
+import { hasLocalKey, restoreEncryption, initializeEncryption } from '../crypto/index.js';
+import { checkAndPerformRekeys } from '../crypto/rekey.js';
 
 /**
  * Render the login page
@@ -101,6 +103,21 @@ async function handleSubmit(event) {
             }
             return;
         }
+
+        // Restore or initialize encryption keys
+        const hasKey = await hasLocalKey();
+        if (!hasKey) {
+            if (response.has_encryption_keys) {
+                await restoreEncryption(password);
+            } else {
+                await initializeEncryption(password);
+            }
+        }
+
+        // Check for pending re-keys in background (don't block login)
+        checkAndPerformRekeys().catch(err => {
+            console.error('Background re-key check failed:', err);
+        });
 
         toast.success('Welcome back!');
         navigate('/dashboard');

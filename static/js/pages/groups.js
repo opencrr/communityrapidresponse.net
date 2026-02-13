@@ -1,11 +1,16 @@
 /**
  * Signal groups discovery page
  * Shows all Signal groups the user has access to.
+ * Decrypts encrypted invite links client-side.
  */
 
 import { getGroups } from '../api/signalGroups.js';
 import { hasReadAccess, isAdmin } from '../utils/store.js';
+import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 import toast from '../components/toast.js';
+
+// Cache decrypted invite links per secret_id for the session
+const decryptedCache = new Map();
 
 /**
  * Get a scope key for grouping (region:id, school:id, or district:id)
@@ -56,6 +61,43 @@ function getScopeOrder(scopeKey) {
 }
 
 /**
+ * Decrypt a group's encrypted secret
+ * @param {Object} group - Group with encrypted_secret
+ * @returns {Promise<string|null>} Decrypted invite link or null
+ */
+async function decryptGroupSecret(group) {
+    const secret = group.encrypted_secret;
+    if (!secret || !secret.encrypted_payload || !secret.wrapped_dek) {
+        return null;
+    }
+
+    // Check cache
+    if (decryptedCache.has(secret.secret_id)) {
+        return decryptedCache.get(secret.secret_id);
+    }
+
+    try {
+        const privateKey = await getPrivateKey();
+        if (!privateKey) {
+            return null;
+        }
+
+        const plaintext = await decryptSecret(
+            secret.encrypted_payload,
+            secret.encryption_iv,
+            secret.wrapped_dek,
+            privateKey
+        );
+
+        decryptedCache.set(secret.secret_id, plaintext);
+        return plaintext;
+    } catch (error) {
+        console.error('Failed to decrypt secret for group:', group.id, error);
+        return null;
+    }
+}
+
+/**
  * Render the groups page
  * @param {HTMLElement} container - Container element to render into
  */
@@ -99,7 +141,7 @@ export async function render(container) {
 
     try {
         const groups = await getGroups();
-        renderGroups(container, groups);
+        await renderGroups(container, groups);
     } catch (error) {
         console.error('Failed to load groups:', error);
         container.innerHTML = `
@@ -118,12 +160,23 @@ export async function render(container) {
 }
 
 /**
- * Render the groups list
+ * Render the groups list, decrypting secrets in parallel
  * @param {HTMLElement} container - Container element
  * @param {Object[]} groups - Array of Signal groups
  */
-function renderGroups(container, groups) {
+async function renderGroups(container, groups) {
     const userIsAdmin = isAdmin();
+
+    // Decrypt all secrets in parallel
+    const decryptedLinks = await Promise.all(
+        groups.map(group => decryptGroupSecret(group))
+    );
+
+    // Attach decrypted link to each group for rendering
+    const groupsWithLinks = groups.map((group, i) => ({
+        ...group,
+        _decryptedLink: decryptedLinks[i],
+    }));
 
     container.innerHTML = `
         <div class="page">
@@ -154,7 +207,7 @@ function renderGroups(container, groups) {
                     </div>
                 </div>
 
-                ${groups.length === 0 ? `
+                ${groupsWithLinks.length === 0 ? `
                     <div class="empty-state">
                         <div class="empty-state__icon">&#x1F4AC;</div>
                         <h3 class="empty-state__title">No Signal Groups Yet</h3>
@@ -168,7 +221,7 @@ function renderGroups(container, groups) {
                     </div>
                 ` : `
                     <div id="groups-list">
-                        ${renderGroupsList(groups)}
+                        ${renderGroupsList(groupsWithLinks)}
                     </div>
                 `}
             </div>
@@ -179,7 +232,7 @@ function renderGroups(container, groups) {
     const searchInput = document.getElementById('group-search');
     if (searchInput) {
         searchInput.addEventListener('input', (event) => {
-            filterGroups(event.target.value, groups);
+            filterGroups(event.target.value, groupsWithLinks);
         });
     }
 
@@ -189,7 +242,7 @@ function renderGroups(container, groups) {
 
 /**
  * Render groups list HTML grouped by scope
- * @param {Object[]} groups - Groups to render
+ * @param {Object[]} groups - Groups to render (with _decryptedLink)
  * @returns {string} HTML string
  */
 function renderGroupsList(groups) {
@@ -239,10 +292,13 @@ function renderGroupsList(groups) {
 
 /**
  * Render a single group card
- * @param {Object} group - Group data
+ * @param {Object} group - Group data with _decryptedLink
  * @returns {string} HTML string
  */
 function renderGroupCard(group) {
+    const inviteLink = group._decryptedLink;
+    const hasLink = !!inviteLink;
+
     return `
         <div class="card group-card" data-group-id="${group.id}" data-group-name="${escapeHtml(group.name).toLowerCase()}">
             <div class="card__body">
@@ -255,15 +311,15 @@ function renderGroupCard(group) {
                     </p>
                 ` : ''}
                 <div class="group-invite">
-                    <span class="group-invite__link">${escapeHtml(group.invite_link || 'Invite link not available')}</span>
-                    ${group.invite_link ? `
-                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(group.invite_link)}">
+                    <span class="group-invite__link">${hasLink ? escapeHtml(inviteLink) : (group.encrypted_secret ? 'Decryption key not available' : 'Invite link not available')}</span>
+                    ${hasLink ? `
+                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(inviteLink)}">
                             Copy
                         </button>
                     ` : ''}
                 </div>
-                ${group.invite_link ? `
-                    <a href="${escapeHtml(group.invite_link)}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--block mt-4">
+                ${hasLink ? `
+                    <a href="${escapeHtml(inviteLink)}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--block mt-4">
                         Join on Signal
                     </a>
                 ` : ''}
@@ -275,7 +331,7 @@ function renderGroupCard(group) {
 /**
  * Filter groups by search query
  * @param {string} query - Search query
- * @param {Object[]} groups - All groups
+ * @param {Object[]} groups - All groups (with _decryptedLink)
  */
 function filterGroups(query, groups) {
     const normalizedQuery = query.toLowerCase().trim();

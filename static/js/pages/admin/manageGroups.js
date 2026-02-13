@@ -1,20 +1,21 @@
 /**
  * Admin: Manage Signal Groups page
  * Allows admins to create and manage Signal groups.
+ * Uses E2E encryption for invite links.
  */
 
 import {
     getAdminGroups,
     createGroup,
     updateGroup,
-    proposeInviteLinkUpdate,
-    getInviteLinkProposals,
-    voteOnInviteLinkProposal,
 } from '../../api/signalGroups.js';
+import { createSecretProposal } from '../../api/secretProposals.js';
 import { createDeletionProposal } from '../../api/deletions.js';
 import { getAdminRegions } from '../../api/regions.js';
+import { getPublicKeys } from '../../api/encryption.js';
 import { ApiError } from '../../api/client.js';
 import { isAdmin } from '../../utils/store.js';
+import { encryptForMembers, getPrivateKey, decryptSecret } from '../../crypto/index.js';
 import toast from '../../components/toast.js';
 import modal from '../../components/modal.js';
 import { navigate } from '../../app.js';
@@ -101,9 +102,29 @@ async function loadGroups(container) {
             return;
         }
 
+        // Decrypt invite links for display
+        const privateKey = await getPrivateKey();
+        const decryptedGroups = await Promise.all(groups.map(async (group) => {
+            let decryptedLink = null;
+            const secret = group.encrypted_secret;
+            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+                try {
+                    decryptedLink = await decryptSecret(
+                        secret.encrypted_payload,
+                        secret.encryption_iv,
+                        secret.wrapped_dek,
+                        privateKey
+                    );
+                } catch (error) {
+                    console.error('Failed to decrypt invite link for group:', group.id, error);
+                }
+            }
+            return { ...group, _decryptedLink: decryptedLink };
+        }));
+
         content.innerHTML = `
             <div class="dashboard-grid">
-                ${groups.map(group => renderGroupCard(group)).join('')}
+                ${decryptedGroups.map(group => renderGroupCard(group)).join('')}
             </div>
         `;
 
@@ -126,10 +147,12 @@ async function loadGroups(container) {
 
 /**
  * Render a group card with admin actions
- * @param {Object} group - Group data
+ * @param {Object} group - Group data with _decryptedLink
  * @returns {string} HTML string
  */
 function renderGroupCard(group) {
+    const displayLink = group._decryptedLink || (group.encrypted_secret ? 'Encrypted (key not available)' : 'No invite link set');
+
     return `
         <div class="card group-card" data-group-id="${group.id}">
             <div class="card__body">
@@ -145,13 +168,18 @@ function renderGroupCard(group) {
                     </p>
                 ` : ''}
                 <div class="group-invite">
-                    <span class="group-invite__link">${escapeHtml(group.invite_link || 'No invite link set')}</span>
+                    <span class="group-invite__link">${escapeHtml(displayLink)}</span>
                 </div>
                 <div class="admin-actions">
                     <button class="btn btn--sm btn--secondary edit-group-btn" data-group-id="${group.id}">
                         Edit
                     </button>
-                    <button class="btn btn--sm btn--secondary update-link-btn" data-group-id="${group.id}">
+                    <button class="btn btn--sm btn--secondary update-link-btn"
+                        data-group-id="${group.id}"
+                        data-region-id="${group.region_id || ''}"
+                        data-school-id="${group.school_id || ''}"
+                        data-district-id="${group.district_id || ''}"
+                        data-secret-id="${group.encrypted_secret?.secret_id || ''}">
                         Update Link
                     </button>
                     <button class="btn btn--sm btn--danger delete-group-btn" data-group-id="${group.id}"${group.has_pending_deletion ? ' disabled' : ''}>
@@ -179,7 +207,11 @@ function bindGroupActions() {
     document.querySelectorAll('.update-link-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const groupId = btn.dataset.groupId;
-            showUpdateLinkModal(groupId);
+            const scopeParams = {};
+            if (btn.dataset.regionId) scopeParams.region_id = btn.dataset.regionId;
+            if (btn.dataset.schoolId) scopeParams.school_id = btn.dataset.schoolId;
+            if (btn.dataset.districtId) scopeParams.district_id = btn.dataset.districtId;
+            showUpdateLinkModal(groupId, scopeParams);
         });
     });
 
@@ -245,7 +277,7 @@ async function showCreateGroupModal(preselectedRegionId) {
                     required
                     placeholder="https://signal.group/..."
                 >
-                <p class="form-hint">The invite link for your Signal group.</p>
+                <p class="form-hint">The invite link will be encrypted end-to-end. The server never sees the plaintext.</p>
             </div>
             <div class="form-group">
                 <label for="group-description" class="form-label">Description (optional)</label>
@@ -280,6 +312,7 @@ async function showCreateGroupModal(preselectedRegionId) {
 
 /**
  * Handle create group form submission
+ * Encrypts the invite link for all region members before sending
  */
 async function handleCreateGroup() {
     const form = document.getElementById('create-group-form');
@@ -290,16 +323,34 @@ async function handleCreateGroup() {
         return;
     }
 
-    const data = {
-        name: form.name.value.trim(),
-        region_id: form.region_id.value,
-        invite_link: form.invite_link.value.trim(),
-        description: form.description.value.trim() || undefined,
-    };
+    const inviteLink = form.invite_link.value.trim();
+    const regionId = form.region_id.value;
 
     errorElement.classList.add('hidden');
 
     try {
+        // Fetch public keys for all members of this region
+        const publicKeysResponse = await getPublicKeys({ region_id: regionId });
+        const memberKeys = publicKeysResponse.public_keys || [];
+
+        if (memberKeys.length === 0) {
+            errorElement.textContent = 'No members with encryption keys found in this community. Members need to log in to set up encryption.';
+            errorElement.classList.remove('hidden');
+            return;
+        }
+
+        // Encrypt invite link for all members
+        const encrypted = await encryptForMembers(inviteLink, memberKeys);
+
+        const data = {
+            name: form.name.value.trim(),
+            region_id: regionId,
+            encrypted_payload: encrypted.ciphertext,
+            encryption_iv: encrypted.iv,
+            wrapped_keys: encrypted.wrappedKeys,
+            description: form.description.value.trim() || undefined,
+        };
+
         await createGroup(data);
         modal.closeModal();
         toast.success('Signal group created successfully!');
@@ -308,6 +359,8 @@ async function handleCreateGroup() {
         let errorMessage = 'Failed to create group.';
         if (error instanceof ApiError && error.message) {
             errorMessage = error.message;
+        } else if (error.name === 'OperationError') {
+            errorMessage = 'Encryption failed. Please ensure your encryption keys are set up.';
         }
         errorElement.textContent = errorMessage;
         errorElement.classList.remove('hidden');
@@ -404,14 +457,17 @@ async function handleEditGroup(groupId) {
 }
 
 /**
- * Show update invite link modal (creates a proposal)
+ * Show update invite link modal (creates a secret update proposal)
+ * Encrypts the new link for admins only during proposal phase
  * @param {string} groupId - Group ID
+ * @param {Object} scopeParams - Scope parameters (region_id, school_id, or district_id)
  */
-function showUpdateLinkModal(groupId) {
+function showUpdateLinkModal(groupId, scopeParams) {
     const formHtml = `
         <form id="update-link-form">
             <p style="margin-bottom: var(--space-4); color: var(--color-gray-600);">
                 Updating the invite link requires approval from at least 3 admins. A proposal will be created for voting.
+                The new link is encrypted so only admins can see it during voting.
             </p>
             <div class="form-group">
                 <label for="new-invite-link" class="form-label form-label--required">New Invite Link</label>
@@ -422,6 +478,16 @@ function showUpdateLinkModal(groupId) {
                     class="form-input"
                     required
                     placeholder="https://signal.group/..."
+                >
+            </div>
+            <div class="form-group">
+                <label for="update-reason" class="form-label">Reason (optional)</label>
+                <input
+                    type="text"
+                    id="update-reason"
+                    name="reason"
+                    class="form-input"
+                    placeholder="Why are you updating the link?"
                 >
             </div>
             <div id="update-link-error" class="form-error hidden"></div>
@@ -438,7 +504,7 @@ function showUpdateLinkModal(groupId) {
                 type: 'primary',
                 closeOnClick: false,
                 onClick: async () => {
-                    await handleUpdateLink(groupId);
+                    await handleUpdateLink(groupId, scopeParams);
                 },
             },
         ],
@@ -447,9 +513,11 @@ function showUpdateLinkModal(groupId) {
 
 /**
  * Handle update link proposal submission
+ * Encrypts the new link for admins in the scope
  * @param {string} groupId - Group ID
+ * @param {Object} scopeParams - Scope parameters for fetching admin keys
  */
-async function handleUpdateLink(groupId) {
+async function handleUpdateLink(groupId, scopeParams) {
     const form = document.getElementById('update-link-form');
     const errorElement = document.getElementById('update-link-error');
 
@@ -459,11 +527,30 @@ async function handleUpdateLink(groupId) {
     }
 
     const newLink = form.invite_link.value.trim();
+    const reason = form.reason?.value.trim() || undefined;
 
     errorElement.classList.add('hidden');
 
     try {
-        await proposeInviteLinkUpdate(groupId, newLink);
+        // Fetch admin public keys for the scope
+        const publicKeysResponse = await getPublicKeys(scopeParams);
+        const adminKeys = publicKeysResponse.public_keys || [];
+
+        if (adminKeys.length === 0) {
+            errorElement.textContent = 'No admins with encryption keys found. Admins need to log in to set up encryption.';
+            errorElement.classList.remove('hidden');
+            return;
+        }
+
+        // Encrypt the new link for admins only (during proposal phase)
+        const encrypted = await encryptForMembers(newLink, adminKeys);
+
+        await createSecretProposal(groupId, {
+            encrypted_payload: encrypted.ciphertext,
+            encryption_iv: encrypted.iv,
+            wrapped_keys: encrypted.wrappedKeys,
+            reason: reason,
+        });
         modal.closeModal();
         toast.success('Invite link update proposal submitted. Other admins will vote on it.');
     } catch (error) {
@@ -475,6 +562,8 @@ async function handleUpdateLink(groupId) {
             if (error.status === 400 && error.message.includes('3 admins')) {
                 errorMessage = 'This community needs at least 3 admins to update invite links.';
             }
+        } else if (error.name === 'OperationError') {
+            errorMessage = 'Encryption failed. Please ensure your encryption keys are set up.';
         }
         errorElement.textContent = errorMessage;
         errorElement.classList.remove('hidden');

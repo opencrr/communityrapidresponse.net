@@ -6,6 +6,7 @@ import { register } from '../api/auth.js';
 import { ApiError } from '../api/client.js';
 import toast from '../components/toast.js';
 import { navigate } from '../app.js';
+import { initializeEncryption } from '../crypto/index.js';
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -135,10 +136,14 @@ async function handleSubmit(event) {
 
         // Check if email verification is required
         if (response.email_verification_sent) {
-            // Show verification required message instead of navigating
+            // Initialize encryption keys in the background before showing message
+            await initializeEncryption(password);
             showVerificationMessage(form, email);
             return;
         }
+
+        // Initialize encryption keys (generate keypair, backup to server)
+        await initializeEncryption(password);
 
         toast.success('Account created successfully!');
         navigate('/login');
