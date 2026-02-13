@@ -196,9 +196,11 @@ type PendingSchoolVouchUser struct {
 
 // CreateSchoolSignalGroupRequest represents request to create a school signal group
 type CreateSchoolSignalGroupRequest struct {
-	Name        string  `json:"name" validate:"required,min=1,max=255"`
-	InviteLink  string  `json:"invite_link" validate:"required,url"`
-	Description *string `json:"description,omitempty"`
+	Name             string            `json:"name" validate:"required,min=1,max=255"`
+	Description      *string           `json:"description,omitempty"`
+	EncryptedPayload string            `json:"encrypted_payload" validate:"required"`
+	EncryptionIV     string            `json:"encryption_iv" validate:"required"`
+	WrappedKeys      []WrappedKeyEntry `json:"wrapped_keys" validate:"required"`
 }
 
 // DistrictSearchResponse represents district search results

@@ -17,6 +17,7 @@ const (
 	NotificationTypeDeletionProposal      NotificationType = "deletion_proposal"
 	NotificationTypeInviteLinkProposal    NotificationType = "invite_link_proposal"
 	NotificationTypeSubRegionInvitation   NotificationType = "sub_region_invitation"
+	NotificationTypeRekeyingNeeded       NotificationType = "rekeying_needed"
 )
 
 // NotificationStatus represents the status of a notification
@@ -120,6 +121,15 @@ const (
 	AuditActionReportCreated           = "report_created"
 	AuditActionReportDismissed         = "report_dismissed"
 	AuditActionReportResolvedBlocklist = "report_resolved_blocklist"
+
+	// Encryption key actions
+	AuditActionEncryptionKeyRotated = "encryption_key_rotated"
+	AuditActionSecretRekeyed        = "secret_rekeyed"
+
+	// Meshtastic channel actions
+	AuditActionMeshtasticChannelCreated = "meshtastic_channel_created"
+	AuditActionMeshtasticChannelUpdated = "meshtastic_channel_updated"
+	AuditActionMeshtasticChannelDeleted = "meshtastic_channel_deleted"
 )
 
 // AuditLogFilter represents filters for querying audit logs
