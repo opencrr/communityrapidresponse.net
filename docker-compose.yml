@@ -110,6 +110,8 @@ services:
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      # Rate limiting (disable for development/testing to avoid 429s)
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
       # Bootstrap mode cooldown (disable for development)
       - BOOTSTRAP_COOLDOWN_ENABLED=${BOOTSTRAP_COOLDOWN_ENABLED:-false}
       - BOOTSTRAP_COOLDOWN_MINUTES=${BOOTSTRAP_COOLDOWN_MINUTES:-30}
@@ -238,6 +240,8 @@ services:
       - CORS_ALLOWED_ORIGINS=http://localhost:3001,http://web-test
       - MFA_ENCRYPTION_KEY=test_mfa_key_32_characters_long!
       - MFA_ISSUER=Community Rapid Response Test
+      # Rate limiting (disabled for test environment)
+      - RATE_LIMIT_ENABLED=false
       # Bootstrap mode cooldown (disabled for test environment)
       - BOOTSTRAP_COOLDOWN_ENABLED=false
       - BOOTSTRAP_COOLDOWN_MINUTES=30
