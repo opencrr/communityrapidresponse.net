@@ -72,7 +72,8 @@ func main() {
 	verificationRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	signalGroupRepo := database.NewSignalGroupRepository(db)
-	inviteLinkProposalRepo := database.NewInviteLinkProposalRepository(db)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
+	secretUpdateProposalRepo := database.NewSecretUpdateProposalRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	membershipRepo := database.NewMembershipRepository(db)
@@ -82,6 +83,9 @@ func main() {
 	// User report repository
 	userReportRepo := database.NewUserReportRepository(db)
 
+	// Encryption key repository
+	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
+
 	// School repositories
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -90,8 +94,8 @@ func main() {
 	// Start audit log cleanup worker (runs every 24 hours, retains 90 days)
 	auditRepo.StartCleanupWorker(context.Background(), 24*time.Hour, 90*24*time.Hour)
 
-	// Start proposal expiration worker (runs every hour)
-	inviteLinkProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
+	// Start secret proposal expiration worker (runs every hour)
+	secretUpdateProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
 
 	// Start membership request expiration worker (runs every hour)
 	membershipRepo.StartExpirationWorker(context.Background(), time.Hour)
@@ -174,6 +178,7 @@ func main() {
 		emailTemplates,
 		userRepo,
 		regionRepo,
+		encryptedSecretRepo,
 		&cfg.Notification,
 	)
 	notificationWorker.Start(context.Background())
@@ -209,10 +214,11 @@ func main() {
 		passwordResetRepo,
 		emailTemplates,
 		baseURL,
+		encryptionKeyRepo,
 	)
 	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
-	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, inviteLinkProposalRepo, regionRepo, auditRepo, &cfg.Consensus)
+	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, encryptedSecretRepo, regionRepo, auditRepo)
 	verificationHandler := handlers.NewVerificationHandler(
 		db,
 		verificationRepo,
@@ -248,7 +254,7 @@ func main() {
 	// Initialize school handler
 	schoolHandler := handlers.NewSchoolHandler(
 		db, schoolRepo, districtRepo, schoolVouchRepo,
-		signalGroupRepo, inviteLinkProposalRepo, userRepo, auditRepo,
+		signalGroupRepo, encryptedSecretRepo, userRepo, auditRepo,
 		ncesService,
 		&cfg.Consensus, cfg.Bootstrap.CooldownEnabled, cfg.Bootstrap.CooldownMinutes,
 	)
@@ -258,11 +264,26 @@ func main() {
 		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
 	)
 
+	// Initialize meshtastic channel repository and handler
+	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
+	meshtasticHandler := handlers.NewMeshtasticHandler(
+		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
+	)
+
+	// Initialize encryption handler
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo)
+
+	// Initialize secret update handler
+	secretUpdateHandler := handlers.NewSecretUpdateHandler(
+		db, secretUpdateProposalRepo, encryptedSecretRepo, encryptionKeyRepo,
+		regionRepo, schoolRepo, auditRepo, &cfg.Consensus,
+	)
+
 	// Wire notification service to handlers
-	signalGroupHandler.SetNotificationService(notificationService)
 	verificationHandler.SetNotificationService(notificationService)
 	blocklistProposalHandler.SetNotificationService(notificationService)
 	membershipHandler.SetNotificationService(notificationService)
+	secretUpdateHandler.SetNotificationService(notificationService)
 
 	// Setup CSRF protection
 	csrfConfig := &handlers.CSRFConfig{
@@ -301,6 +322,9 @@ func main() {
 		deletionProposalHandler,
 		schoolHandler,
 		userReportHandler,
+		encryptionHandler,
+		secretUpdateHandler,
+		meshtasticHandler,
 		jwtAuth,
 		rateLimiter,
 		rateLimitConfig,

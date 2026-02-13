@@ -26,6 +26,9 @@ type Router struct {
 	deletionProposals   *DeletionProposalHandler
 	schools             *SchoolHandler
 	userReports         *UserReportHandler
+	encryption          *EncryptionHandler
+	secretUpdates       *SecretUpdateHandler
+	meshtastic          *MeshtasticHandler
 	jwtAuth            *middleware.JWTAuth
 	rateLimiter        services.RateLimiter
 	rateLimitConfig    *RateLimitOptions
@@ -61,6 +64,9 @@ func NewRouter(
 	deletionProposals *DeletionProposalHandler,
 	schools *SchoolHandler,
 	userReports *UserReportHandler,
+	encryption *EncryptionHandler,
+	secretUpdates *SecretUpdateHandler,
+	meshtastic *MeshtasticHandler,
 	jwtAuth *middleware.JWTAuth,
 	rateLimiter services.RateLimiter,
 	rateLimitConfig *RateLimitOptions,
@@ -81,6 +87,9 @@ func NewRouter(
 		deletionProposals:   deletionProposals,
 		schools:             schools,
 		userReports:         userReports,
+		encryption:          encryption,
+		secretUpdates:       secretUpdates,
+		meshtastic:          meshtastic,
 		jwtAuth:            jwtAuth,
 		rateLimiter:        rateLimiter,
 		rateLimitConfig:    rateLimitConfig,
@@ -136,8 +145,18 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/signal-groups", r.handleSignalGroups)
 	r.mux.HandleFunc("/api/v1/signal-groups/admin", r.authenticated(r.methodHandler(http.MethodGet, r.signalGroups.ListAdmin)))
 	r.mux.HandleFunc("/api/v1/signal-groups/", r.handleSignalGroupByID)
-	r.mux.HandleFunc("/api/v1/signal-groups/invite-link-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.listInviteLinkProposals)))
-	r.mux.HandleFunc("/api/v1/signal-groups/invite-link-proposals/", r.handleInviteLinkProposal)
+
+	// Secret proposal routes (replaces invite-link-proposals)
+	r.mux.HandleFunc("/api/v1/secret-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.secretUpdates.ListProposals)))
+	r.mux.HandleFunc("/api/v1/secret-proposals/", r.handleSecretProposal)
+
+	// Encrypted secret finalization
+	r.mux.HandleFunc("/api/v1/encrypted-secrets/", r.handleEncryptedSecretByID)
+
+	// Meshtastic channel routes
+	r.mux.HandleFunc("/api/v1/meshtastic-channels", r.handleMeshtasticChannels)
+	r.mux.HandleFunc("/api/v1/meshtastic-channels/admin", r.authenticated(r.methodHandler(http.MethodGet, r.meshtastic.ListAdmin)))
+	r.mux.HandleFunc("/api/v1/meshtastic-channels/", r.handleMeshtasticChannelByID)
 
 	// School routes (public search + authenticated sub-routes)
 	r.mux.HandleFunc("/api/v1/schools", r.handleSchools)
@@ -162,6 +181,13 @@ func (r *Router) Setup() http.Handler {
 	// Protected routes - deletion proposals
 	r.mux.HandleFunc("/api/v1/deletion-proposals", r.handleDeletionProposals)
 	r.mux.HandleFunc("/api/v1/deletion-proposals/", r.handleDeletionProposal)
+
+	// Protected routes - encryption keys
+	r.mux.HandleFunc("/api/v1/encryption/keys", r.handleEncryptionKeys)
+	r.mux.HandleFunc("/api/v1/encryption/keys/rotate", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionKeysRotate)))
+	r.mux.HandleFunc("/api/v1/encryption/public-keys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPublicKeys)))
+	r.mux.HandleFunc("/api/v1/encryption/pending-rekeys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingRekeys)))
+	r.mux.HandleFunc("/api/v1/encryption/rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionRekey)))
 
 	// Protected routes - user reports
 	r.mux.HandleFunc("/api/v1/reports", r.authenticated(r.methodHandler(http.MethodGet, r.userReports.ListReports)))
@@ -424,16 +450,18 @@ func (r *Router) handleSignalGroupByID(w http.ResponseWriter, req *http.Request)
 
 	groupID := parts[0]
 
-	// Check for invite-link-proposals sub-route
-	if len(parts) >= 2 && parts[1] == "invite-link-proposals" {
+	// Check for secret-proposals sub-route
+	if len(parts) >= 2 && parts[1] == "secret-proposals" {
 		q := req.URL.Query()
 		q.Set("id", groupID)
 		req.URL.RawQuery = q.Encode()
 
 		if req.Method == http.MethodPost {
-			r.authenticated(r.signalGroups.CreateInviteLinkProposal)(w, req)
+			r.authenticated(r.secretUpdates.CreateProposal)(w, req)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
 	}
 
 	// Regular signal group operations
@@ -449,9 +477,9 @@ func (r *Router) handleSignalGroupByID(w http.ResponseWriter, req *http.Request)
 	}
 }
 
-// handleInviteLinkProposal handles /api/v1/signal-groups/invite-link-proposals/:id
-func (r *Router) handleInviteLinkProposal(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/signal-groups/invite-link-proposals/")
+// handleSecretProposal handles /api/v1/secret-proposals/:id and sub-routes
+func (r *Router) handleSecretProposal(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/secret-proposals/")
 	parts := strings.Split(path, "/")
 
 	if len(parts) == 0 || parts[0] == "" {
@@ -468,7 +496,7 @@ func (r *Router) handleInviteLinkProposal(w http.ResponseWriter, req *http.Reque
 		req.URL.RawQuery = q.Encode()
 
 		if req.Method == http.MethodPost {
-			r.authenticated(r.signalGroups.VoteOnInviteLinkProposal)(w, req)
+			r.authenticated(r.secretUpdates.Vote)(w, req)
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -482,7 +510,7 @@ func (r *Router) handleInviteLinkProposal(w http.ResponseWriter, req *http.Reque
 		req.URL.RawQuery = q.Encode()
 
 		if req.Method == http.MethodPost {
-			r.authenticated(r.signalGroups.ExpireInviteLinkProposal)(w, req)
+			r.authenticated(r.secretUpdates.ExpireProposal)(w, req)
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -494,16 +522,40 @@ func (r *Router) handleInviteLinkProposal(w http.ResponseWriter, req *http.Reque
 		q := req.URL.Query()
 		q.Set("id", proposalID)
 		req.URL.RawQuery = q.Encode()
-		r.authenticated(r.signalGroups.GetInviteLinkProposal)(w, req)
+		r.authenticated(r.secretUpdates.GetProposal)(w, req)
 		return
 	}
 
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 }
 
-// listInviteLinkProposals handles GET /api/v1/signal-groups/invite-link-proposals
-func (r *Router) listInviteLinkProposals(w http.ResponseWriter, req *http.Request) {
-	r.signalGroups.ListInviteLinkProposals(w, req)
+// handleEncryptedSecretByID handles /api/v1/encrypted-secrets/:id and sub-routes
+func (r *Router) handleEncryptedSecretByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/encrypted-secrets/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Secret ID required")
+		return
+	}
+
+	secretID := parts[0]
+
+	// Check for finalize sub-route
+	if len(parts) >= 2 && parts[1] == "finalize" {
+		q := req.URL.Query()
+		q.Set("id", secretID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.secretUpdates.Finalize)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 }
 
 // handleVouchStatus handles /api/v1/verification/vouch/status/:user_id
@@ -1063,4 +1115,109 @@ func (r *Router) handleReportByID(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+}
+
+// handleEncryptionKeys handles GET/POST/PUT /api/v1/encryption/keys
+func (r *Router) handleEncryptionKeys(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	switch req.Method {
+	case http.MethodGet:
+		r.authenticated(r.encryption.GetKeys)(w, req)
+	case http.MethodPost:
+		r.authenticated(r.encryption.UploadKeys)(w, req)
+	case http.MethodPut:
+		r.authenticated(r.encryption.UpdateKeys)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleEncryptionKeysRotate handles POST /api/v1/encryption/keys/rotate
+func (r *Router) handleEncryptionKeysRotate(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.RotateKeys(w, req)
+}
+
+// handleEncryptionPublicKeys handles GET /api/v1/encryption/public-keys
+func (r *Router) handleEncryptionPublicKeys(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.GetPublicKeys(w, req)
+}
+
+// handleEncryptionPendingRekeys handles GET /api/v1/encryption/pending-rekeys
+func (r *Router) handleEncryptionPendingRekeys(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.GetPendingRekeys(w, req)
+}
+
+// handleEncryptionRekey handles POST /api/v1/encryption/rekey
+func (r *Router) handleEncryptionRekey(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.SubmitRekeys(w, req)
+}
+
+// handleMeshtasticChannels handles /api/v1/meshtastic-channels
+func (r *Router) handleMeshtasticChannels(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		r.authenticated(r.meshtastic.List)(w, req)
+	case http.MethodPost:
+		r.authenticated(r.meshtastic.Create)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleMeshtasticChannelByID handles /api/v1/meshtastic-channels/:id and sub-routes
+func (r *Router) handleMeshtasticChannelByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/meshtastic-channels/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Meshtastic channel ID required")
+		return
+	}
+
+	channelID := parts[0]
+
+	// Check for secret-proposals sub-route
+	if len(parts) >= 2 && parts[1] == "secret-proposals" {
+		q := req.URL.Query()
+		q.Set("id", channelID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.secretUpdates.CreateProposal)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Regular meshtastic channel operations
+	q := req.URL.Query()
+	q.Set("id", channelID)
+	req.URL.RawQuery = q.Encode()
+
+	switch req.Method {
+	case http.MethodPut:
+		r.authenticated(r.meshtastic.Update)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
 }

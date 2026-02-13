@@ -89,8 +89,12 @@ func CleanupDB(t *testing.T, db *database.DB) {
 		"blocked_users",
 		"blocklist_votes",
 		"blocklist_proposals",
-		"invite_link_update_votes",
-		"invite_link_update_proposals",
+		"proposal_wrapped_keys",
+		"secret_update_votes",
+		"secret_update_proposals",
+		"encrypted_secret_keys",
+		"encrypted_secrets",
+		"meshtastic_channels",
 		"deletion_votes",
 		"deletion_proposals",
 		"signal_groups",
@@ -99,6 +103,7 @@ func CleanupDB(t *testing.T, db *database.DB) {
 		"admin_boundaries",
 		"user_regions",
 		"geographic_regions",
+		"user_encryption_keys",
 		"users",
 	}
 
@@ -189,25 +194,20 @@ func CreateTestSignalGroup(t *testing.T, db *database.DB, regionID, createdBy st
 	t.Helper()
 
 	group := &models.SignalGroup{
-		ID:                  uuid.New().String(),
-		RegionID:            &regionID,
-		GroupName:           fmt.Sprintf("Test Group %s", uuid.New().String()[:8]),
-		InviteLink:          "https://signal.group/test_invite_link",
-		InviteLinkUpdatedAt: time.Now().UTC(),
-		InviteLinkUpdatedBy: &createdBy,
-		CreatedBy:           &createdBy,
-		CreatedAt:           time.Now().UTC(),
-		IsActive:            true,
+		ID:        uuid.New().String(),
+		RegionID:  &regionID,
+		GroupName: fmt.Sprintf("Test Group %s", uuid.New().String()[:8]),
+		CreatedBy: &createdBy,
+		CreatedAt: time.Now().UTC(),
+		IsActive:  true,
 	}
 
 	query := `
-		INSERT INTO signal_groups (id, region_id, group_name, invite_link, invite_link_updated_at,
-			invite_link_updated_by, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO signal_groups (id, region_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`
 	_, err := db.ExecContext(context.Background(), query,
-		group.ID, group.RegionID, group.GroupName, group.InviteLink, group.InviteLinkUpdatedAt,
-		group.InviteLinkUpdatedBy, group.CreatedBy, group.CreatedAt, group.IsActive)
+		group.ID, group.RegionID, group.GroupName, group.CreatedBy, group.CreatedAt, group.IsActive)
 	if err != nil {
 		t.Fatalf("Failed to create test signal group: %v", err)
 	}

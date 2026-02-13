@@ -1,0 +1,293 @@
+package handlers
+
+import (
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/database"
+	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
+	"github.com/opencrr/communityrapidresponse.net/internal/models"
+)
+
+// EncryptionHandler handles encryption key management endpoints
+type EncryptionHandler struct {
+	encryptionKeyRepo   *database.EncryptionKeyRepository
+	encryptedSecretRepo *database.EncryptedSecretRepository
+}
+
+// NewEncryptionHandler creates a new encryption handler
+func NewEncryptionHandler(
+	encryptionKeyRepo *database.EncryptionKeyRepository,
+	encryptedSecretRepo *database.EncryptedSecretRepository,
+) *EncryptionHandler {
+	return &EncryptionHandler{
+		encryptionKeyRepo:   encryptionKeyRepo,
+		encryptedSecretRepo: encryptedSecretRepo,
+	}
+}
+
+// UploadKeys handles POST /api/v1/encryption/keys — upload public key + wrapped backup
+func (h *EncryptionHandler) UploadKeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req models.CreateEncryptionKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.PublicKey == "" || req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
+		return
+	}
+
+	key := &models.UserEncryptionKey{
+		UserID:            claims.UserID,
+		PublicKey:         req.PublicKey,
+		WrappedPrivateKey: req.WrappedPrivateKey,
+		KeySalt:           req.KeySalt,
+		KeyIV:             req.KeyIV,
+	}
+
+	if err := h.encryptionKeyRepo.Create(r.Context(), key); err != nil {
+		writeServerError(w, r, err, "Failed to store encryption keys", "encryption", "upload_keys")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"stored": true,
+	})
+}
+
+// GetKeys handles GET /api/v1/encryption/keys — get own wrapped backup
+func (h *EncryptionHandler) GetKeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	key, err := h.encryptionKeyRepo.GetByUserID(r.Context(), claims.UserID)
+	if errors.Is(err, database.ErrEncryptionKeyNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "No encryption keys found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get encryption keys", "encryption", "get_keys")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.EncryptionKeyResponse{
+		PublicKey:         key.PublicKey,
+		WrappedPrivateKey: key.WrappedPrivateKey,
+		KeySalt:           key.KeySalt,
+		KeyIV:             key.KeyIV,
+		RotatedAt:         key.RotatedAt,
+	})
+}
+
+// UpdateKeys handles PUT /api/v1/encryption/keys — re-wrap private key (password change)
+func (h *EncryptionHandler) UpdateKeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req models.UpdateEncryptionKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
+		return
+	}
+
+	if err := h.encryptionKeyRepo.Update(r.Context(), claims.UserID, req.WrappedPrivateKey, req.KeySalt, req.KeyIV); err != nil {
+		if errors.Is(err, database.ErrEncryptionKeyNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "No encryption keys found to update")
+			return
+		}
+		writeServerError(w, r, err, "Failed to update encryption keys", "encryption", "update_keys")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"updated": true,
+	})
+}
+
+// RotateKeys handles POST /api/v1/encryption/keys/rotate — upload new keypair (password reset)
+func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req models.RotateEncryptionKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.PublicKey == "" || req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
+		return
+	}
+
+	key := &models.UserEncryptionKey{
+		UserID:            claims.UserID,
+		PublicKey:         req.PublicKey,
+		WrappedPrivateKey: req.WrappedPrivateKey,
+		KeySalt:           req.KeySalt,
+		KeyIV:             req.KeyIV,
+	}
+
+	if err := h.encryptionKeyRepo.Create(r.Context(), key); err != nil {
+		writeServerError(w, r, err, "Failed to rotate encryption keys", "encryption", "rotate_keys")
+		return
+	}
+
+	// Flag all existing wrapped DEKs for this user as needing re-key
+	if h.encryptedSecretRepo != nil {
+		if err := h.encryptedSecretRepo.FlagRekeyForUser(r.Context(), claims.UserID); err != nil {
+			// Log but don't fail - the key rotation itself succeeded
+			log.Printf("ERROR: Failed to flag re-keys after key rotation for user %s: %v", claims.UserID, err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rotated": true,
+	})
+}
+
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id)
+func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	regionID := r.URL.Query().Get("region_id")
+	schoolID := r.URL.Query().Get("school_id")
+	districtID := r.URL.Query().Get("district_id")
+
+	// Exactly one scope must be provided
+	scopeCount := 0
+	if regionID != "" {
+		scopeCount++
+	}
+	if schoolID != "" {
+		scopeCount++
+	}
+	if districtID != "" {
+		scopeCount++
+	}
+	if scopeCount != 1 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, or district_id must be provided")
+		return
+	}
+
+	var keys []models.PublicKeyEntry
+	var err error
+
+	if regionID != "" {
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)
+	} else if schoolID != "" {
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForSchool(r.Context(), schoolID)
+	} else {
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForDistrict(r.Context(), districtID)
+	}
+
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get public keys", "encryption", "get_public_keys")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"keys": keys,
+	})
+}
+
+// GetPendingRekeys handles GET /api/v1/encryption/pending-rekeys
+// Returns secrets where another user needs re-keying and the caller has a valid key
+func (h *EncryptionHandler) GetPendingRekeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	if h.encryptedSecretRepo == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pending_rekeys": []interface{}{},
+		})
+		return
+	}
+
+	rekeys, err := h.encryptedSecretRepo.GetPendingRekeys(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get pending re-keys", "encryption", "get_pending_rekeys")
+		return
+	}
+
+	if rekeys == nil {
+		rekeys = []database.PendingRekey{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pending_rekeys": rekeys,
+	})
+}
+
+// SubmitRekeys handles POST /api/v1/encryption/rekey
+// Accepts a batch of re-keyed wrapped DEKs
+func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req models.SubmitRekeysRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if len(req.Rekeys) == 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "At least one re-key entry is required")
+		return
+	}
+
+	if h.encryptedSecretRepo == nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Re-keying not available")
+		return
+	}
+
+	successCount := 0
+	for _, entry := range req.Rekeys {
+		if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
+			continue
+		}
+		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {
+			log.Printf("ERROR: Failed to submit re-key for secret %s target %s: %v", entry.SecretID, entry.TargetUserID, err)
+			continue
+		}
+		successCount++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rekeyed": successCount,
+	})
+}
