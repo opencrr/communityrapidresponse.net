@@ -31,7 +31,7 @@ export async function render(container) {
                 <div class="page__header text-center">
                     <h1 class="page__title">Community Membership</h1>
                     <p class="page__subtitle">
-                        Manage your requests to join neighborhoods, city blocks, and other communities.
+                        Manage your requests to join neighborhoods and other communities.
                     </p>
                 </div>
 
@@ -81,7 +81,7 @@ export async function render(container) {
                                 <div class="instruction-step__number">1</div>
                                 <div class="instruction-step__content">
                                     <h4>Find a Community</h4>
-                                    <p>Browse the <a href="/communities" data-link>communities</a> page to find neighborhoods or city blocks you want to join.</p>
+                                    <p>Browse the <a href="/communities" data-link>communities</a> page to find neighborhoods you want to join.</p>
                                 </div>
                             </div>
 

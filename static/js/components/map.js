@@ -19,7 +19,7 @@ const US_BOUNDS = [
     [180, 72],    // Northeast (includes Alaska)
 ];
 
-// Region type colors (hierarchy: state -> county -> city -> locality -> neighborhood -> city_block)
+// Region type colors (hierarchy: state -> county -> city -> locality -> neighborhood)
 const REGION_COLORS = {
     state: '#6366f1',          // Indigo
     county: '#8b5cf6',         // Violet
@@ -27,7 +27,6 @@ const REGION_COLORS = {
     city_town: '#3b82f6',      // Blue (legacy alias)
     locality: '#0ea5e9',       // Sky blue
     neighborhood: '#10b981',   // Green
-    city_block: '#f59e0b',     // Amber
     school_district: '#ec4899', // Pink
 };
 
@@ -165,7 +164,6 @@ export function addRegionsLayer(map, geojson, options = {}) {
                 'city_town', REGION_COLORS.city_town,
                 'locality', REGION_COLORS.locality,
                 'neighborhood', REGION_COLORS.neighborhood,
-                'city_block', REGION_COLORS.city_block,
                 'school_district', REGION_COLORS.school_district,
                 '#888888', // default
             ],
@@ -193,7 +191,6 @@ export function addRegionsLayer(map, geojson, options = {}) {
                 'city_town', REGION_COLORS.city_town,
                 'locality', REGION_COLORS.locality,
                 'neighborhood', REGION_COLORS.neighborhood,
-                'city_block', REGION_COLORS.city_block,
                 'school_district', REGION_COLORS.school_district,
                 '#888888',
             ],

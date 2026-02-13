@@ -117,7 +117,6 @@ function renderRegionDetail(container, region, childRegions, groups, meshtasticC
         city: 'City',
         locality: 'Locality',
         neighborhood: 'Neighborhood',
-        city_block: 'City Block',
     };
 
     container.innerHTML = `
@@ -481,7 +480,7 @@ function renderJoinButton(region, authenticated, userHasReadAccess) {
         <div class="card" style="margin-top: var(--space-4);">
             <div class="card__body text-center">
                 <p style="color: var(--color-gray-600); margin-bottom: var(--space-3);">
-                    Want to join this ${region.region_type === 'city_block' ? 'city block' : 'neighborhood'}?
+                    Want to join this neighborhood?
                 </p>
                 <button class="btn btn--primary" id="request-membership-btn" data-region-id="${region.id}">
                     Request to Join
@@ -856,7 +855,6 @@ function formatRegionType(type) {
         city: 'City',
         locality: 'Locality',
         neighborhood: 'Neighborhood',
-        city_block: 'Block',
     };
     return labels[type] || type;
 }

@@ -1,7 +1,7 @@
 /**
  * Help/FAQ page
  * Provides information about the platform and answers common questions.
- * Uses a tabbed layout: General, Communities, Schools, Meshtastic, Signal Safety.
+ * Uses a tabbed layout: General, Communities, Schools, Meshtastic, Encryption, Signal Safety.
  */
 
 /**
@@ -24,6 +24,7 @@ export async function render(container) {
                     <button class="tab" data-tab="regions">Communities</button>
                     <button class="tab" data-tab="schools">Schools</button>
                     <button class="tab" data-tab="meshtastic">Meshtastic</button>
+                    <button class="tab" data-tab="encryption">Encryption</button>
                     <button class="tab" data-tab="signal-safety">Signal Safety</button>
                 </div>
 
@@ -162,6 +163,15 @@ export async function render(container) {
                             anyone in the community has vetted them. A postcard alone only proves a mailing
                             address &mdash; a vouch proves a real community connection.
                         </p>
+                        <div class="help-highlight" style="margin-top: var(--space-4);">
+                            <h3>Signal Group Invite Links Are Encrypted</h3>
+                            <p>
+                                Signal group invite links are protected with end-to-end encryption. The server
+                                never sees the plaintext link &mdash; it is encrypted in your browser before being
+                                sent, and only decrypted in the browsers of verified community members. See the
+                                <strong>Encryption</strong> tab for details.
+                            </p>
+                        </div>
                     </section>
 
                     <section class="help-section">
@@ -174,8 +184,7 @@ export async function render(container) {
                             <li><strong>County</strong> - County/district within a state</li>
                             <li><strong>City/Town</strong> - Municipal boundary</li>
                             <li><strong>Locality</strong> - Borough/sub-city (optional, e.g., Brooklyn in NYC)</li>
-                            <li><strong>Neighborhood</strong> - Named neighborhood area</li>
-                            <li><strong>City Block</strong> - Most specific level</li>
+                            <li><strong>Neighborhood</strong> - Most specific level</li>
                         </ul>
                         <p>
                             When you submit your address for vouch verification, it is geocoded to identify
@@ -325,6 +334,10 @@ export async function render(container) {
                             individual school groups. If your school belongs to a district, you may also
                             have access to district-level groups.
                         </p>
+                        <p>
+                            District-level Signal groups use the same end-to-end encryption as school and
+                            community groups &mdash; invite links are never stored in plaintext on the server.
+                        </p>
                     </section>
 
                     <section class="help-section">
@@ -364,6 +377,11 @@ export async function render(container) {
                                 verified school members can see the invite links. Schools and districts
                                 can each have up to 5 Signal groups. These are completely independent
                                 from community-based Signal groups.
+                            </p>
+                            <p>
+                                Invite links are end-to-end encrypted, just like community groups &mdash;
+                                the server never sees the plaintext. See the <strong>Encryption</strong>
+                                tab for details.
                             </p>
                         </details>
 
@@ -443,6 +461,9 @@ export async function render(container) {
                             <li>Even server administrators and superusers cannot decrypt channel URLs</li>
                             <li>If you reset your password, community members automatically re-encrypt secrets for your new key when they log in</li>
                         </ul>
+                        <p style="margin-top: var(--space-3);">
+                            For a detailed explanation of how encryption works, see the <strong>Encryption</strong> tab.
+                        </p>
                     </section>
 
                     <section class="help-section">
@@ -503,6 +524,126 @@ export async function render(container) {
                                 configurations: channels using the default key (which anyone can read),
                                 channels with no encryption, or channels using weaker AES-128 keys. Admins
                                 should use strong, unique AES-256 keys for community channels.
+                            </p>
+                        </details>
+                    </section>
+                </div>
+
+                <!-- Encryption Tab -->
+                <div class="help-tab-content" id="tab-encryption" style="display: none;">
+                    <section class="help-section">
+                        <h2>How Your Data Is Protected</h2>
+                        <div class="help-highlight">
+                            <h3>Secrets Never Stored in Plaintext</h3>
+                            <p>
+                                Signal group invite links and Meshtastic channel URLs are never stored in
+                                plaintext on the server. They are encrypted in your browser before being sent,
+                                and only decrypted in the browsers of verified members. Server administrators
+                                and superusers cannot decrypt these secrets.
+                            </p>
+                        </div>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>How It Works</h2>
+                        <div class="help-cards">
+                            <div class="help-card">
+                                <h3>Your Keypair</h3>
+                                <p>
+                                    When you register, an RSA-OAEP 2048-bit keypair is generated in your
+                                    browser. Your private key never leaves your device unencrypted. Your
+                                    public key is shared with the server so other members can encrypt secrets
+                                    for you.
+                                </p>
+                            </div>
+                            <div class="help-card">
+                                <h3>Envelope Encryption</h3>
+                                <p>
+                                    Each secret (such as a Signal invite link) is encrypted with a random
+                                    AES-256-GCM key called a DEK (data encryption key). The DEK is then
+                                    wrapped separately for each verified member using their public key.
+                                    Only your private key can unwrap your copy of the DEK and decrypt the
+                                    secret.
+                                </p>
+                            </div>
+                            <div class="help-card">
+                                <h3>Key Backup</h3>
+                                <p>
+                                    Your private key is wrapped with a key derived from your password
+                                    (PBKDF2, 600,000 iterations) and stored on the server as a backup.
+                                    When you log in on a new device, your key backup is restored
+                                    automatically &mdash; no manual key transfer needed.
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>What Happens When You Reset Your Password</h2>
+                        <div class="help-highlight">
+                            <ul class="help-list">
+                                <li>Your old keypair is destroyed and a new one is generated</li>
+                                <li>Existing secrets are temporarily inaccessible until other members re-encrypt them for your new key</li>
+                                <li>Re-encryption happens automatically when other members log in &mdash; no action is required from anyone</li>
+                                <li>Just log in and secrets will become available as community members come online</li>
+                            </ul>
+                        </div>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>Updating Secrets</h2>
+                        <p>
+                            Updating a Signal group invite link or Meshtastic channel URL requires approval
+                            from 3 admins (a consensus proposal). Once approved, the proposer encrypts
+                            the new secret for all current verified members. Members are notified to log
+                            in and view the updated link.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>Encryption FAQ</h2>
+
+                        <details class="faq-item">
+                            <summary>Can the server read my Signal invite links?</summary>
+                            <p>
+                                No. Invite links are encrypted in your browser before being sent to the
+                                server. The server only stores ciphertext that it cannot decrypt.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>What if I lose access to my device?</summary>
+                            <p>
+                                Log in on a new device with your password. Your key backup is stored on
+                                the server (encrypted with a key derived from your password) and is restored
+                                automatically when you log in.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Why can't superusers see invite links?</summary>
+                            <p>
+                                Superusers are intentionally excluded from encryption keys. This prevents
+                                centralized access to secrets and ensures that only verified members of a
+                                community or school can decrypt invite links.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>What happens if a member is removed?</summary>
+                            <p>
+                                A removed member loses access to future secrets. However, they may still
+                                have decrypted copies of secrets they accessed before removal. Admins should
+                                rotate existing secrets via an update proposal after removing a member.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Do I need to do anything for encryption to work?</summary>
+                            <p>
+                                No. Encryption is fully automatic. Your keypair is generated at registration
+                                and your key backup is maintained whenever you log in. Secrets are encrypted
+                                and decrypted transparently in your browser.
                             </p>
                         </details>
                     </section>

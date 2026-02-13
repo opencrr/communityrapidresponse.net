@@ -270,7 +270,7 @@ export async function render(container) {
                                     <div style="font-size: 32px; margin-bottom: var(--space-2);">&#x1F5FA;</div>
                                     <h3 style="font-weight: 600; margin-bottom: var(--space-1);">Create Community</h3>
                                     <p style="font-size: var(--font-size-sm); color: var(--color-gray-600);">
-                                        Draw boundaries for new neighborhoods and city blocks.
+                                        Draw boundaries for new neighborhoods.
                                     </p>
                                 </div>
                             </a>
@@ -890,7 +890,6 @@ function formatRegionType(type) {
         city: 'City',
         locality: 'Locality',
         neighborhood: 'Neighborhood',
-        city_block: 'Block',
     };
     return labels[type] || type;
 }

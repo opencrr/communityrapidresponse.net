@@ -119,14 +119,13 @@ async function loadRegions() {
  * @param {HTMLElement} container - List container
  */
 function renderRegionList(regions, container) {
-    // Group regions by type (hierarchy: state -> county -> city -> locality -> neighborhood -> city_block)
+    // Group regions by type (hierarchy: state -> county -> city -> locality -> neighborhood)
     const grouped = {
         state: [],
         county: [],
         city: [],
         locality: [],
         neighborhood: [],
-        city_block: [],
     };
 
     regions.forEach(region => {
@@ -142,7 +141,6 @@ function renderRegionList(regions, container) {
         city: 'Cities',
         locality: 'Localities',
         neighborhood: 'Neighborhoods',
-        city_block: 'City Blocks',
     };
 
     let html = `
@@ -256,7 +254,6 @@ function formatRegionType(type) {
         city: 'City',
         locality: 'Locality',
         neighborhood: 'Neighborhood',
-        city_block: 'City Block',
     };
     return labels[type] || type;
 }
