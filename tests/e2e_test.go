@@ -2813,7 +2813,7 @@ func TestE2E_MeshtasticChannelScoping(t *testing.T) {
 	t.Run("non-admin cannot create channels", func(t *testing.T) {
 		// Register a regular user (not admin of any school)
 		regularEmail := fmt.Sprintf("mesh_regular_%s@test.com", suffix)
-		regularUserID, regularToken := suite.registerOrGetUser(
+		regularUserID, _ := suite.registerOrGetUser(
 			fmt.Sprintf("mesh_reg_%s", suffix),
 			regularEmail,
 			"securepassword123",
@@ -2828,7 +2828,7 @@ func TestE2E_MeshtasticChannelScoping(t *testing.T) {
 		var relogin models.LoginResponse
 		_ = json.NewDecoder(reloginResp.Body).Decode(&relogin)
 		_ = reloginResp.Body.Close()
-		regularToken = relogin.Token
+		regularToken := relogin.Token
 
 		defer suite.cleanup(regularUserID)
 
