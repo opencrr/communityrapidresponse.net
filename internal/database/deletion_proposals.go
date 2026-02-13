@@ -482,7 +482,7 @@ func (r *DeletionProposalRepository) ApplySignalGroupDeletionTx(ctx context.Cont
 // ApplySubRegionDeletionTx cascade-deletes a region and all its children within a transaction.
 // Mirrors RegionRepository.Delete but operates on the passed-in transaction.
 func (r *DeletionProposalRepository) ApplySubRegionDeletionTx(ctx context.Context, tx *sql.Tx, regionID string) error {
-	// Delete signal groups in this region (also cascades invite_link_update_proposals/votes via FK)
+	// Delete signal groups in this region (also cascades encrypted_secrets/secret_update_proposals via FK)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM signal_groups WHERE region_id = ?`, regionID); err != nil {
 		return err
 	}
@@ -502,7 +502,7 @@ func (r *DeletionProposalRepository) ApplySubRegionDeletionTx(ctx context.Contex
 	if _, err := tx.ExecContext(ctx, `UPDATE deletion_proposals SET region_id = NULL WHERE region_id = ?`, regionID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE invite_link_update_proposals SET region_id = NULL WHERE region_id = ?`, regionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE secret_update_proposals SET region_id = NULL WHERE region_id = ?`, regionID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE blocklist_proposals SET region_id = NULL WHERE region_id = ?`, regionID); err != nil {
