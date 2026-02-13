@@ -64,7 +64,6 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	inviteLinkProposalRepo := database.NewInviteLinkProposalRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -94,7 +93,7 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, inviteLinkProposalRepo, regionRepo, nil, consensusConfig,
+		nil, groupRepo, nil, regionRepo, nil,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 	mfaConfig := &config.MFAConfig{
@@ -115,7 +114,7 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, inviteLinkProposalRepo,
+		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
@@ -127,7 +126,7 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	// Create router with deletion proposals wired in
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -247,11 +246,10 @@ func (s *DeletionE2ETestSuite) addUserToRegion(userID, regionID string, isAdmin 
 
 func (s *DeletionE2ETestSuite) createSignalGroup(regionID, creatorID, name string) string {
 	group := &models.SignalGroup{
-		RegionID:   &regionID,
-		GroupName:  name,
-		InviteLink: "https://signal.group/e2e-test",
-		CreatedBy:  &creatorID,
-		IsActive:   true,
+		RegionID:  &regionID,
+		GroupName: name,
+		CreatedBy: &creatorID,
+		IsActive:  true,
 	}
 	if err := s.groupRepo.Create(context.Background(), group); err != nil {
 		s.t.Fatalf("Failed to create signal group: %v", err)

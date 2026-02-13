@@ -20,20 +20,12 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 	schoolID := suite.createSchool("Integration Lifecycle School", "CA")
 	defer suite.cleanupSchools(schoolID)
 
-	// Register user
-	resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "integ_lifecycle",
-		"email":    "integ_lifecycle@test.com",
-		"password": "securepassword123",
-	}, "")
-	var registerResp models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
-	_ = resp.Body.Close()
+	// Register user (handles pre-existing users from prior runs)
+	userID := suite.registerOrGetUserID("integ_lifecycle", "integ_lifecycle@test.com", "securepassword123")
+	suite.disableMFA(userID)
+	defer suite.cleanup(userID)
 
-	suite.disableMFA(registerResp.UserID)
-	defer suite.cleanup(registerResp.UserID)
-
-	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
+	resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "integ_lifecycle@test.com",
 		"password": "securepassword123",
 	}, "")
@@ -44,6 +36,10 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 
 	// Step 1: User joins school -> pending
 	t.Run("join school gives pending status", func(t *testing.T) {
+		// Clean up stale membership from prior runs
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE vouched_user_id = ? AND school_id = ?", userID, schoolID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", userID, schoolID)
+
 		resp := suite.request("POST", "/api/v1/schools/"+schoolID+"/join", nil, token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -63,7 +59,7 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 
 	// Step 2: Gets vouched -> verified
 	t.Run("three vouches verify the user", func(t *testing.T) {
-		// Create 3 voucher users who are members
+		// Create 3 voucher users who are members (handles pre-existing users)
 		for i := 0; i < 3; i++ {
 			var voucherUser models.User
 			voucherUser.Username = "integ_voucher_" + string(rune('a'+i))
@@ -71,15 +67,26 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 			voucherUser.PasswordHash = "$2a$12$test.hash.only"
 			voucherUser.VerificationTier = models.TierPostcard
 			if err := suite.userRepo.Create(ctx, &voucherUser); err != nil {
-				t.Fatalf("Failed to create voucher user: %v", err)
+				// User may already exist from prior run — look up by email
+				var existingID string
+				_ = suite.db.QueryRowContext(ctx, "SELECT id FROM users WHERE email = ?", voucherUser.Email).Scan(&existingID)
+				if existingID == "" {
+					t.Fatalf("Failed to create voucher user: %v", err)
+				}
+				voucherUser.ID = existingID
 			}
+			_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", voucherUser.ID, schoolID)
 			suite.addUserToSchool(voucherUser.ID, schoolID, "pending", false)
 			defer suite.cleanup(voucherUser.ID)
 
 			// Vouch via direct DB insert (bootstrap mode, any member can vouch)
+			// Delete any existing vouch first to avoid duplicates
+			_, _ = suite.db.ExecContext(ctx,
+				"DELETE FROM school_vouches WHERE voucher_user_id = ? AND vouched_user_id = ? AND school_id = ?",
+				voucherUser.ID, userID, schoolID)
 			_, err := suite.db.ExecContext(ctx,
 				"INSERT INTO school_vouches (id, voucher_user_id, vouched_user_id, school_id, created_at) VALUES (UUID(), ?, ?, ?, NOW())",
-				voucherUser.ID, registerResp.UserID, schoolID)
+				voucherUser.ID, userID, schoolID)
 			if err != nil {
 				t.Fatalf("Failed to create vouch: %v", err)
 			}
@@ -88,7 +95,7 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 		// Manually verify the user (simulating what the handler does after threshold)
 		_, err := suite.db.ExecContext(ctx,
 			"UPDATE user_schools SET verification_status = 'verified', is_admin = TRUE, verified_at = NOW() WHERE user_id = ? AND school_id = ?",
-			registerResp.UserID, schoolID)
+			userID, schoolID)
 		if err != nil {
 			t.Fatalf("Failed to verify user: %v", err)
 		}
@@ -97,7 +104,7 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 		var verificationStatus string
 		_ = suite.db.QueryRowContext(ctx,
 			"SELECT verification_status FROM user_schools WHERE user_id = ? AND school_id = ?",
-			registerResp.UserID, schoolID).Scan(&verificationStatus)
+			userID, schoolID).Scan(&verificationStatus)
 		if verificationStatus != "verified" {
 			t.Errorf("Expected verification_status 'verified', got '%s'", verificationStatus)
 		}
@@ -123,8 +130,12 @@ func TestIntegration_SchoolMembershipLifecycle(t *testing.T) {
 		_ = resp.Body.Close()
 
 		resp = suite.request("POST", "/api/v1/schools/"+schoolID+"/signal-groups", map[string]interface{}{
-			"name":        "Integration Lifecycle Group",
-			"invite_link": "https://signal.group/integlifecycle",
+			"name":              "Integration Lifecycle Group",
+			"encrypted_payload": "dGVzdC1zY2hvb2wtZW5jcnlwdGVkLXBheWxvYWQ=",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": userID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, freshLogin.Token)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -317,21 +328,14 @@ func TestIntegration_DistrictSignalGroupAccess(t *testing.T) {
 		suite.cleanupDistricts(districtID)
 	}()
 
-	// Create user verified in school A
-	resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "integ_dist_verified",
-		"email":    "integ_dist_verified@test.com",
-		"password": "securepassword123",
-	}, "")
-	var verifiedReg models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&verifiedReg)
-	_ = resp.Body.Close()
+	// Create user verified in school A (handles pre-existing users)
+	verifiedUserID := suite.registerOrGetUserID("integ_dist_verified", "integ_dist_verified@test.com", "securepassword123")
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", verifiedUserID)
+	_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ? AND school_id = ?", verifiedUserID, schoolAID)
+	suite.addUserToSchool(verifiedUserID, schoolAID, "verified", true)
+	defer suite.cleanup(verifiedUserID)
 
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", verifiedReg.UserID)
-	suite.addUserToSchool(verifiedReg.UserID, schoolAID, "verified", true)
-	defer suite.cleanup(verifiedReg.UserID)
-
-	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
+	resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "integ_dist_verified@test.com",
 		"password": "securepassword123",
 	}, "")
@@ -340,18 +344,10 @@ func TestIntegration_DistrictSignalGroupAccess(t *testing.T) {
 	_ = resp.Body.Close()
 	verifiedToken := verifiedLogin.Token
 
-	// Create user NOT in any school
-	resp = suite.request("POST", "/api/v1/auth/register", map[string]string{
-		"username": "integ_dist_outsider",
-		"email":    "integ_dist_outsider@test.com",
-		"password": "securepassword123",
-	}, "")
-	var outsiderReg models.RegisterResponse
-	_ = json.NewDecoder(resp.Body).Decode(&outsiderReg)
-	_ = resp.Body.Close()
-
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", outsiderReg.UserID)
-	defer suite.cleanup(outsiderReg.UserID)
+	// Create user NOT in any school (handles pre-existing users)
+	outsiderUserID := suite.registerOrGetUserID("integ_dist_outsider", "integ_dist_outsider@test.com", "securepassword123")
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?", outsiderUserID)
+	defer suite.cleanup(outsiderUserID)
 
 	resp = suite.request("POST", "/api/v1/auth/login", map[string]string{
 		"email":    "integ_dist_outsider@test.com",
@@ -384,8 +380,12 @@ func TestIntegration_DistrictSignalGroupAccess(t *testing.T) {
 
 	t.Run("admin of school A can create district group", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/school-districts/"+districtID+"/signal-groups", map[string]interface{}{
-			"name":        "Integration District Group",
-			"invite_link": "https://signal.group/integdist",
+			"name":              "Integration District Group",
+			"encrypted_payload": "dGVzdC1kaXN0cmljdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+			"encryption_iv":     "dGVzdC1pdi0xMjM=",
+			"wrapped_keys": []map[string]string{
+				{"user_id": verifiedUserID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="},
+			},
 		}, verifiedToken)
 		defer func() { _ = resp.Body.Close() }()
 

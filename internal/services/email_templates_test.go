@@ -56,6 +56,24 @@ func TestEmailTemplates_Build(t *testing.T) {
 			wantSubject:   "You're Now Vouch-Verified",
 			wantToContain: []string{"vouch-verified", "Downtown"},
 		},
+		{
+			name:             "RekeyingNeeded",
+			notificationType: models.NotificationTypeRekeyingNeeded,
+			data:             &TemplateData{UserEmail: "test@example.com"},
+			wantSubject:      "Encryption Re-keying Needed",
+			wantToContain:    []string{"re-keying", "log in", "automatically"},
+			wantNotToContain: []string{}, // No sensitive data
+		},
+		{
+			name:             "SubRegionInvitation",
+			notificationType: models.NotificationTypeSubRegionInvitation,
+			data: &TemplateData{
+				UserEmail:   "test@example.com",
+				InviterName: "AdminUser",
+			},
+			wantSubject:   "You've Been Invited",
+			wantToContain: []string{"invited", "AdminUser", "7 days"},
+		},
 	}
 
 	for _, tt := range tests {

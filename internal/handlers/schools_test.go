@@ -24,7 +24,6 @@ type schoolTestSuite struct {
 	districtRepo *database.SchoolDistrictRepository
 	vouchRepo    *database.SchoolVouchRepository
 	groupRepo    *database.SignalGroupRepository
-	proposalRepo *database.InviteLinkProposalRepository
 	auditRepo    *database.AuditRepository
 	handler      *SchoolHandler
 }
@@ -36,9 +35,10 @@ func setupSchoolTestSuite(t *testing.T) *schoolTestSuite {
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	vouchRepo := database.NewSchoolVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	proposalRepo := database.NewInviteLinkProposalRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
+
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 
 	handler := NewSchoolHandler(
 		db,
@@ -46,7 +46,7 @@ func setupSchoolTestSuite(t *testing.T) *schoolTestSuite {
 		districtRepo,
 		vouchRepo,
 		groupRepo,
-		proposalRepo,
+		encryptedSecretRepo,
 		userRepo,
 		auditRepo,
 		nil, // ncesService - not needed in tests
@@ -63,7 +63,6 @@ func setupSchoolTestSuite(t *testing.T) *schoolTestSuite {
 		districtRepo: districtRepo,
 		vouchRepo:    vouchRepo,
 		groupRepo:    groupRepo,
-		proposalRepo: proposalRepo,
 		auditRepo:    auditRepo,
 		handler:      handler,
 	}
@@ -809,8 +808,10 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 
 	t.Run("requires authentication", func(t *testing.T) {
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Test Group",
-			InviteLink: "https://signal.group/test123",
+			Name:             "Test Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, nil)
 		suite.handler.CreateSignalGroup(rec, req)
@@ -827,8 +828,10 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 			VerificationTier: regularUser.VerificationTier,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Unauthorized Group",
-			InviteLink: "https://signal.group/unauth",
+			Name:             "Unauthorized Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: regularUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
 		suite.handler.CreateSignalGroup(rec, req)
@@ -845,8 +848,10 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 			VerificationTier: adminUser.VerificationTier,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "School Test Signal Group",
-			InviteLink: "https://signal.group/schooltest123",
+			Name:             "School Test Signal Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
 		suite.handler.CreateSignalGroup(rec, req)
@@ -889,11 +894,9 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 		var createdGroupIDs []string
 		for i := 0; i < 5; i++ {
 			group := &models.SignalGroup{
-				SchoolID:            &school.ID,
-				GroupName:           "Limit Test Group",
-				InviteLink:          "https://signal.group/limit",
-				InviteLinkUpdatedBy: &adminUser.ID,
-				CreatedBy:           &adminUser.ID,
+				SchoolID:  &school.ID,
+				GroupName: "Limit Test Group",
+				CreatedBy: &adminUser.ID,
 			}
 			if err := suite.groupRepo.Create(context.Background(), group); err != nil {
 				t.Fatalf("Failed to create test group: %v", err)
@@ -902,8 +905,10 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 		}
 
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Over Limit Group",
-			InviteLink: "https://signal.group/overlimit",
+			Name:             "Over Limit Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
 		suite.handler.CreateSignalGroup(rec, req)
@@ -935,8 +940,10 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 			IsSuperuser:      false,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Bootstrap Group",
-			InviteLink: "https://signal.group/bootstrap",
+			Name:             "Bootstrap Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+bootstrapSchool.ID+"/signal-groups?id="+bootstrapSchool.ID, requestBody, claims)
 		suite.handler.CreateSignalGroup(rec, req)
@@ -1728,8 +1735,10 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 
 	t.Run("requires authentication", func(t *testing.T) {
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Test District Group",
-			InviteLink: "https://signal.group/disttest",
+			Name:             "Test District Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, nil)
 		suite.handler.CreateDistrictSignalGroup(rec, req)
@@ -1746,8 +1755,10 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 			VerificationTier: regularUser.VerificationTier,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Unauthorized District Group",
-			InviteLink: "https://signal.group/unauth",
+			Name:             "Unauthorized District Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: regularUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
 		suite.handler.CreateDistrictSignalGroup(rec, req)
@@ -1764,8 +1775,10 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 			VerificationTier: adminUser.VerificationTier,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Admin District Signal Group",
-			InviteLink: "https://signal.group/admindist",
+			Name:             "Admin District Signal Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
 		suite.handler.CreateDistrictSignalGroup(rec, req)
@@ -1804,11 +1817,9 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 		var createdGroupIDs []string
 		for i := 0; i < 5; i++ {
 			group := &models.SignalGroup{
-				DistrictID:          &district.ID,
-				GroupName:           "Limit Test District Group",
-				InviteLink:          "https://signal.group/dlimit",
-				InviteLinkUpdatedBy: &adminUser.ID,
-				CreatedBy:           &adminUser.ID,
+				DistrictID: &district.ID,
+				GroupName:  "Limit Test District Group",
+				CreatedBy:  &adminUser.ID,
 			}
 			if err := suite.groupRepo.Create(context.Background(), group); err != nil {
 				t.Fatalf("Failed to create test group: %v", err)
@@ -1817,8 +1828,10 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 		}
 
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Over Limit District Group",
-			InviteLink: "https://signal.group/doverlimit",
+			Name:             "Over Limit District Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
 		suite.handler.CreateDistrictSignalGroup(rec, req)
@@ -1841,8 +1854,10 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 			IsSuperuser:      true,
 		}
 		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:       "Superuser District Group",
-			InviteLink: "https://signal.group/superdist",
+			Name:             "Superuser District Group",
+			EncryptedPayload: "test-encrypted-payload",
+			EncryptionIV:     "test-iv",
+			WrappedKeys:      []models.WrappedKeyEntry{{UserID: superUser.ID, WrappedDEK: "test-dek"}},
 		}
 		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
 		suite.handler.CreateDistrictSignalGroup(rec, req)

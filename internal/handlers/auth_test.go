@@ -582,7 +582,7 @@ func TestAuthHandler_ChangePassword(t *testing.T) {
 	jwtAuth := testJWTAuth()
 	handler := NewAuthHandlerWithEmailService(
 		nil, userRepo, jwtAuth, nil, "test_secret_key_at_least_32_characters_long",
-		false, false, nil, passwordResetRepo, nil, "http://localhost:3000",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
 	)
 
 	// Create a test user
@@ -712,7 +712,7 @@ func TestAuthHandler_ForgotPassword(t *testing.T) {
 	passwordResetRepo := database.NewPasswordResetRepository(db)
 	handler := NewAuthHandlerWithEmailService(
 		nil, userRepo, testJWTAuth(), nil, "test_secret_key_at_least_32_characters_long",
-		false, false, nil, passwordResetRepo, nil, "http://localhost:3000",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
 	)
 
 	// Create a test user
@@ -773,7 +773,7 @@ func TestAuthHandler_ResetPassword(t *testing.T) {
 	jwtAuth := testJWTAuth()
 	handler := NewAuthHandlerWithEmailService(
 		nil, userRepo, jwtAuth, nil, "test_secret_key_at_least_32_characters_long",
-		false, false, nil, passwordResetRepo, nil, "http://localhost:3000",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
 	)
 
 	// Create a test user
@@ -911,7 +911,7 @@ func TestAuthHandler_ValidateResetToken(t *testing.T) {
 	passwordResetRepo := database.NewPasswordResetRepository(db)
 	handler := NewAuthHandlerWithEmailService(
 		nil, userRepo, testJWTAuth(), nil, "test_secret_key_at_least_32_characters_long",
-		false, false, nil, passwordResetRepo, nil, "http://localhost:3000",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
 	)
 
 	// Create a test user
@@ -971,7 +971,7 @@ func TestAuthHandler_DeleteAccount(t *testing.T) {
 	jwtAuth := testJWTAuth()
 	handler := NewAuthHandlerWithEmailService(
 		db, userRepo, jwtAuth, nil, "test_secret_key_at_least_32_characters_long",
-		false, false, auditRepo, nil, nil, "http://localhost:3000",
+		false, false, auditRepo, nil, nil, "http://localhost:3000", nil,
 	)
 
 	t.Run("hard deletes non-blocked user", func(t *testing.T) {

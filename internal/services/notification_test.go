@@ -212,3 +212,75 @@ func TestNotificationService_UUIDs(t *testing.T) {
 		t.Error("Expected non-empty notification IDs")
 	}
 }
+
+func TestNotificationService_QueueRekeyingNeededEvent(t *testing.T) {
+	ctx := context.Background()
+	queue := newMockQueue()
+	service := NewNotificationService(queue)
+
+	err := service.QueueRekeyingNeededEvent(ctx, "user-rotated-keys")
+	if err != nil {
+		t.Fatalf("QueueRekeyingNeededEvent failed: %v", err)
+	}
+
+	if len(queue.notifications) != 1 {
+		t.Fatalf("Expected 1 notification, got %d", len(queue.notifications))
+	}
+
+	n := queue.notifications[0]
+
+	// Fan-out events have empty UserID
+	if n.UserID != "" {
+		t.Errorf("Expected empty UserID for fan-out event, got '%s'", n.UserID)
+	}
+
+	if n.NotificationType != models.NotificationTypeRekeyingNeeded {
+		t.Errorf("Expected notification type 'rekeying_needed', got '%s'", n.NotificationType)
+	}
+
+	if n.ResourceType == nil || *n.ResourceType != "encryption_key" {
+		t.Errorf("Expected ResourceType 'encryption_key', got '%v'", n.ResourceType)
+	}
+
+	// ResourceID stores the user who rotated keys
+	if n.ResourceID == nil || *n.ResourceID != "user-rotated-keys" {
+		t.Errorf("Expected ResourceID 'user-rotated-keys', got '%v'", n.ResourceID)
+	}
+
+	if n.Status != models.NotificationStatusQueued {
+		t.Errorf("Expected status 'queued', got '%s'", n.Status)
+	}
+
+	if n.ID == "" {
+		t.Error("Expected non-empty notification ID")
+	}
+}
+
+func TestNotificationService_QueueSubRegionInvitation(t *testing.T) {
+	ctx := context.Background()
+	queue := newMockQueue()
+	service := NewNotificationService(queue)
+
+	err := service.QueueSubRegionInvitation(ctx, "user-123", "inviter-456", "region-789")
+	if err != nil {
+		t.Fatalf("QueueSubRegionInvitation failed: %v", err)
+	}
+
+	if len(queue.notifications) != 1 {
+		t.Fatalf("Expected 1 notification, got %d", len(queue.notifications))
+	}
+
+	n := queue.notifications[0]
+
+	if n.UserID != "user-123" {
+		t.Errorf("Expected UserID 'user-123', got '%s'", n.UserID)
+	}
+
+	if n.NotificationType != models.NotificationTypeSubRegionInvitation {
+		t.Errorf("Expected notification type 'sub_region_invitation', got '%s'", n.NotificationType)
+	}
+
+	if n.ResourceID == nil || *n.ResourceID != "inviter-456" {
+		t.Errorf("Expected ResourceID 'inviter-456', got '%v'", n.ResourceID)
+	}
+}
