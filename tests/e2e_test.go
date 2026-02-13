@@ -134,7 +134,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	meshtasticHandler := handlers.NewMeshtasticHandler(
 		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
 	)
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(

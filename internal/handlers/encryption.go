@@ -15,17 +15,29 @@ import (
 type EncryptionHandler struct {
 	encryptionKeyRepo   *database.EncryptionKeyRepository
 	encryptedSecretRepo *database.EncryptedSecretRepository
+	regionRepo          *database.RegionRepository
+	schoolRepo          *database.SchoolRepository
+	notificationService NotificationServiceInterface
 }
 
 // NewEncryptionHandler creates a new encryption handler
 func NewEncryptionHandler(
 	encryptionKeyRepo *database.EncryptionKeyRepository,
 	encryptedSecretRepo *database.EncryptedSecretRepository,
+	regionRepo *database.RegionRepository,
+	schoolRepo *database.SchoolRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
 		encryptedSecretRepo: encryptedSecretRepo,
+		regionRepo:          regionRepo,
+		schoolRepo:          schoolRepo,
 	}
+}
+
+// SetNotificationService sets the notification service
+func (h *EncryptionHandler) SetNotificationService(svc NotificationServiceInterface) {
+	h.notificationService = svc
 }
 
 // UploadKeys handles POST /api/v1/encryption/keys — upload public key + wrapped backup
@@ -162,6 +174,10 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 		if err := h.encryptedSecretRepo.FlagRekeyForUser(r.Context(), claims.UserID); err != nil {
 			// Log but don't fail - the key rotation itself succeeded
 			log.Printf("ERROR: Failed to flag re-keys after key rotation for user %s: %v", claims.UserID, err)
+		} else if h.notificationService != nil {
+			if err := h.notificationService.QueueRekeyingNeededEvent(r.Context(), claims.UserID); err != nil {
+				log.Printf("ERROR: Failed to queue rekey notification for user %s: %v", claims.UserID, err)
+			}
 		}
 	}
 
@@ -196,6 +212,45 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if scopeCount != 1 {
 		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, or district_id must be provided")
 		return
+	}
+
+	// Verify caller is a member of the requested scope (superusers bypass)
+	if !claims.IsSuperuser {
+		if regionID != "" {
+			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
+		} else if schoolID != "" {
+			userSchool, memberErr := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
+			if memberErr != nil || userSchool == nil {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
+		} else {
+			schools, memberErr := h.schoolRepo.ListByDistrict(r.Context(), districtID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			isMember := false
+			for _, school := range schools {
+				userSchool, sErr := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, school.ID)
+				if sErr == nil && userSchool != nil {
+					isMember = true
+					break
+				}
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
+		}
 	}
 
 	var keys []models.PublicKeyEntry
@@ -278,6 +333,12 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 	successCount := 0
 	for _, entry := range req.Rekeys {
 		if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
+			continue
+		}
+		// Verify the caller has a valid (non-rekey-needed) wrapped DEK for this secret
+		_, dekErr := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), entry.SecretID, claims.UserID)
+		if dekErr != nil {
+			log.Printf("WARN: Rejecting re-key for secret %s: caller %s has no valid key", entry.SecretID, claims.UserID)
 			continue
 		}
 		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {

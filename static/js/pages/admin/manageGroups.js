@@ -154,7 +154,7 @@ function renderGroupCard(group) {
     const displayLink = group._decryptedLink || (group.encrypted_secret ? 'Encrypted (key not available)' : 'No invite link set');
 
     return `
-        <div class="card group-card" data-group-id="${group.id}">
+        <div class="card group-card" data-group-id="${group.id}" data-name="${escapeHtml(group.name)}" data-description="${escapeHtml(group.description || '')}">
             <div class="card__body">
                 <div class="group-card__header">
                     <div>
@@ -375,8 +375,8 @@ async function showEditGroupModal(groupId) {
     const card = document.querySelector(`[data-group-id="${groupId}"]`);
     if (!card) return;
 
-    const name = card.querySelector('.group-card__name')?.textContent || '';
-    const description = card.querySelector('p')?.textContent || '';
+    const name = card.dataset.name || '';
+    const description = card.dataset.description || '';
 
     const formHtml = `
         <form id="edit-group-form">

@@ -271,12 +271,13 @@ func main() {
 	)
 
 	// Initialize encryption handler
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Initialize secret update handler
 	secretUpdateHandler := handlers.NewSecretUpdateHandler(
 		db, secretUpdateProposalRepo, encryptedSecretRepo, encryptionKeyRepo,
-		regionRepo, schoolRepo, auditRepo, &cfg.Consensus,
+		regionRepo, schoolRepo, signalGroupRepo, meshtasticChannelRepo,
+		auditRepo, &cfg.Consensus,
 	)
 
 	// Wire notification service to handlers
@@ -284,6 +285,7 @@ func main() {
 	blocklistProposalHandler.SetNotificationService(notificationService)
 	membershipHandler.SetNotificationService(notificationService)
 	secretUpdateHandler.SetNotificationService(notificationService)
+	encryptionHandler.SetNotificationService(notificationService)
 
 	// Setup CSRF protection
 	csrfConfig := &handlers.CSRFConfig{

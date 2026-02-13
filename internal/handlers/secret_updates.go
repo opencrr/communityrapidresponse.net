@@ -14,14 +14,16 @@ import (
 
 // SecretUpdateHandler handles encrypted secret update proposals
 type SecretUpdateHandler struct {
-	db                *database.DB
-	proposalRepo      *database.SecretUpdateProposalRepository
-	secretRepo        *database.EncryptedSecretRepository
-	encryptionKeyRepo *database.EncryptionKeyRepository
-	regionRepo        *database.RegionRepository
-	schoolRepo        *database.SchoolRepository
-	auditRepo         *database.AuditRepository
-	consensusConfig   *config.ConsensusConfig
+	db                  *database.DB
+	proposalRepo        *database.SecretUpdateProposalRepository
+	secretRepo          *database.EncryptedSecretRepository
+	encryptionKeyRepo   *database.EncryptionKeyRepository
+	regionRepo          *database.RegionRepository
+	schoolRepo          *database.SchoolRepository
+	signalGroupRepo     *database.SignalGroupRepository
+	meshtasticRepo      *database.MeshtasticChannelRepository
+	auditRepo           *database.AuditRepository
+	consensusConfig     *config.ConsensusConfig
 	notificationService NotificationServiceInterface
 }
 
@@ -33,6 +35,8 @@ func NewSecretUpdateHandler(
 	encryptionKeyRepo *database.EncryptionKeyRepository,
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
+	signalGroupRepo *database.SignalGroupRepository,
+	meshtasticRepo *database.MeshtasticChannelRepository,
 	auditRepo *database.AuditRepository,
 	consensusConfig *config.ConsensusConfig,
 ) *SecretUpdateHandler {
@@ -43,6 +47,8 @@ func NewSecretUpdateHandler(
 		encryptionKeyRepo: encryptionKeyRepo,
 		regionRepo:        regionRepo,
 		schoolRepo:        schoolRepo,
+		signalGroupRepo:   signalGroupRepo,
+		meshtasticRepo:    meshtasticRepo,
 		auditRepo:         auditRepo,
 		consensusConfig:   consensusConfig,
 	}
@@ -62,8 +68,9 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 	}
 
 	groupID := getPathParam(r, "id")
-	if groupID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+	channelID := getPathParam(r, "channel_id")
+	if groupID == "" && channelID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID or channel ID required")
 		return
 	}
 
@@ -78,21 +85,43 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get the encrypted secret for this group
-	secret, err := h.secretRepo.GetBySignalGroupID(r.Context(), groupID)
-	if errors.Is(err, database.ErrEncryptedSecretNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "No encrypted secret found for this group")
-		return
-	}
-	if err != nil {
-		writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "get_secret")
-		return
-	}
+	var secret *models.EncryptedSecret
+	var regionID, schoolID, districtID *string
+	var adminCount int
+	var err error
 
-	// Determine scope from the signal group and verify admin access
-	regionID, schoolID, districtID, adminCount, scopeErr := h.resolveGroupScope(w, r, claims, groupID)
-	if scopeErr != nil {
-		return // resolveGroupScope writes its own error response
+	if groupID != "" {
+		// Signal group path
+		secret, err = h.secretRepo.GetBySignalGroupID(r.Context(), groupID)
+		if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "No encrypted secret found for this group")
+			return
+		}
+		if err != nil {
+			writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "get_secret")
+			return
+		}
+		var scopeErr error
+		regionID, schoolID, districtID, adminCount, scopeErr = h.resolveGroupScope(w, r, claims, groupID)
+		if scopeErr != nil {
+			return
+		}
+	} else {
+		// Meshtastic channel path
+		secret, err = h.secretRepo.GetByMeshtasticChannelID(r.Context(), channelID)
+		if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "No encrypted secret found for this channel")
+			return
+		}
+		if err != nil {
+			writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "get_secret")
+			return
+		}
+		var scopeErr error
+		regionID, schoolID, districtID, adminCount, scopeErr = h.resolveMeshtasticScope(w, r, claims, channelID)
+		if scopeErr != nil {
+			return
+		}
 	}
 
 	votesNeeded := h.consensusConfig.RequiredVotes(adminCount)
@@ -296,8 +325,64 @@ func (h *SecretUpdateHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up the encrypted secret to determine scope
+	secret, err := h.secretRepo.GetByID(r.Context(), secretID)
+	if err != nil {
+		if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Encrypted secret not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "finalize_lookup")
+		return
+	}
+
+	// Resolve scope and verify admin access
+	if secret.SignalGroupID != nil {
+		_, _, _, _, scopeErr := h.resolveGroupScope(w, r, claims, *secret.SignalGroupID)
+		if scopeErr != nil {
+			return
+		}
+	} else if secret.MeshtasticChannelID != nil {
+		_, _, _, _, scopeErr := h.resolveMeshtasticScope(w, r, claims, *secret.MeshtasticChannelID)
+		if scopeErr != nil {
+			return
+		}
+	} else {
+		writeError(w, http.StatusBadRequest, "invalid_scope", "Secret has no valid scope")
+		return
+	}
+
+	// Verify an approved_pending_finalization proposal exists for this secret
+	var proposal *models.SecretUpdateProposal
+	err = h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
+		var txErr error
+		proposal, txErr = h.proposalRepo.GetPendingBySecretForUpdate(r.Context(), tx, secretID)
+		if txErr != nil {
+			return txErr
+		}
+		if proposal == nil || proposal.Status != models.ProposalStatusApprovedPendingFinalization {
+			return database.ErrProposalClosed
+		}
+		return nil
+	})
+	if errors.Is(err, database.ErrProposalClosed) {
+		writeError(w, http.StatusConflict, "no_approved_proposal", "No approved proposal pending finalization for this secret")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify proposal status", "secret_update", "finalize_check")
+		return
+	}
+
 	if err := h.secretRepo.UpdatePayloadAndKeys(r.Context(), secretID, req.EncryptedPayload, req.EncryptionIV, claims.UserID, req.WrappedKeys); err != nil {
 		writeServerError(w, r, err, "Failed to finalize secret update", "secret_update", "finalize")
+		return
+	}
+
+	// Mark the proposal as finalized
+	if err := h.proposalRepo.MarkFinalized(r.Context(), proposal.ID); err != nil {
+		// Log but don't fail — the secret update itself succeeded
+		writeServerError(w, r, err, "Failed to mark proposal as finalized", "secret_update", "mark_finalized")
 		return
 	}
 
@@ -435,23 +520,51 @@ func (h *SecretUpdateHandler) ExpireProposal(w http.ResponseWriter, r *http.Requ
 
 // resolveGroupScope determines the scope of a signal group and verifies admin access
 func (h *SecretUpdateHandler) resolveGroupScope(w http.ResponseWriter, r *http.Request, claims *middleware.Claims, groupID string) (regionID, schoolID, districtID *string, adminCount int, err error) {
-	query := `SELECT region_id, school_id, district_id FROM signal_groups WHERE id = ? AND is_active = TRUE`
-	var rID, sID, dID sql.NullString
-	queryErr := h.db.QueryRowContext(r.Context(), query, groupID).Scan(&rID, &sID, &dID)
-	if queryErr != nil {
+	group, getErr := h.signalGroupRepo.GetByID(r.Context(), groupID)
+	if getErr != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
-		return nil, nil, nil, 0, queryErr
+		return nil, nil, nil, 0, getErr
+	}
+	if !group.IsActive {
+		writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
+		return nil, nil, nil, 0, errors.New("signal group inactive")
 	}
 
-	if rID.Valid {
-		regionID = &rID.String
-		adminCount, err = h.verifyRegionAdmin(w, r, claims, rID.String)
-	} else if sID.Valid {
-		schoolID = &sID.String
-		adminCount, err = h.verifySchoolAdmin(w, r, claims, sID.String)
-	} else if dID.Valid {
-		districtID = &dID.String
-		adminCount, err = h.verifyDistrictAdmin(w, r, claims, dID.String)
+	if group.RegionID != nil {
+		regionID = group.RegionID
+		adminCount, err = h.verifyRegionAdmin(w, r, claims, *group.RegionID)
+	} else if group.SchoolID != nil {
+		schoolID = group.SchoolID
+		adminCount, err = h.verifySchoolAdmin(w, r, claims, *group.SchoolID)
+	} else if group.DistrictID != nil {
+		districtID = group.DistrictID
+		adminCount, err = h.verifyDistrictAdmin(w, r, claims, *group.DistrictID)
+	}
+
+	return
+}
+
+// resolveMeshtasticScope determines the scope of a meshtastic channel and verifies admin access
+func (h *SecretUpdateHandler) resolveMeshtasticScope(w http.ResponseWriter, r *http.Request, claims *middleware.Claims, channelID string) (regionID, schoolID, districtID *string, adminCount int, err error) {
+	channel, getErr := h.meshtasticRepo.GetByID(r.Context(), channelID)
+	if getErr != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Meshtastic channel not found")
+		return nil, nil, nil, 0, getErr
+	}
+	if !channel.IsActive {
+		writeError(w, http.StatusNotFound, "not_found", "Meshtastic channel not found")
+		return nil, nil, nil, 0, errors.New("meshtastic channel inactive")
+	}
+
+	if channel.RegionID != nil {
+		regionID = channel.RegionID
+		adminCount, err = h.verifyRegionAdmin(w, r, claims, *channel.RegionID)
+	} else if channel.SchoolID != nil {
+		schoolID = channel.SchoolID
+		adminCount, err = h.verifySchoolAdmin(w, r, claims, *channel.SchoolID)
+	} else if channel.DistrictID != nil {
+		districtID = channel.DistrictID
+		adminCount, err = h.verifyDistrictAdmin(w, r, claims, *channel.DistrictID)
 	}
 
 	return
@@ -516,12 +629,13 @@ func (h *SecretUpdateHandler) verifySchoolAdmin(w http.ResponseWriter, r *http.R
 
 // verifyDistrictAdmin checks if user is admin of a school in the district
 func (h *SecretUpdateHandler) verifyDistrictAdmin(w http.ResponseWriter, r *http.Request, claims *middleware.Claims, districtID string) (int, error) {
+	schools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list district schools", "secret_update", "list_district_schools")
+		return 0, err
+	}
+
 	if !claims.IsSuperuser {
-		schools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to list district schools", "secret_update", "list_district_schools")
-			return 0, err
-		}
 		isDistrictAdmin := false
 		for _, school := range schools {
 			userSchool, sErr := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, school.ID)
@@ -538,6 +652,15 @@ func (h *SecretUpdateHandler) verifyDistrictAdmin(w http.ResponseWriter, r *http
 			return 0, errors.New("not district admin")
 		}
 	}
-	adminCount := h.consensusConfig.VoteFloor
-	return adminCount, nil
+
+	// Sum verified admin counts across all schools in the district
+	totalAdmins := 0
+	for _, school := range schools {
+		count, countErr := h.schoolRepo.GetVerifiedAdminCount(r.Context(), school.ID)
+		if countErr != nil {
+			continue
+		}
+		totalAdmins += count
+	}
+	return totalAdmins, nil
 }

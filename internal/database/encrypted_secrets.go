@@ -93,6 +93,29 @@ func (r *EncryptedSecretRepository) CreateTx(ctx context.Context, tx *sql.Tx, se
 	return nil
 }
 
+// GetByID retrieves an encrypted secret by its ID
+func (r *EncryptedSecretRepository) GetByID(ctx context.Context, id string) (*models.EncryptedSecret, error) {
+	query := `
+		SELECT id, secret_type, signal_group_id, meshtastic_channel_id,
+			encrypted_payload, encryption_iv, updated_by, updated_at
+		FROM encrypted_secrets
+		WHERE id = ?
+	`
+
+	secret := &models.EncryptedSecret{}
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&secret.ID, &secret.SecretType, &secret.SignalGroupID, &secret.MeshtasticChannelID,
+		&secret.EncryptedPayload, &secret.EncryptionIV, &secret.UpdatedBy, &secret.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEncryptedSecretNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
 // GetBySignalGroupID retrieves the encrypted secret for a signal group
 func (r *EncryptedSecretRepository) GetBySignalGroupID(ctx context.Context, groupID string) (*models.EncryptedSecret, error) {
 	query := `

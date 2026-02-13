@@ -1198,7 +1198,7 @@ func (r *Router) handleMeshtasticChannelByID(w http.ResponseWriter, req *http.Re
 	// Check for secret-proposals sub-route
 	if len(parts) >= 2 && parts[1] == "secret-proposals" {
 		q := req.URL.Query()
-		q.Set("id", channelID)
+		q.Set("channel_id", channelID)
 		req.URL.RawQuery = q.Encode()
 
 		if req.Method == http.MethodPost {

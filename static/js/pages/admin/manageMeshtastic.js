@@ -189,7 +189,7 @@ function renderChannelCard(channel) {
     }
 
     return `
-        <div class="card channel-card" data-channel-id="${channel.id}">
+        <div class="card channel-card" data-channel-id="${channel.id}" data-name="${escapeHtml(channel.name)}" data-description="${escapeHtml(channel.description || '')}">
             <div class="card__body">
                 <div class="group-card__header">
                     <div>
@@ -444,8 +444,8 @@ async function showEditChannelModal(channelId) {
     const card = document.querySelector(`[data-channel-id="${channelId}"]`);
     if (!card) return;
 
-    const name = card.querySelector('.group-card__name')?.textContent || '';
-    const description = card.querySelector('p')?.textContent || '';
+    const name = card.dataset.name || '';
+    const description = card.dataset.description || '';
 
     const formHtml = `
         <form id="edit-channel-form">

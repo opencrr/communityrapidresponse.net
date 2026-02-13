@@ -381,7 +381,7 @@ function escapeHtml(text) {
 }
 
 export function cleanup() {
-    // No cleanup needed
+    decryptedCache.clear();
 }
 
 export default { render, cleanup };

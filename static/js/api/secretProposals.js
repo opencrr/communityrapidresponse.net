@@ -3,7 +3,7 @@
  * Handles encrypted secret update proposals (Signal invite links, Meshtastic channels)
  */
 
-import { get, post, ApiError } from './client.js';
+import { get, post } from './client.js';
 
 /**
  * Create a secret update proposal for a signal group

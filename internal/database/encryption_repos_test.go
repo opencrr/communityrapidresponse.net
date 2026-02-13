@@ -283,6 +283,9 @@ func TestEncryptionKeyRepository_GetPublicKeysForRegion(t *testing.T) {
 	_ = regionRepo.AddUserToRegion(ctx, user1.ID, region.ID, true)
 	_ = regionRepo.AddUserToRegion(ctx, user2.ID, region.ID, false)
 
+	// Mark users as vouch-verified (required by GetPublicKeysForRegion filter)
+	_, _ = db.ExecContext(ctx, "UPDATE users SET vouch_verified = TRUE WHERE id IN (?, ?)", user1.ID, user2.ID)
+
 	// Create encryption keys for both
 	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
 		UserID: user1.ID, PublicKey: "pub1_region", WrappedPrivateKey: "priv1",
@@ -1123,8 +1126,8 @@ func TestSecretUpdateProposalRepository_UpdateStatus(t *testing.T) {
 		if retrieved.Status != models.ProposalStatusApprovedPendingFinalization {
 			t.Errorf("Expected status '%s', got '%s'", models.ProposalStatusApprovedPendingFinalization, retrieved.Status)
 		}
-		if retrieved.ResolvedAt == nil {
-			t.Error("Expected ResolvedAt to be set")
+		if retrieved.ResolvedAt != nil {
+			t.Error("Expected ResolvedAt to be nil for intermediate status")
 		}
 	})
 }

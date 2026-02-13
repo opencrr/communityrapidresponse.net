@@ -29,23 +29,6 @@ function openDB() {
 }
 
 /**
- * Generate a new RSA-OAEP keypair
- * @returns {Promise<CryptoKeyPair>}
- */
-export async function generateKeypair() {
-    return await crypto.subtle.generateKey(
-        {
-            name: 'RSA-OAEP',
-            modulusLength: RSA_KEY_SIZE,
-            publicExponent: new Uint8Array([1, 0, 1]),
-            hash: 'SHA-256',
-        },
-        false, // non-extractable private key
-        ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey']
-    );
-}
-
-/**
  * Store keypair in IndexedDB (non-extractable)
  * @param {CryptoKeyPair} keypair
  */

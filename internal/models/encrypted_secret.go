@@ -175,6 +175,3 @@ type SecretProposalListFilter struct {
 	SchoolID          string
 	DistrictID        string
 }
-
-// ProposalStatusApprovedPendingFinalization is the status when consensus is reached but not yet finalized
-const ProposalStatusApprovedPendingFinalization ProposalStatus = "approved_pending_finalization"

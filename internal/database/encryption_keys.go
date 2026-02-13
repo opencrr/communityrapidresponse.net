@@ -147,7 +147,8 @@ func (r *EncryptionKeyRepository) GetPublicKeysForRegion(ctx context.Context, re
 		SELECT ek.user_id, ek.public_key
 		FROM user_encryption_keys ek
 		INNER JOIN user_regions ur ON ek.user_id = ur.user_id
-		WHERE ur.region_id = ?
+		INNER JOIN users u ON ek.user_id = u.id
+		WHERE ur.region_id = ? AND u.vouch_verified = TRUE
 	`
 	return r.queryPublicKeys(ctx, query, regionID)
 }

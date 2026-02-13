@@ -44,7 +44,10 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
 	secretRepo := database.NewEncryptedSecretRepository(&database.DB{DB: secretDB})
 
-	handler := NewEncryptionHandler(keyRepo, secretRepo)
+	regionRepo := database.NewRegionRepository(&database.DB{DB: keyDB})
+	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
+
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -67,7 +70,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,
@@ -868,10 +871,18 @@ func TestEncryptionHandler_GetPendingRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_Success(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// Expect two SubmitRekey calls
+	// For each entry, the handler first checks GetWrappedDEK to verify the caller has a valid key
+	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
+		WithArgs("secret-1", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-1", sqlmock.AnyArg(), "secret-1", "target-user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
+		WithArgs("secret-2", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-2"))
 
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-2", sqlmock.AnyArg(), "secret-2", "target-user-2").
@@ -940,12 +951,22 @@ func TestEncryptionHandler_SubmitRekeys_EmptyArray(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_PartialFailures(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// First entry: valid, succeeds
+	// First entry: caller has valid key, succeeds
+	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
+		WithArgs("secret-1", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-1", sqlmock.AnyArg(), "secret-1", "target-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Third entry: valid, but DB returns error
+	// Second entry: skipped (empty SecretID) — no GetWrappedDEK call
+
+	// Third entry: caller has valid key, but DB returns error on update
+	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
+		WithArgs("secret-3", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-3"))
+
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-3", sqlmock.AnyArg(), "secret-3", "target-3").
 		WillReturnError(context.DeadlineExceeded)
@@ -1045,6 +1066,11 @@ func TestEncryptionHandler_SubmitRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Membership check: IsUserInRegion (uses recursive CTE on keyMock since regionRepo shares keyDB)
+	suite.keyMock.ExpectQuery("WITH RECURSIVE user_accessible_regions").
+		WithArgs("user-123", "region-abc").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(true))
+
 	columns := []string{"user_id", "public_key"}
 	suite.keyMock.ExpectQuery("SELECT ek.user_id, ek.public_key FROM user_encryption_keys").
 		WithArgs("region-abc").
@@ -1080,6 +1106,12 @@ func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Membership check: GetUserSchool (schoolRepo shares keyDB)
+	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
+		WithArgs("user-123", "school-xyz").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "school_id", "is_admin", "verification_status", "verified_at"}).
+			AddRow("us-1", "user-123", "school-xyz", false, "verified", time.Now()))
+
 	columns := []string{"user_id", "public_key"}
 	suite.keyMock.ExpectQuery("SELECT ek.user_id, ek.public_key FROM user_encryption_keys").
 		WithArgs("school-xyz").
@@ -1113,6 +1145,18 @@ func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 
 func TestEncryptionHandler_GetPublicKeys_ByDistrict(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
+
+	// Membership check: ListByDistrict returns one school, then GetUserSchool confirms membership
+	schoolColumns := []string{"id", "nces_id", "name", "city", "state", "district_id", "district_name", "latitude", "longitude", "member_count", "verified_count", "admin_count"}
+	suite.keyMock.ExpectQuery("SELECT s.id, s.nces_id, s.name").
+		WithArgs("district-99").
+		WillReturnRows(sqlmock.NewRows(schoolColumns).
+			AddRow("school-in-district", "123456", "Test School", "Anytown", "CA", "district-99", "Test District", 37.0, -122.0, 10, 5, 2))
+
+	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
+		WithArgs("user-123", "school-in-district").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "school_id", "is_admin", "verification_status", "verified_at"}).
+			AddRow("us-2", "user-123", "school-in-district", false, "verified", time.Now()))
 
 	columns := []string{"user_id", "public_key"}
 	suite.keyMock.ExpectQuery("SELECT DISTINCT ek.user_id, ek.public_key FROM user_encryption_keys").

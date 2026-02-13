@@ -15,25 +15,26 @@ type UserEncryptionKey struct {
 
 // CreateEncryptionKeyRequest is the request body for uploading encryption keys
 type CreateEncryptionKeyRequest struct {
-	PublicKey         string `json:"public_key"`
-	WrappedPrivateKey string `json:"wrapped_private_key"`
-	KeySalt           string `json:"key_salt"`
-	KeyIV             string `json:"key_iv"`
+	PublicKey         string `json:"public_key" validate:"required"`
+	WrappedPrivateKey string `json:"wrapped_private_key" validate:"required"`
+	KeySalt           string `json:"key_salt" validate:"required"`
+	KeyIV             string `json:"key_iv" validate:"required"`
 }
 
 // UpdateEncryptionKeyRequest is the request body for re-wrapping the private key (e.g. password change)
 type UpdateEncryptionKeyRequest struct {
-	WrappedPrivateKey string `json:"wrapped_private_key"`
-	KeySalt           string `json:"key_salt"`
-	KeyIV             string `json:"key_iv"`
+	WrappedPrivateKey string `json:"wrapped_private_key" validate:"required"`
+	KeySalt           string `json:"key_salt" validate:"required"`
+	KeyIV             string `json:"key_iv" validate:"required"`
 }
 
-// RotateEncryptionKeyRequest is the request body for uploading a new keypair (e.g. password reset)
+// RotateEncryptionKeyRequest is the request body for uploading a new keypair (e.g. password reset).
+// Identical fields to CreateEncryptionKeyRequest but represents a distinct operation (rotation vs initial creation).
 type RotateEncryptionKeyRequest struct {
-	PublicKey         string `json:"public_key"`
-	WrappedPrivateKey string `json:"wrapped_private_key"`
-	KeySalt           string `json:"key_salt"`
-	KeyIV             string `json:"key_iv"`
+	PublicKey         string `json:"public_key" validate:"required"`
+	WrappedPrivateKey string `json:"wrapped_private_key" validate:"required"`
+	KeySalt           string `json:"key_salt" validate:"required"`
+	KeyIV             string `json:"key_iv" validate:"required"`
 }
 
 // EncryptionKeyResponse is returned when fetching own wrapped backup

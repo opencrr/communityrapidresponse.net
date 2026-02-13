@@ -74,4 +74,7 @@ type NotificationServiceInterface interface {
 
 	// QueueSubRegionInvitation queues a notification when a user is invited to a sub-region
 	QueueSubRegionInvitation(ctx context.Context, userID, inviterID, regionID string) error
+
+	// QueueRekeyingNeededEvent queues a fan-out notification for key rotation rekey
+	QueueRekeyingNeededEvent(ctx context.Context, userID string) error
 }

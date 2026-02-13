@@ -90,8 +90,3 @@ ALTER TABLE signal_groups DROP COLUMN IF EXISTS invite_link_updated_by;
 DROP TABLE IF EXISTS invite_link_update_votes;
 DROP TABLE IF EXISTS invite_link_update_proposals;
 
--- Clear signal_groups (no production data exists)
--- Use SET/DELETE instead of TRUNCATE to avoid FK constraint errors
-SET FOREIGN_KEY_CHECKS = 0;
-TRUNCATE TABLE signal_groups;
-SET FOREIGN_KEY_CHECKS = 1;

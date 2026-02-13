@@ -129,7 +129,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	meshtasticHandler := handlers.NewMeshtasticHandler(
 		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
 	)
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(

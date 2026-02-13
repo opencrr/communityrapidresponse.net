@@ -100,7 +100,7 @@ func (r *SecretUpdateProposalRepository) GetPendingBySecretForUpdate(ctx context
 		FOR UPDATE
 	`
 	proposal, err := r.scanProposal(tx.QueryRowContext(ctx, query, secretID))
-	if err != nil && err.Error() == "proposal not found" {
+	if errors.Is(err, ErrSecretProposalNotFound) {
 		return nil, nil
 	}
 	return proposal, err
@@ -133,16 +133,28 @@ func (r *SecretUpdateProposalRepository) CountApprovalVotesTx(ctx context.Contex
 	return count, err
 }
 
-// UpdateStatusTx updates proposal status within a transaction
+// UpdateStatusTx updates proposal status within a transaction.
+// Only terminal statuses (approved, rejected, expired) set resolved_at.
 func (r *SecretUpdateProposalRepository) UpdateStatusTx(ctx context.Context, tx *sql.Tx, id string, status models.ProposalStatus) error {
+	if status == models.ProposalStatusApprovedPendingFinalization {
+		query := `UPDATE secret_update_proposals SET status = ? WHERE id = ?`
+		_, err := tx.ExecContext(ctx, query, status, id)
+		return err
+	}
 	now := time.Now().UTC()
 	query := `UPDATE secret_update_proposals SET status = ?, resolved_at = ? WHERE id = ?`
 	_, err := tx.ExecContext(ctx, query, status, now, id)
 	return err
 }
 
-// UpdateStatus updates proposal status
+// UpdateStatus updates proposal status.
+// Only terminal statuses (approved, rejected, expired) set resolved_at.
 func (r *SecretUpdateProposalRepository) UpdateStatus(ctx context.Context, id string, status models.ProposalStatus) error {
+	if status == models.ProposalStatusApprovedPendingFinalization {
+		query := `UPDATE secret_update_proposals SET status = ? WHERE id = ?`
+		_, err := r.db.ExecContext(ctx, query, status, id)
+		return err
+	}
 	now := time.Now().UTC()
 	query := `UPDATE secret_update_proposals SET status = ?, resolved_at = ? WHERE id = ?`
 	_, err := r.db.ExecContext(ctx, query, status, now, id)
@@ -163,7 +175,7 @@ func (r *SecretUpdateProposalRepository) GetWrappedDEK(ctx context.Context, prop
 	var wrappedDEK string
 	err := r.db.QueryRowContext(ctx, query, proposalID, userID).Scan(&wrappedDEK)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("wrapped key not found for user")
+		return "", ErrWrappedKeyNotFound
 	}
 	return wrappedDEK, err
 }
@@ -199,7 +211,7 @@ func (r *SecretUpdateProposalRepository) GetByIDWithVotes(ctx context.Context, i
 		&proposal.ResolvedAt, &proposal.FinalizedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("proposal not found")
+		return nil, ErrSecretProposalNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -399,7 +411,7 @@ func (r *SecretUpdateProposalRepository) scanProposal(row *sql.Row) (*models.Sec
 		&proposal.CreatedAt, &proposal.ExpiresAt, &proposal.ResolvedAt, &proposal.FinalizedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("proposal not found")
+		return nil, ErrSecretProposalNotFound
 	}
 	if err != nil {
 		return nil, err
