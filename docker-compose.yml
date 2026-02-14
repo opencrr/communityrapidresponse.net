@@ -61,6 +61,7 @@ services:
       db:
         condition: service_healthy
     environment:
+      - ENVIRONMENT=development
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - DB_HOST=db
@@ -133,6 +134,7 @@ services:
       db-test:
         condition: service_healthy
     environment:
+      - ENVIRONMENT=test
       - TEST_DB_HOST=db-test
       - TEST_DB_PORT=3306
       - TEST_DB_USER=root
@@ -203,6 +205,7 @@ services:
       db-test:
         condition: service_healthy
     environment:
+      - ENVIRONMENT=test
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - DB_HOST=db-test

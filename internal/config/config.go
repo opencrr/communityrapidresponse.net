@@ -1,11 +1,37 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// Environment represents the application runtime environment
+type Environment string
+
+const (
+	EnvDevelopment Environment = "development"
+	EnvStaging     Environment = "staging"
+	EnvProduction  Environment = "production"
+	EnvTest        Environment = "test"
+)
+
+// IsProduction returns true for environments that require strict validation
+func (e Environment) IsProduction() bool {
+	return e == EnvProduction || e == EnvStaging
+}
+
+// IsValid returns whether the environment is a recognized value
+func (e Environment) IsValid() bool {
+	switch e {
+	case EnvDevelopment, EnvStaging, EnvProduction, EnvTest:
+		return true
+	default:
+		return false
+	}
+}
 
 // MailProvider represents the mailing service provider type
 type MailProvider string
@@ -17,6 +43,7 @@ const (
 
 // Config holds all application configuration
 type Config struct {
+	Env          Environment
 	Server       ServerConfig
 	Database     DatabaseConfig
 	JWT          JWTConfig
@@ -208,6 +235,7 @@ type EmailConfig struct {
 // Load reads configuration from environment variables
 func Load() *Config {
 	return &Config{
+		Env: Environment(getEnv("ENVIRONMENT", "development")),
 		Server: ServerConfig{
 			Host:          getEnv("SERVER_HOST", "0.0.0.0"),
 			Port:          getEnvInt("SERVER_PORT", 8080),
@@ -346,6 +374,95 @@ func (p MailProvider) IsValid() bool {
 // String returns the string representation of the mail provider
 func (p MailProvider) String() string {
 	return string(p)
+}
+
+// Validate checks that the configuration is valid for the current environment.
+// It collects all errors and returns them joined so operators see every issue at once.
+func (c *Config) Validate() error {
+	var errs []string
+
+	// Environment must be recognized
+	if !c.Env.IsValid() {
+		errs = append(errs, fmt.Sprintf("ENVIRONMENT %q is not valid (must be development, staging, production, or test)", string(c.Env)))
+	}
+
+	// Always required: JWT secret
+	if c.JWT.Secret == "" {
+		errs = append(errs, "JWT_SECRET is required")
+	} else if len(c.JWT.Secret) < 32 {
+		errs = append(errs, fmt.Sprintf("JWT_SECRET must be at least 32 characters (got %d)", len(c.JWT.Secret)))
+	}
+
+	// MFA encryption key required when MFA is enabled
+	if c.MFA.Required {
+		if c.MFA.EncryptionKey == "" {
+			errs = append(errs, "MFA_ENCRYPTION_KEY is required when MFA_REQUIRED=true")
+		} else if len(c.MFA.EncryptionKey) != 32 {
+			errs = append(errs, fmt.Sprintf("MFA_ENCRYPTION_KEY must be exactly 32 characters (got %d)", len(c.MFA.EncryptionKey)))
+		}
+	}
+
+	// Email backend must be valid
+	if !c.Email.Backend.IsValid() {
+		errs = append(errs, fmt.Sprintf("EMAIL_BACKEND %q is not valid (must be mock, sendgrid, or smtp)", string(c.Email.Backend)))
+	}
+
+	// Mail provider must be valid
+	if !c.MailProvider.IsValid() {
+		errs = append(errs, fmt.Sprintf("MAIL_PROVIDER %q is not valid (must be lob or postgrid)", string(c.MailProvider)))
+	}
+
+	// Production/staging-only checks
+	if c.Env.IsProduction() {
+		if !c.Server.SecureCookies {
+			errs = append(errs, "SECURE_COOKIES must be true in production/staging")
+		}
+		if c.Email.Backend == EmailBackendMock {
+			errs = append(errs, "EMAIL_BACKEND cannot be \"mock\" in production/staging")
+		}
+		if !c.Email.Enabled {
+			errs = append(errs, "EMAIL_ENABLED must be true in production/staging")
+		}
+		if c.Database.Password == "" {
+			errs = append(errs, "DB_PASSWORD cannot be empty in production/staging")
+		}
+		if c.Mapbox.SecretToken == "" {
+			errs = append(errs, "MAPBOX_SECRET_TOKEN is required in production/staging")
+		}
+
+		// Mail provider API key
+		switch c.MailProvider {
+		case MailProviderLob:
+			if c.Lob.APIKey == "" {
+				errs = append(errs, "LOB_API_KEY is required in production/staging")
+			}
+		case MailProviderPostgrid:
+			if c.Postgrid.PrintMailAPIKey == "" {
+				errs = append(errs, "POSTGRID_PRINT_API_KEY is required in production/staging")
+			}
+		}
+
+		// Email backend credentials
+		if c.Email.Backend == EmailBackendSendGrid && c.Email.SendGridAPIKey == "" {
+			errs = append(errs, "SENDGRID_API_KEY is required when EMAIL_BACKEND=sendgrid")
+		}
+		if c.Email.Backend == EmailBackendSMTP {
+			if c.Email.SMTPHost == "" {
+				errs = append(errs, "SMTP_HOST is required when EMAIL_BACKEND=smtp")
+			}
+			if c.Email.SMTPUser == "" {
+				errs = append(errs, "SMTP_USER is required when EMAIL_BACKEND=smtp")
+			}
+			if c.Email.SMTPPassword == "" {
+				errs = append(errs, "SMTP_PASSWORD is required when EMAIL_BACKEND=smtp")
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n  - "))
+	}
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {
