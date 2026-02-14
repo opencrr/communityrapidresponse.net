@@ -614,23 +614,51 @@ migrate-local:
         echo "✅ Applied $pending migration(s)"
     fi
 
-# Stamp index.html entry-point references with a cache-busting version
-# Usage: just cache-bust         (uses git short SHA)
-#        just cache-bust abc123  (uses explicit version)
-cache-bust VERSION="":
+# Check that esbuild is installed
+_check-esbuild:
+    @command -v esbuild >/dev/null 2>&1 || { echo "❌ esbuild is required but not installed."; echo "   Install with: go install github.com/evanw/esbuild/cmd/esbuild@latest"; exit 1; }
+
+# Bundle frontend assets with content-hashed filenames for production
+build-frontend: _check-esbuild
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ -n "{{VERSION}}" ]; then
-        V="{{VERSION}}"
-    else
-        V=$(git rev-parse --short HEAD)
-    fi
-    echo "Stamping index.html with version: $V"
+    echo "🔨 Building frontend bundles..."
 
-    sed -i '' -E "s|href=\"/static/([^\"?]*)(\?v=[^\"]*)?|href=\"/static/\1?v=$V|g" templates/index.html
-    sed -i '' -E "s|src=\"/static/([^\"?]*)(\?v=[^\"]*)?|src=\"/static/\1?v=$V|g" templates/index.html
+    # Clean previous build
+    rm -rf static/dist
+    mkdir -p static/dist
 
-    echo "Done — cache-busted index.html with version $V"
+    # Bundle JS
+    esbuild static/js/app.js \
+        --bundle \
+        --minify \
+        --sourcemap \
+        --entry-names='[name]-[hash]' \
+        --outdir=static/dist \
+        --format=esm \
+        --target=es2020
+
+    # Bundle CSS
+    esbuild static/css/main.css \
+        --bundle \
+        --minify \
+        --entry-names='[name]-[hash]' \
+        --outdir=static/dist
+
+    # Find generated hashed filenames
+    JS_FILE=$(basename static/dist/app-*.js | head -1)
+    CSS_FILE=$(basename static/dist/main-*.css | head -1)
+    FAVICON_V=$(git rev-parse --short HEAD)
+
+    echo "  JS:  $JS_FILE"
+    echo "  CSS: $CSS_FILE"
+
+    # Update index.html to reference hashed bundles
+    sed -i '' -E "s|src=\"/static/js/app\.js(\?v=[^\"]*)?|src=\"/static/dist/$JS_FILE|" templates/index.html
+    sed -i '' -E "s|href=\"/static/css/main\.css(\?v=[^\"]*)?|href=\"/static/dist/$CSS_FILE|" templates/index.html
+    sed -i '' -E "s|(/static/images/[^\"?]*)(\?v=[^\"]*)?|\1?v=$FAVICON_V|g" templates/index.html
+
+    echo "✅ Frontend build complete"
 
 # Generate a secure JWT secret
 generate-secret:

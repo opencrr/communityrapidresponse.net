@@ -3,40 +3,8 @@
  * Generates QR codes for Meshtastic channel URLs
  */
 
-let qrCodeLibLoaded = false;
-let qrCodeLibLoading = false;
-let qrCodeLibCallbacks = [];
-
-/**
- * Ensure QR code library is loaded
- */
-function ensureQRLibrary() {
-    return new Promise((resolve, reject) => {
-        if (qrCodeLibLoaded) {
-            resolve();
-            return;
-        }
-
-        qrCodeLibCallbacks.push({ resolve, reject });
-
-        if (qrCodeLibLoading) return;
-        qrCodeLibLoading = true;
-
-        const script = document.createElement('script');
-        script.src = '/static/vendor/qrcode.min.js';
-        script.onload = () => {
-            qrCodeLibLoaded = true;
-            qrCodeLibCallbacks.forEach(cb => cb.resolve());
-            qrCodeLibCallbacks = [];
-        };
-        script.onerror = () => {
-            qrCodeLibCallbacks.forEach(cb => cb.reject(new Error('Failed to load QR code library')));
-            qrCodeLibCallbacks = [];
-            qrCodeLibLoading = false;
-        };
-        document.head.appendChild(script);
-    });
-}
+// Side-effect import: sets the global QRCode constructor
+import '../vendor/qrcode.min.js';
 
 /**
  * Render a QR code into a container element
@@ -46,8 +14,6 @@ function ensureQRLibrary() {
  */
 export async function renderQRCode(container, text, size = 200) {
     try {
-        await ensureQRLibrary();
-
         // Clear container
         container.innerHTML = '';
 
