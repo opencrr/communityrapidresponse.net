@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,347 @@ func TestSplitCSV(t *testing.T) {
 			}
 		})
 	}
+}
+
+// validDevConfig returns a minimal Config that passes validation in development mode.
+func validDevConfig() *Config {
+	return &Config{
+		Env: EnvDevelopment,
+		JWT: JWTConfig{
+			Secret: "development_secret_key_at_least_32_characters_long",
+		},
+		MFA: MFAConfig{
+			Required: false,
+		},
+		Email: EmailConfig{
+			Backend: EmailBackendMock,
+		},
+		MailProvider: MailProviderLob,
+	}
+}
+
+// validProdConfig returns a Config that passes validation in production mode.
+func validProdConfig() *Config {
+	return &Config{
+		Env: EnvProduction,
+		Server: ServerConfig{
+			SecureCookies: true,
+		},
+		Database: DatabaseConfig{
+			Password: "strong-db-password",
+		},
+		JWT: JWTConfig{
+			Secret: "production_secret_key_at_least_32_characters_long",
+		},
+		MFA: MFAConfig{
+			Required:      true,
+			EncryptionKey: "01234567890123456789012345678901",
+		},
+		Mapbox: MapboxConfig{
+			SecretToken: "sk.mapbox-secret-token",
+		},
+		MailProvider: MailProviderLob,
+		Lob: LobConfig{
+			APIKey: "lob-api-key",
+		},
+		Email: EmailConfig{
+			Backend:        EmailBackendSendGrid,
+			Enabled:        true,
+			SendGridAPIKey: "sg-api-key",
+		},
+	}
+}
+
+func TestValidate(t *testing.T) {
+	t.Run("valid dev config passes", func(t *testing.T) {
+		cfg := validDevConfig()
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("valid production config passes", func(t *testing.T) {
+		cfg := validProdConfig()
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid ENVIRONMENT fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.Env = "bogus"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid ENVIRONMENT")
+		}
+		if !strings.Contains(err.Error(), "ENVIRONMENT") {
+			t.Errorf("expected error to mention ENVIRONMENT, got: %v", err)
+		}
+	})
+
+	t.Run("empty JWT_SECRET fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.JWT.Secret = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty JWT_SECRET")
+		}
+		if !strings.Contains(err.Error(), "JWT_SECRET is required") {
+			t.Errorf("expected error to mention JWT_SECRET, got: %v", err)
+		}
+	})
+
+	t.Run("short JWT_SECRET fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.JWT.Secret = "too-short"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for short JWT_SECRET")
+		}
+		if !strings.Contains(err.Error(), "at least 32 characters") {
+			t.Errorf("expected error about min length, got: %v", err)
+		}
+	})
+
+	t.Run("MFA_ENCRYPTION_KEY required when MFA enabled", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.MFA.Required = true
+		cfg.MFA.EncryptionKey = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for missing MFA_ENCRYPTION_KEY")
+		}
+		if !strings.Contains(err.Error(), "MFA_ENCRYPTION_KEY is required") {
+			t.Errorf("expected error about MFA_ENCRYPTION_KEY, got: %v", err)
+		}
+	})
+
+	t.Run("MFA_ENCRYPTION_KEY wrong length fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.MFA.Required = true
+		cfg.MFA.EncryptionKey = "too-short"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for wrong-length MFA_ENCRYPTION_KEY")
+		}
+		if !strings.Contains(err.Error(), "exactly 32 characters") {
+			t.Errorf("expected error about 32 characters, got: %v", err)
+		}
+	})
+
+	t.Run("invalid email backend fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.Email.Backend = "carrier_pigeon"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid EMAIL_BACKEND")
+		}
+		if !strings.Contains(err.Error(), "EMAIL_BACKEND") {
+			t.Errorf("expected error about EMAIL_BACKEND, got: %v", err)
+		}
+	})
+
+	t.Run("invalid mail provider fails", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.MailProvider = "usps"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for invalid MAIL_PROVIDER")
+		}
+		if !strings.Contains(err.Error(), "MAIL_PROVIDER") {
+			t.Errorf("expected error about MAIL_PROVIDER, got: %v", err)
+		}
+	})
+
+	t.Run("production with SECURE_COOKIES=false fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Server.SecureCookies = false
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for SECURE_COOKIES=false in production")
+		}
+		if !strings.Contains(err.Error(), "SECURE_COOKIES") {
+			t.Errorf("expected error about SECURE_COOKIES, got: %v", err)
+		}
+	})
+
+	t.Run("production with mock email backend fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Email.Backend = EmailBackendMock
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for mock email in production")
+		}
+		if !strings.Contains(err.Error(), "EMAIL_BACKEND") {
+			t.Errorf("expected error about EMAIL_BACKEND, got: %v", err)
+		}
+	})
+
+	t.Run("production with EMAIL_ENABLED=false fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Email.Enabled = false
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for EMAIL_ENABLED=false in production")
+		}
+		if !strings.Contains(err.Error(), "EMAIL_ENABLED") {
+			t.Errorf("expected error about EMAIL_ENABLED, got: %v", err)
+		}
+	})
+
+	t.Run("production with empty DB password fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Database.Password = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty DB_PASSWORD in production")
+		}
+		if !strings.Contains(err.Error(), "DB_PASSWORD") {
+			t.Errorf("expected error about DB_PASSWORD, got: %v", err)
+		}
+	})
+
+	t.Run("production with empty MAPBOX_SECRET_TOKEN fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Mapbox.SecretToken = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty MAPBOX_SECRET_TOKEN in production")
+		}
+		if !strings.Contains(err.Error(), "MAPBOX_SECRET_TOKEN") {
+			t.Errorf("expected error about MAPBOX_SECRET_TOKEN, got: %v", err)
+		}
+	})
+
+	t.Run("production with lob and empty LOB_API_KEY fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Lob.APIKey = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty LOB_API_KEY in production")
+		}
+		if !strings.Contains(err.Error(), "LOB_API_KEY") {
+			t.Errorf("expected error about LOB_API_KEY, got: %v", err)
+		}
+	})
+
+	t.Run("production with postgrid and empty POSTGRID_PRINT_API_KEY fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.MailProvider = MailProviderPostgrid
+		cfg.Postgrid.PrintMailAPIKey = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty POSTGRID_PRINT_API_KEY in production")
+		}
+		if !strings.Contains(err.Error(), "POSTGRID_PRINT_API_KEY") {
+			t.Errorf("expected error about POSTGRID_PRINT_API_KEY, got: %v", err)
+		}
+	})
+
+	t.Run("production with sendgrid and empty SENDGRID_API_KEY fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Email.SendGridAPIKey = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty SENDGRID_API_KEY in production")
+		}
+		if !strings.Contains(err.Error(), "SENDGRID_API_KEY") {
+			t.Errorf("expected error about SENDGRID_API_KEY, got: %v", err)
+		}
+	})
+
+	t.Run("production with smtp and missing credentials fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Email.Backend = EmailBackendSMTP
+		cfg.Email.SMTPHost = ""
+		cfg.Email.SMTPUser = ""
+		cfg.Email.SMTPPassword = ""
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for missing SMTP credentials in production")
+		}
+		if !strings.Contains(err.Error(), "SMTP_HOST") {
+			t.Errorf("expected error about SMTP_HOST, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "SMTP_USER") {
+			t.Errorf("expected error about SMTP_USER, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "SMTP_PASSWORD") {
+			t.Errorf("expected error about SMTP_PASSWORD, got: %v", err)
+		}
+	})
+
+	t.Run("staging treated as production", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.Env = EnvStaging
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for staging env with dev defaults")
+		}
+		if !strings.Contains(err.Error(), "SECURE_COOKIES") {
+			t.Errorf("expected staging to enforce SECURE_COOKIES, got: %v", err)
+		}
+	})
+
+	t.Run("collects multiple errors at once", func(t *testing.T) {
+		cfg := &Config{
+			Env:          EnvProduction,
+			JWT:          JWTConfig{Secret: ""},
+			Email:        EmailConfig{Backend: EmailBackendMock},
+			MailProvider: MailProviderLob,
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected multiple errors")
+		}
+		errorText := err.Error()
+		// Should contain at least JWT_SECRET, SECURE_COOKIES, EMAIL_BACKEND, DB_PASSWORD
+		for _, keyword := range []string{"JWT_SECRET", "SECURE_COOKIES", "EMAIL_BACKEND", "DB_PASSWORD"} {
+			if !strings.Contains(errorText, keyword) {
+				t.Errorf("expected error to mention %s, got: %v", keyword, err)
+			}
+		}
+	})
+}
+
+func TestEnvironment_IsProduction(t *testing.T) {
+	tests := []struct {
+		env      Environment
+		expected bool
+	}{
+		{EnvProduction, true},
+		{EnvStaging, true},
+		{EnvDevelopment, false},
+		{EnvTest, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.env), func(t *testing.T) {
+			if got := tt.env.IsProduction(); got != tt.expected {
+				t.Errorf("Environment(%q).IsProduction() = %v, want %v", tt.env, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoad_Environment(t *testing.T) {
+	orig := os.Getenv("ENVIRONMENT")
+	defer func() { _ = os.Setenv("ENVIRONMENT", orig) }()
+
+	t.Run("defaults to development", func(t *testing.T) {
+		_ = os.Unsetenv("ENVIRONMENT")
+		cfg := Load()
+		if cfg.Env != EnvDevelopment {
+			t.Errorf("expected default env %q, got %q", EnvDevelopment, cfg.Env)
+		}
+	})
+
+	t.Run("loads from ENVIRONMENT", func(t *testing.T) {
+		_ = os.Setenv("ENVIRONMENT", "production")
+		cfg := Load()
+		if cfg.Env != EnvProduction {
+			t.Errorf("expected env %q, got %q", EnvProduction, cfg.Env)
+		}
+	})
 }
 
 func TestConsensusConfig_RequiredVotes(t *testing.T) {

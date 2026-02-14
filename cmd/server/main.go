@@ -35,19 +35,13 @@ func main() {
 		cfg.Sentry.Release = version
 	}
 
-	// Validate required configuration
-	if cfg.JWT.Secret == "" {
-		log.Fatal("JWT_SECRET environment variable is required")
+	// Validate configuration for the current environment
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error:\n  - %v", err)
 	}
-	// MFA encryption key is only required if MFA is enabled
-	if cfg.MFA.Required {
-		if cfg.MFA.EncryptionKey == "" {
-			log.Fatal("MFA_ENCRYPTION_KEY environment variable is required (32 characters)")
-		}
-		if len(cfg.MFA.EncryptionKey) != 32 {
-			log.Fatalf("MFA_ENCRYPTION_KEY must be exactly 32 characters (got %d)", len(cfg.MFA.EncryptionKey))
-		}
-	} else {
+	log.Printf("Environment: %s", cfg.Env)
+
+	if !cfg.MFA.Required {
 		log.Println("WARNING: MFA is disabled (MFA_REQUIRED=false). This should only be used in development.")
 	}
 
