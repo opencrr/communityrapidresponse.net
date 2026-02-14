@@ -1,10 +1,27 @@
 /**
  * QR Code component
  * Generates QR codes for Meshtastic channel URLs
+ *
+ * The QR library uses `this` in a non-strict IIFE expecting window,
+ * which breaks in ESM strict mode. Load it as a classic script instead.
  */
 
-// Side-effect import: sets the global QRCode constructor
-import '../vendor/qrcode.min.js';
+let qrLibLoaded = false;
+let qrLibPromise = null;
+
+function loadQRLibrary() {
+    if (qrLibLoaded) return Promise.resolve();
+    if (qrLibPromise) return qrLibPromise;
+
+    qrLibPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = '/static/js/vendor/qrcode.min.js';
+        script.onload = () => { qrLibLoaded = true; resolve(); };
+        script.onerror = () => { qrLibPromise = null; reject(new Error('Failed to load QR code library')); };
+        document.head.appendChild(script);
+    });
+    return qrLibPromise;
+}
 
 /**
  * Render a QR code into a container element
@@ -14,6 +31,8 @@ import '../vendor/qrcode.min.js';
  */
 export async function renderQRCode(container, text, size = 200) {
     try {
+        await loadQRLibrary();
+
         // Clear container
         container.innerHTML = '';
 
