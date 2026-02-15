@@ -35,8 +35,10 @@ type User struct {
 	BlockReason   *string    `json:"block_reason,omitempty" db:"block_reason"`
 	AddressHash      *string          `json:"-" db:"address_hash"` // SHA-256 hash of verified address (never exposed)
 	CreatedAt        time.Time        `json:"created_at" db:"created_at"`
-	LastLogin        *time.Time       `json:"last_login,omitempty" db:"last_login"`
-	DeletedAt        *time.Time       `json:"-" db:"deleted_at"`
+	LastLogin            *time.Time       `json:"last_login,omitempty" db:"last_login"`
+	DeletedAt            *time.Time       `json:"-" db:"deleted_at"`
+	FailedLoginAttempts  int              `json:"-" db:"failed_login_attempts"`
+	LockedUntil          *time.Time       `json:"-" db:"locked_until"`
 }
 
 // UserRegion represents a user's membership in a geographic region

@@ -89,7 +89,8 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE id = ?
 	`
 
@@ -117,6 +118,8 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, 
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -137,7 +140,8 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE email = ?
 	`
 
@@ -165,6 +169,8 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -185,7 +191,8 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE username = ?
 	`
 
@@ -213,6 +220,8 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*m
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -234,7 +243,8 @@ func (r *UserRepository) GetByEmailOrUsername(ctx context.Context, identifier st
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE email = ? OR username = ?
 	`
 
@@ -262,6 +272,8 @@ func (r *UserRepository) GetByEmailOrUsername(ctx context.Context, identifier st
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -324,7 +336,8 @@ func (r *UserRepository) Search(ctx context.Context, query string, page, limit i
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users
 		WHERE (? = '' OR email LIKE ? OR username LIKE ?)
 		ORDER BY created_at DESC
@@ -363,6 +376,8 @@ func (r *UserRepository) Search(ctx context.Context, query string, page, limit i
 			&user.CreatedAt,
 			&user.LastLogin,
 			&user.DeletedAt,
+			&user.FailedLoginAttempts,
+			&user.LockedUntil,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -521,7 +536,8 @@ func (r *UserRepository) GetByNormalizedEmail(ctx context.Context, normalizedEma
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE email_normalized = ?
 	`
 
@@ -549,6 +565,8 @@ func (r *UserRepository) GetByNormalizedEmail(ctx context.Context, normalizedEma
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -632,7 +650,8 @@ func (r *UserRepository) GetByIDForUpdate(ctx context.Context, tx *sql.Tx, id st
 		       mfa_secret, mfa_enabled, mfa_backup_codes, mfa_setup_required,
 		       email_verified, email_normalized,
 		       is_blocked, blocked_at, blocked_by, block_reason,
-		       address_hash, created_at, last_login, deleted_at
+		       address_hash, created_at, last_login, deleted_at,
+		       failed_login_attempts, locked_until
 		FROM users WHERE id = ?
 		FOR UPDATE
 	`
@@ -661,6 +680,8 @@ func (r *UserRepository) GetByIDForUpdate(ctx context.Context, tx *sql.Tx, id st
 		&user.CreatedAt,
 		&user.LastLogin,
 		&user.DeletedAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -825,6 +846,36 @@ func (r *UserRepository) GetSoleVerifiedSchools(ctx context.Context, userID stri
 		schools = append(schools, school)
 	}
 	return schools, rows.Err()
+}
+
+// IncrementFailedLoginAttempts atomically increments the failed login counter and returns the new count
+func (r *UserRepository) IncrementFailedLoginAttempts(ctx context.Context, userID string) (int, error) {
+	query := `UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return 0, err
+	}
+
+	var count int
+	err = r.db.QueryRowContext(ctx, `SELECT failed_login_attempts FROM users WHERE id = ?`, userID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// LockAccount sets the locked_until timestamp for an account
+func (r *UserRepository) LockAccount(ctx context.Context, userID string, lockedUntil time.Time) error {
+	query := `UPDATE users SET locked_until = ? WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, lockedUntil.UTC(), userID)
+	return err
+}
+
+// ResetFailedLoginAttempts clears the failed login counter and lock
+func (r *UserRepository) ResetFailedLoginAttempts(ctx context.Context, userID string) error {
+	query := `UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, userID)
+	return err
 }
 
 // GetVerifiedUsersInRegion returns users who are postcard OR vouch verified in a specific region.

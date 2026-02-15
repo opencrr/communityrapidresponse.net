@@ -130,6 +130,9 @@ const (
 	AuditActionMeshtasticChannelCreated = "meshtastic_channel_created"
 	AuditActionMeshtasticChannelUpdated = "meshtastic_channel_updated"
 	AuditActionMeshtasticChannelDeleted = "meshtastic_channel_deleted"
+
+	// Account lockout
+	AuditActionAccountLocked = "account_locked"
 )
 
 // AuditLogFilter represents filters for querying audit logs

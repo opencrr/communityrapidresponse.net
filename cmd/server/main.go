@@ -210,6 +210,8 @@ func main() {
 		baseURL,
 		encryptionKeyRepo,
 	)
+	authHandler.SetRateLimiter(rateLimiter)
+
 	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
 	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, encryptedSecretRepo, regionRepo, auditRepo)
