@@ -158,11 +158,11 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/meshtastic-channels/admin", r.authenticated(r.methodHandler(http.MethodGet, r.meshtastic.ListAdmin)))
 	r.mux.HandleFunc("/api/v1/meshtastic-channels/", r.handleMeshtasticChannelByID)
 
-	// School routes (public search + authenticated sub-routes)
+	// School routes (all authenticated)
 	r.mux.HandleFunc("/api/v1/schools", r.handleSchools)
 	r.mux.HandleFunc("/api/v1/schools/my", r.authenticated(r.methodHandler(http.MethodGet, r.schools.ListMySchools)))
 	r.mux.HandleFunc("/api/v1/schools/", r.handleSchoolByID)
-	r.mux.HandleFunc("/api/v1/school-districts", r.methodHandler(http.MethodGet, r.schools.SearchDistricts))
+	r.mux.HandleFunc("/api/v1/school-districts", r.authenticated(r.methodHandler(http.MethodGet, r.schools.SearchDistricts)))
 	r.mux.HandleFunc("/api/v1/school-districts/", r.handleSchoolDistrictByID)
 
 	// Protected routes - verification
@@ -253,14 +253,6 @@ func (r *Router) methodHandler(method string, handler http.HandlerFunc) http.Han
 func (r *Router) authenticated(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		r.jwtAuth.Authenticate(http.HandlerFunc(handler)).ServeHTTP(w, req)
-	}
-}
-
-// optionalAuth wraps a handler with optional authentication middleware.
-// If a valid token is present, claims are set in context; otherwise the handler runs without claims.
-func (r *Router) optionalAuth(handler http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		r.jwtAuth.OptionalAuthenticate(http.HandlerFunc(handler)).ServeHTTP(w, req)
 	}
 }
 
@@ -790,7 +782,7 @@ func (r *Router) handleBlocklistProposal(w http.ResponseWriter, req *http.Reques
 // handleSchools handles /api/v1/schools
 func (r *Router) handleSchools(w http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodGet {
-		r.schools.Search(w, req)
+		r.authenticated(r.schools.Search)(w, req)
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -916,7 +908,7 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 	req.URL.RawQuery = q.Encode()
 
 	if req.Method == http.MethodGet {
-		r.optionalAuth(r.schools.Get)(w, req)
+		r.authenticated(r.schools.Get)(w, req)
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
@@ -980,7 +972,7 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 	req.URL.RawQuery = q.Encode()
 
 	if req.Method == http.MethodGet {
-		r.schools.GetDistrict(w, req)
+		r.authenticated(r.schools.GetDistrict)(w, req)
 		return
 	}
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
