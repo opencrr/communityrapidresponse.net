@@ -38,7 +38,7 @@ export async function render(container) {
                         `}
                     ` : `
                         <a href="/register" class="btn btn--primary btn--lg" data-link>Get Started</a>
-                        <a href="/communities" class="btn btn--secondary btn--lg" data-link>Explore Communities</a>
+                        <a href="/login" class="btn btn--secondary btn--lg" data-link>Log In</a>
                     `}
                 </div>
                 <p class="hero__trust-link">
@@ -68,8 +68,8 @@ async function initHomeMap() {
         zoom: 4,
         interactive: true,
         onLoad: async (map) => {
-            // Load regions (empty result is fine - just show empty map)
-            const regions = await getRegions().catch(() => []);
+            // Only load regions for authenticated users
+            const regions = authenticated ? await getRegions().catch(() => []) : [];
             if (regions.length > 0) {
                 const geojson = regionsToFeatureCollection(regions);
                 addRegionsLayer(map, geojson, {
