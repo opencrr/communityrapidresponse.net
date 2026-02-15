@@ -23,6 +23,22 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
+// Auth rate limit constants
+const (
+	authLoginLimit             = 10
+	authLoginWindow            = 5 * time.Minute
+	authRegisterLimit          = 3
+	authRegisterWindow         = 1 * time.Hour
+	authForgotPasswordLimit    = 5
+	authForgotPasswordWindow   = 15 * time.Minute
+	authResetPasswordLimit     = 10
+	authResetPasswordWindow    = 15 * time.Minute
+	authResendVerifyLimit      = 3
+	authResendVerifyWindow     = 15 * time.Minute
+	accountLockoutThreshold    = 10
+	accountLockoutDuration     = 15 * time.Minute
+)
+
 // EmailVerificationClaims represents JWT claims for email verification tokens
 type EmailVerificationClaims struct {
 	UserID string `json:"user_id"`
@@ -44,6 +60,37 @@ type AuthHandler struct {
 	emailTemplates    *services.EmailTemplates
 	baseURL           string
 	encryptionKeyRepo *database.EncryptionKeyRepository
+	rateLimiter       services.RateLimiter
+}
+
+// SetRateLimiter sets the rate limiter for auth-specific rate limiting.
+// This is optional - if not set, auth rate limits are not enforced.
+func (h *AuthHandler) SetRateLimiter(limiter services.RateLimiter) {
+	h.rateLimiter = limiter
+}
+
+// checkAuthRateLimit checks per-endpoint auth rate limits.
+// Returns true if the request is allowed, false if rate-limited (429 already written).
+func (h *AuthHandler) checkAuthRateLimit(w http.ResponseWriter, r *http.Request, action string, limit int, window time.Duration) bool {
+	if h.rateLimiter == nil {
+		return true
+	}
+
+	clientIP := middleware.GetClientIP(r)
+	key := fmt.Sprintf("auth:%s:%s", action, clientIP)
+
+	allowed, _, _, err := h.rateLimiter.Allow(r.Context(), key, limit, window)
+	if err != nil {
+		// On error, allow the request rather than blocking legitimate users
+		log.Printf("WARN: auth rate limit check failed for %s: %v", key, err)
+		return true
+	}
+
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests. Please try again later.")
+		return false
+	}
+	return true
 }
 
 // NewAuthHandler creates a new auth handler
@@ -99,6 +146,10 @@ func NewAuthHandlerWithEmailService(
 
 // Register handles user registration
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuthRateLimit(w, r, "register", authRegisterLimit, authRegisterWindow) {
+		return
+	}
+
 	var req models.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
@@ -208,6 +259,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 // Login handles user login
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuthRateLimit(w, r, "login", authLoginLimit, authLoginWindow) {
+		return
+	}
+
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
@@ -246,8 +301,34 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if account is locked
+	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
+		appSentry.IncrementCounter("auth.login_failure", 1, "reason", "account_locked")
+		writeError(w, http.StatusTooManyRequests, "account_locked", "Account is temporarily locked due to too many failed login attempts. Please try again later.")
+		return
+	}
+
 	// Check password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		// Increment failed login counter
+		failedCount, incrErr := h.userRepo.IncrementFailedLoginAttempts(r.Context(), user.ID)
+		if incrErr != nil {
+			log.Printf("WARN: failed to increment login attempts for user %s: %v", user.ID, incrErr)
+		}
+
+		// Lock account if threshold exceeded
+		if failedCount >= accountLockoutThreshold {
+			lockUntil := time.Now().Add(accountLockoutDuration)
+			if lockErr := h.userRepo.LockAccount(r.Context(), user.ID, lockUntil); lockErr != nil {
+				log.Printf("WARN: failed to lock account for user %s: %v", user.ID, lockErr)
+			}
+			if h.auditRepo != nil {
+				logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionAccountLocked, nil, nil, map[string]string{
+					"failed_attempts": fmt.Sprintf("%d", failedCount),
+				}), "account_locked")
+			}
+		}
+
 		// Audit log: login failed (wrong password)
 		if h.auditRepo != nil {
 			logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionUserLoginFailed, nil, nil, map[string]string{
@@ -257,6 +338,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		appSentry.IncrementCounter("auth.login_failure", 1, "reason", "invalid_password")
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials")
 		return
+	}
+
+	// Reset failed login attempts on successful password verification
+	if user.FailedLoginAttempts > 0 {
+		if resetErr := h.userRepo.ResetFailedLoginAttempts(r.Context(), user.ID); resetErr != nil {
+			log.Printf("WARN: failed to reset login attempts for user %s: %v", user.ID, resetErr)
+		}
 	}
 
 	// Determine token type based on email verification and MFA status
@@ -504,6 +592,10 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 
 // ResendVerificationEmail resends the verification email
 func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuthRateLimit(w, r, "resend-verification", authResendVerifyLimit, authResendVerifyWindow) {
+		return
+	}
+
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
@@ -618,6 +710,10 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // ForgotPassword handles password reset request (sends email with reset link)
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuthRateLimit(w, r, "forgot-password", authForgotPasswordLimit, authForgotPasswordWindow) {
+		return
+	}
+
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -725,6 +821,10 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 // ResetPassword handles password reset with a valid token
 func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.checkAuthRateLimit(w, r, "reset-password", authResetPasswordLimit, authResetPasswordWindow) {
+		return
+	}
+
 	var req struct {
 		Token    string `json:"token"`
 		Password string `json:"password"`
