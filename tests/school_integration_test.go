@@ -182,9 +182,13 @@ func TestIntegration_BootstrapModeTransition(t *testing.T) {
 	schoolID := suite.createSchool("Integration Bootstrap School", "CA")
 	defer suite.cleanupSchools(schoolID)
 
+	// Register a user for authenticated requests
+	viewerID, viewerToken := suite.registerOrGetUser("integ_bs_viewer", "integ_bs_viewer@test.com", "securepassword123")
+	defer suite.cleanup(viewerID)
+
 	t.Run("new school starts in bootstrap mode", func(t *testing.T) {
-		// Check the school details (public endpoint)
-		resp := suite.request("GET", "/api/v1/schools/"+schoolID, nil, "")
+		// Check the school details
+		resp := suite.request("GET", "/api/v1/schools/"+schoolID, nil, viewerToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -288,7 +292,7 @@ func TestIntegration_BootstrapModeTransition(t *testing.T) {
 		}()
 
 		// Check school details
-		resp := suite.request("GET", "/api/v1/schools/"+schoolID, nil, "")
+		resp := suite.request("GET", "/api/v1/schools/"+schoolID, nil, viewerToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {

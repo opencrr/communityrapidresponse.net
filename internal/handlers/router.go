@@ -256,14 +256,6 @@ func (r *Router) authenticated(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// optionalAuth wraps a handler with optional authentication middleware.
-// If a valid token is present, claims are set in context; otherwise the handler runs without claims.
-func (r *Router) optionalAuth(handler http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		r.jwtAuth.OptionalAuthenticate(http.HandlerFunc(handler)).ServeHTTP(w, req)
-	}
-}
-
 // authenticatedMFASetup wraps a handler with authentication for MFA setup token
 func (r *Router) authenticatedMFASetup(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {

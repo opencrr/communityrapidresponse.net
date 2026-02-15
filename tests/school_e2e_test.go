@@ -22,8 +22,12 @@ func TestE2E_SchoolSearch(t *testing.T) {
 
 	defer suite.cleanupSchools(schoolA, schoolB, schoolC)
 
+	// Register a user for authenticated requests
+	searchUserID, searchToken := suite.registerOrGetUser("e2e_school_searcher", "e2e_school_searcher@test.com", "securepassword123")
+	defer suite.cleanup(searchUserID)
+
 	t.Run("search by name", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/schools?query=E2E", nil, "")
+		resp := suite.request("GET", "/api/v1/schools?query=E2E", nil, searchToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -39,7 +43,7 @@ func TestE2E_SchoolSearch(t *testing.T) {
 	})
 
 	t.Run("search with state filter", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/schools?query=E2E&state=CA", nil, "")
+		resp := suite.request("GET", "/api/v1/schools?query=E2E&state=CA", nil, searchToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -57,7 +61,7 @@ func TestE2E_SchoolSearch(t *testing.T) {
 	})
 
 	t.Run("search with pagination", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/schools?query=E2E&limit=1&page=1", nil, "")
+		resp := suite.request("GET", "/api/v1/schools?query=E2E&limit=1&page=1", nil, searchToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -77,7 +81,7 @@ func TestE2E_SchoolSearch(t *testing.T) {
 	})
 
 	t.Run("empty search returns empty array", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/schools?query=NonexistentSchoolXYZ999", nil, "")
+		resp := suite.request("GET", "/api/v1/schools?query=NonexistentSchoolXYZ999", nil, searchToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -445,8 +449,12 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 		suite.cleanupDistricts(districtID)
 	}()
 
+	// Register a user for authenticated requests
+	distViewerID, distViewerToken := suite.registerOrGetUser("e2e_dist_viewer", "e2e_dist_viewer@test.com", "securepassword123")
+	defer suite.cleanup(distViewerID)
+
 	t.Run("search districts by name", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/school-districts?query=E2E+Test+Unified", nil, "")
+		resp := suite.request("GET", "/api/v1/school-districts?query=E2E+Test+Unified", nil, distViewerToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
@@ -462,7 +470,7 @@ func TestE2E_DistrictSearchAndDetail(t *testing.T) {
 	})
 
 	t.Run("get district details includes schools", func(t *testing.T) {
-		resp := suite.request("GET", "/api/v1/school-districts/"+districtID, nil, "")
+		resp := suite.request("GET", "/api/v1/school-districts/"+districtID, nil, distViewerToken)
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
