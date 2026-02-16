@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -119,7 +119,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 1: Validate address with Postgrid (address in memory only)
 	validationResult, err := h.postgridService.ValidateAddress(r.Context(), &req.Address)
 	if err != nil {
-		log.Printf("ERROR: Postgrid address validation failed: %v", err)
+		slog.Error("postgrid address validation failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "address_validation")
 		writeError(w, http.StatusBadGateway, "address_validation_failed", "Failed to validate address")
 		return
@@ -176,7 +176,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 2: Geocode address with Mapbox (address still in memory only)
 	geocodeResult, err := h.mapboxService.GeocodeAddress(r.Context(), &req.Address)
 	if err != nil {
-		log.Printf("ERROR: Mapbox geocoding failed: %v", err)
+		slog.Error("mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
 		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
 		return
@@ -304,7 +304,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 6: Send postcard via Postgrid (address sent to Postgrid, not stored by us)
 	postgridRequestID, err := h.postgridService.SendPostcard(r.Context(), &req.Address, code, postcardRef)
 	if err != nil {
-		log.Printf("ERROR: Postgrid postcard sending failed: %v", err)
+		slog.Error("postgrid postcard sending failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "send_postcard")
 		// Clean up the reserved row since the postcard was never sent
 		_ = h.verificationRepo.Delete(r.Context(), verificationReq.ID)
@@ -316,7 +316,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Non-fatal: the postcard was sent and the DB row exists, so the user's
 	// verification flow works regardless. Nothing branches on this column's value.
 	if err := h.verificationRepo.UpdatePostgridRequestID(r.Context(), verificationReq.ID, postgridRequestID); err != nil {
-		log.Printf("ERROR: Failed to update postgrid_request_id for verification %s: %v", verificationReq.ID, err)
+		slog.Error("failed to update postgrid_request_id", "verification_id", verificationReq.ID, "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "update_postgrid_id")
 	}
 
@@ -434,7 +434,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			// Add user to region
 			if verificationReq.RegionID != nil {
 				if err := h.regionRepo.AddUserToRegionTx(r.Context(), tx, claims.UserID, *verificationReq.RegionID, isAdmin); err != nil {
-					log.Printf("WARN: Failed to add user to region: %v", err)
+					slog.Warn("failed to add user to region", "error", err)
 				}
 			}
 
@@ -442,9 +442,9 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			if isAdmin {
 				adminUpgradeCount, err := h.regionRepo.UpgradeVerifiedUserRegionsToAdminTx(r.Context(), tx, claims.UserID)
 				if err != nil {
-					log.Printf("WARN: Failed to upgrade verified user_regions to admin for user %s: %v", claims.UserID, err)
+					slog.Warn("failed to upgrade verified user_regions to admin", "user_id", claims.UserID, "error", err)
 				} else if adminUpgradeCount > 0 {
-					log.Printf("INFO: Upgraded %d verified user_regions to admin for user %s after postcard verification", adminUpgradeCount, claims.UserID)
+					slog.Info("upgraded verified user_regions to admin after postcard verification", "count", adminUpgradeCount, "user_id", claims.UserID)
 				}
 			}
 
@@ -521,7 +521,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 	// Queue verification complete notification
 	if h.notificationService != nil && verificationReq.RegionID != nil {
 		if err := h.notificationService.QueueVerificationComplete(r.Context(), claims.UserID, *verificationReq.RegionID); err != nil {
-			log.Printf("WARN: Failed to queue verification complete notification: %v", err)
+			slog.Warn("failed to queue verification complete notification", "error", err)
 		}
 	}
 
@@ -567,7 +567,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	// Geocode address with Mapbox (address in memory only)
 	geocodeResult, err := h.mapboxService.GeocodeAddress(r.Context(), &req.Address)
 	if err != nil {
-		log.Printf("ERROR: Mapbox geocoding failed: %v", err)
+		slog.Error("mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
 		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
 		return
@@ -962,7 +962,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				isAdmin := vouchee.PostcardVerified
 
 				if err := h.regionRepo.UpgradeUserRegionToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
-					log.Printf("ERROR: Failed to upgrade user_region: %v", err)
+					slog.Error("failed to upgrade user_region", "error", err)
 					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region")
 				}
 			}
@@ -1035,7 +1035,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Queue vouch received notification
 	if h.notificationService != nil {
 		if err := h.notificationService.QueueVouchReceived(r.Context(), vouchedUserID, claims.UserID, regionID); err != nil {
-			log.Printf("WARN: Failed to queue vouch received notification: %v", err)
+			slog.Warn("failed to queue vouch received notification", "error", err)
 		}
 	}
 
@@ -1047,7 +1047,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Queue vouch complete notification if auto-upgraded
 	if autoUpgraded && h.notificationService != nil {
 		if err := h.notificationService.QueueVouchComplete(r.Context(), vouchedUserID, regionID); err != nil {
-			log.Printf("WARN: Failed to queue vouch complete notification: %v", err)
+			slog.Warn("failed to queue vouch complete notification", "error", err)
 		}
 	}
 
@@ -1079,7 +1079,7 @@ func (h *VerificationHandler) GetVouchStatus(w http.ResponseWriter, r *http.Requ
 	bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 	if err != nil {
 		// Non-fatal: log and continue with default values
-		log.Printf("WARN: Failed to check bootstrap mode: %v", err)
+		slog.Warn("failed to check bootstrap mode", "error", err)
 		bootstrapMode = false
 		adminCount = 0
 	}
@@ -1245,10 +1245,10 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 		// Auto-upgrade if user now meets the threshold (e.g., region exited bootstrap mode)
 		if vouchCount >= vouchesRequired && !user.VouchVerified {
 			if err := h.userRepo.SetVouchVerified(r.Context(), claims.UserID, true); err != nil {
-				log.Printf("ERROR: Failed to auto-upgrade vouch verification: %v", err)
+				slog.Error("failed to auto-upgrade vouch verification", "error", err)
 				_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "auto_upgrade_vouch")
 			} else {
-				log.Printf("INFO: Auto-upgraded user %s to vouch-verified (had %d vouches, needed %d)", claims.UserID, vouchCount, vouchesRequired)
+				slog.Info("auto-upgraded user to vouch-verified", "user_id", claims.UserID, "vouch_count", vouchCount, "vouches_required", vouchesRequired)
 				// Refresh user data and update response
 				user, _ = h.userRepo.GetByID(r.Context(), claims.UserID)
 				response["vouch_verified"] = true
@@ -1324,7 +1324,7 @@ func (h *VerificationHandler) createRegionHierarchy(ctx context.Context, geocode
 		localityRegionID, err = h.getOrCreateLocalityRegion(ctx, geocodeResult, cityRegionID, userID)
 		if err != nil {
 			// Non-fatal: log and continue without locality
-			log.Printf("WARN: Failed to create locality region: %v", err)
+			slog.Warn("failed to create locality region", "error", err)
 		}
 	}
 
@@ -1339,7 +1339,7 @@ func (h *VerificationHandler) createRegionHierarchy(ctx context.Context, geocode
 		neighborhoodRegionID, err = h.getOrCreateNeighborhoodRegion(ctx, geocodeResult, parentID, userID)
 		if err != nil {
 			// Non-fatal: log and continue without neighborhood
-			log.Printf("WARN: Failed to create neighborhood region: %v", err)
+			slog.Warn("failed to create neighborhood region", "error", err)
 		}
 	}
 
@@ -1358,12 +1358,12 @@ func (h *VerificationHandler) getOrCreateStateRegion(ctx context.Context, stateN
 	// Quick check outside transaction
 	existingState, err := h.regionRepo.GetByNameAndType(ctx, stateName, models.RegionTypeState)
 	if err == nil && existingState != nil {
-		log.Printf("INFO: Found existing state region: %s (ID: %s)", stateName, existingState.ID)
+		slog.Info("found existing state region", "name", stateName, "region_id", existingState.ID)
 		return existingState.ID, nil
 	}
 
 	// State doesn't exist - fetch boundary (external API call before transaction)
-	log.Printf("INFO: Creating new state region: %s", stateName)
+	slog.Info("creating new state region", "name", stateName)
 	stateBoundary, err := h.mapboxService.GetStateBoundary(ctx, stateName, lat, lng)
 	if err != nil {
 		return "", err
@@ -1393,14 +1393,14 @@ func (h *VerificationHandler) getOrCreateStateRegion(ctx context.Context, stateN
 		if txErr != nil {
 			return "", txErr
 		}
-		log.Printf("INFO: State region: %s (ID: %s)", stateBoundary.Name, resultID)
+		slog.Info("state region", "name", stateBoundary.Name, "region_id", resultID)
 		return resultID, nil
 	}
 
 	if err := h.regionRepo.Create(ctx, newState, stateBoundary.GeoJSON); err != nil {
 		return "", err
 	}
-	log.Printf("INFO: Created state region: %s (ID: %s)", newState.Name, newState.ID)
+	slog.Info("created state region", "name", newState.Name, "region_id", newState.ID)
 	return newState.ID, nil
 }
 
@@ -1417,11 +1417,11 @@ func (h *VerificationHandler) getOrCreateCountyRegion(ctx context.Context, state
 	// Quick check outside transaction
 	existingCounty, err := h.regionRepo.GetByNameAndType(ctx, countyName, models.RegionTypeCounty)
 	if err == nil && existingCounty != nil {
-		log.Printf("INFO: Found existing county region: %s (ID: %s)", countyName, existingCounty.ID)
+		slog.Info("found existing county region", "name", countyName, "region_id", existingCounty.ID)
 		return existingCounty.ID, nil
 	}
 
-	log.Printf("INFO: Creating new county region: %s", countyName)
+	slog.Info("creating new county region", "name", countyName)
 	newCounty := &models.GeographicRegion{
 		Name:           countyName,
 		RegionType:     models.RegionTypeCounty,
@@ -1446,14 +1446,14 @@ func (h *VerificationHandler) getOrCreateCountyRegion(ctx context.Context, state
 		if txErr != nil {
 			return "", txErr
 		}
-		log.Printf("INFO: County region: %s (ID: %s)", countyName, resultID)
+		slog.Info("county region", "name", countyName, "region_id", resultID)
 		return resultID, nil
 	}
 
 	if err := h.regionRepo.Create(ctx, newCounty, countyBoundary.GeoJSON); err != nil {
 		return "", err
 	}
-	log.Printf("INFO: Created county region: %s (ID: %s)", newCounty.Name, newCounty.ID)
+	slog.Info("created county region", "name", newCounty.Name, "region_id", newCounty.ID)
 	return newCounty.ID, nil
 }
 
@@ -1475,7 +1475,7 @@ func (h *VerificationHandler) getOrCreateCityRegion(ctx context.Context, geocode
 			PostalCode: address.PostalCode,
 			Country:    address.Country,
 		}
-		log.Printf("INFO: Locality detected (%s), using geocoded city name: %s", geocodeResult.LocalityName, geocodeResult.BoundaryName)
+		slog.Info("locality detected, using geocoded city name", "locality", geocodeResult.LocalityName, "city_name", geocodeResult.BoundaryName)
 	}
 
 	// External API call before transaction
@@ -1492,11 +1492,11 @@ func (h *VerificationHandler) getOrCreateCityRegion(ctx context.Context, geocode
 	// Quick check outside transaction
 	existingCity, err := h.regionRepo.GetByNameAndType(ctx, cityName, models.RegionTypeCity)
 	if err == nil && existingCity != nil {
-		log.Printf("INFO: Found existing city region: %s (ID: %s)", cityName, existingCity.ID)
+		slog.Info("found existing city region", "name", cityName, "region_id", existingCity.ID)
 		return existingCity.ID, nil
 	}
 
-	log.Printf("INFO: Creating new city region: %s", cityName)
+	slog.Info("creating new city region", "name", cityName)
 	newCity := &models.GeographicRegion{
 		Name:           cityName,
 		RegionType:     models.RegionTypeCity,
@@ -1521,14 +1521,14 @@ func (h *VerificationHandler) getOrCreateCityRegion(ctx context.Context, geocode
 		if txErr != nil {
 			return "", txErr
 		}
-		log.Printf("INFO: City region: %s (ID: %s)", cityName, resultID)
+		slog.Info("city region", "name", cityName, "region_id", resultID)
 		return resultID, nil
 	}
 
 	if err := h.regionRepo.Create(ctx, newCity, cityBoundary.GeoJSON); err != nil {
 		return "", err
 	}
-	log.Printf("INFO: Created city region: %s (ID: %s)", newCity.Name, newCity.ID)
+	slog.Info("created city region", "name", newCity.Name, "region_id", newCity.ID)
 	return newCity.ID, nil
 }
 
@@ -1548,12 +1548,12 @@ func (h *VerificationHandler) getOrCreateLocalityRegion(ctx context.Context, geo
 	// Quick check outside transaction
 	existingLocality, err := h.regionRepo.GetByNameTypeAndParent(ctx, localityName, models.RegionTypeLocality, cityRegionID)
 	if err == nil && existingLocality != nil {
-		log.Printf("INFO: Found existing locality region: %s (ID: %s)", localityName, existingLocality.ID)
+		slog.Info("found existing locality region", "name", localityName, "region_id", existingLocality.ID)
 		return existingLocality.ID, nil
 	}
 
 	// External API call before transaction
-	log.Printf("INFO: Creating new locality region: %s", localityName)
+	slog.Info("creating new locality region", "name", localityName)
 	localityBoundary, err := h.mapboxService.GetLocalityBoundary(ctx, localityName, cityName, stateName, lat, lng)
 	if err != nil {
 		return "", err
@@ -1585,7 +1585,7 @@ func (h *VerificationHandler) getOrCreateLocalityRegion(ctx context.Context, geo
 			return "", txErr
 		}
 		hasGeometry := localityBoundary.GeoJSON != ""
-		log.Printf("INFO: Locality region: %s (ID: %s, hasGeometry: %v)", localityBoundary.Name, resultID, hasGeometry)
+		slog.Info("locality region", "name", localityBoundary.Name, "region_id", resultID, "has_geometry", hasGeometry)
 		return resultID, nil
 	}
 
@@ -1593,7 +1593,7 @@ func (h *VerificationHandler) getOrCreateLocalityRegion(ctx context.Context, geo
 		return "", err
 	}
 	hasGeometry := localityBoundary.GeoJSON != ""
-	log.Printf("INFO: Created locality region: %s (ID: %s, hasGeometry: %v)", newLocality.Name, newLocality.ID, hasGeometry)
+	slog.Info("created locality region", "name", newLocality.Name, "region_id", newLocality.ID, "has_geometry", hasGeometry)
 	return newLocality.ID, nil
 }
 
@@ -1614,12 +1614,12 @@ func (h *VerificationHandler) getOrCreateNeighborhoodRegion(ctx context.Context,
 	// Quick check outside transaction
 	existingNeighborhood, err := h.regionRepo.GetByNameTypeAndParent(ctx, neighborhoodName, models.RegionTypeNeighborhood, parentRegionID)
 	if err == nil && existingNeighborhood != nil {
-		log.Printf("INFO: Found existing neighborhood region: %s (ID: %s)", neighborhoodName, existingNeighborhood.ID)
+		slog.Info("found existing neighborhood region", "name", neighborhoodName, "region_id", existingNeighborhood.ID)
 		return existingNeighborhood.ID, nil
 	}
 
 	// External API call before transaction
-	log.Printf("INFO: Creating new neighborhood region: %s", neighborhoodName)
+	slog.Info("creating new neighborhood region", "name", neighborhoodName)
 	neighborhoodBoundary, err := h.mapboxService.GetNeighborhoodBoundary(ctx, neighborhoodName, localityName, cityName, stateName, lat, lng)
 	if err != nil {
 		return "", err
@@ -1651,7 +1651,7 @@ func (h *VerificationHandler) getOrCreateNeighborhoodRegion(ctx context.Context,
 			return "", txErr
 		}
 		hasGeometry := neighborhoodBoundary.GeoJSON != ""
-		log.Printf("INFO: Neighborhood region: %s (ID: %s, hasGeometry: %v)", neighborhoodBoundary.Name, resultID, hasGeometry)
+		slog.Info("neighborhood region", "name", neighborhoodBoundary.Name, "region_id", resultID, "has_geometry", hasGeometry)
 		return resultID, nil
 	}
 
@@ -1659,7 +1659,7 @@ func (h *VerificationHandler) getOrCreateNeighborhoodRegion(ctx context.Context,
 		return "", err
 	}
 	hasGeometry := neighborhoodBoundary.GeoJSON != ""
-	log.Printf("INFO: Created neighborhood region: %s (ID: %s, hasGeometry: %v)", newNeighborhood.Name, newNeighborhood.ID, hasGeometry)
+	slog.Info("created neighborhood region", "name", newNeighborhood.Name, "region_id", newNeighborhood.ID, "has_geometry", hasGeometry)
 	return newNeighborhood.ID, nil
 }
 

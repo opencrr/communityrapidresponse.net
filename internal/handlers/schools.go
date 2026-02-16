@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -463,7 +463,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 
 				if shouldBeAdmin {
 					if txErr := h.schoolRepo.SetUserSchoolAdminTx(r.Context(), tx, vouchedUserID, schoolID, true); txErr != nil {
-						log.Printf("WARN: Failed to set user as school admin: %v", txErr)
+						slog.Warn("failed to set user as school admin", "error", txErr)
 					}
 				}
 			}
@@ -626,7 +626,7 @@ func (h *SchoolHandler) GetVouchStatus(w http.ResponseWriter, r *http.Request) {
 	// Check bootstrap mode for this school
 	bootstrapMode, adminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
 	if err != nil {
-		log.Printf("WARN: Failed to check bootstrap mode: %v", err)
+		slog.Warn("failed to check bootstrap mode", "error", err)
 		bootstrapMode = false
 		adminCount = 0
 	}
@@ -967,10 +967,10 @@ func (h *SchoolHandler) GetDistrict(w http.ResponseWriter, r *http.Request) {
 	if district.Geometry == nil && district.NCESID != "" && h.ncesService != nil {
 		geoJSONStr, fetchErr := h.ncesService.FetchDistrictBoundary(r.Context(), district.NCESID)
 		if fetchErr != nil {
-			log.Printf("WARN: Failed to fetch district boundary for %s: %v", district.NCESID, fetchErr)
+			slog.Warn("failed to fetch district boundary", "nces_id", district.NCESID, "error", fetchErr)
 		} else if geoJSONStr != "" {
 			if storeErr := h.districtRepo.UpdateGeometry(r.Context(), district.NCESID, geoJSONStr); storeErr != nil {
-				log.Printf("WARN: Failed to store district boundary for %s: %v", district.NCESID, storeErr)
+				slog.Warn("failed to store district boundary", "nces_id", district.NCESID, "error", storeErr)
 			}
 			var geom models.GeoJSONGeometry
 			if jsonErr := json.Unmarshal([]byte(geoJSONStr), &geom); jsonErr == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/handlers"
+	"github.com/opencrr/communityrapidresponse.net/internal/logging"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 	"github.com/opencrr/communityrapidresponse.net/internal/services"
@@ -25,10 +27,13 @@ import (
 var version = "dev"
 
 func main() {
-	log.Printf("Community Rapid Response %s", version)
-
 	// Load configuration
 	cfg := config.Load()
+
+	// Initialize structured logging early (before any slog calls)
+	logging.Init(cfg.Log.Format, cfg.Log.Level)
+
+	slog.Info("starting community rapid response", "version", version)
 
 	// Use build-embedded version as Sentry release if not overridden by env var
 	if cfg.Sentry.Release == "" {
@@ -39,10 +44,10 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error:\n  - %v", err)
 	}
-	log.Printf("Environment: %s", cfg.Env)
+	slog.Info("configuration loaded", "environment", cfg.Env)
 
 	if !cfg.MFA.Required {
-		log.Println("WARNING: MFA is disabled (MFA_REQUIRED=false). This should only be used in development.")
+		slog.Warn("MFA is disabled, should only be used in development", "mfa_required", false)
 	}
 
 	// Initialize Sentry error tracking
@@ -58,7 +63,7 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	log.Println("Connected to database")
+	slog.Info("connected to database")
 
 	// Initialize repositories
 	userRepo := database.NewUserRepository(db)
@@ -125,12 +130,12 @@ func main() {
 			dbLimiter := services.NewDBRateLimiter(db.DB)
 			dbLimiter.StartCleanupWorker(context.Background(), 5*time.Minute, time.Hour)
 			rateLimiter = dbLimiter
-			log.Printf("Rate limiting enabled (database backend): %d requests per %d seconds", cfg.RateLimit.IPLimit, cfg.RateLimit.IPWindowSecs)
+			slog.Info("rate limiting enabled", "backend", "database", "limit", cfg.RateLimit.IPLimit, "window_secs", cfg.RateLimit.IPWindowSecs)
 		} else {
 			memLimiter := services.NewInMemoryRateLimiter()
 			memLimiter.StartCleanupWorker(context.Background(), 5*time.Minute, time.Hour)
 			rateLimiter = memLimiter
-			log.Printf("Rate limiting enabled (in-memory backend): %d requests per %d seconds", cfg.RateLimit.IPLimit, cfg.RateLimit.IPWindowSecs)
+			slog.Info("rate limiting enabled", "backend", "in-memory", "limit", cfg.RateLimit.IPLimit, "window_secs", cfg.RateLimit.IPWindowSecs)
 		}
 		rateLimitConfig = &handlers.RateLimitOptions{
 			Enabled:    true,
@@ -139,7 +144,7 @@ func main() {
 		}
 	} else {
 		rateLimiter = services.NewNoOpRateLimiter()
-		log.Println("WARNING: Rate limiting is disabled")
+		slog.Warn("rate limiting is disabled")
 	}
 
 	// Initialize email service
@@ -148,9 +153,9 @@ func main() {
 		log.Fatalf("Failed to initialize email service: %v", err)
 	}
 	if cfg.Email.Enabled {
-		log.Printf("Email verification enabled via %s backend", emailService.Backend())
+		slog.Info("email verification enabled", "backend", emailService.Backend())
 	} else {
-		log.Printf("WARNING: Email verification is disabled (EMAIL_ENABLED=false). Using %s backend for logging.", emailService.Backend())
+		slog.Warn("email verification disabled", "backend", emailService.Backend())
 	}
 
 	// Initialize notification queue and service
@@ -228,9 +233,9 @@ func main() {
 		cfg.Bootstrap.CooldownMinutes,
 	)
 	if cfg.Bootstrap.CooldownEnabled {
-		log.Printf("Bootstrap vouch cooldown enabled: %d minutes", cfg.Bootstrap.CooldownMinutes)
+		slog.Info("bootstrap vouch cooldown enabled", "cooldown_minutes", cfg.Bootstrap.CooldownMinutes)
 	} else {
-		log.Println("Bootstrap vouch cooldown disabled")
+		slog.Info("bootstrap vouch cooldown disabled")
 	}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, auditRepo)
 	membershipHandler := handlers.NewMembershipHandler(db, membershipRepo, regionRepo, userRepo, auditRepo)
@@ -342,7 +347,7 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Starting Community Rapid Response server on %s", addr)
+		slog.Info("server starting", "addr", addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
@@ -353,7 +358,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	slog.Info("shutting down server")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -363,5 +368,5 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server stopped")
+	slog.Info("server stopped")
 }

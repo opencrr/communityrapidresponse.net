@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -54,7 +54,7 @@ func (r *AuditRepository) Log(ctx context.Context, userID *string, action string
 	if details != nil {
 		detailsJSON, err = json.Marshal(details)
 		if err != nil {
-			log.Printf("WARN: Failed to marshal audit log details: %v", err)
+			slog.Warn("failed to marshal audit log details", "error", err)
 			detailsJSON = nil
 		}
 	}
@@ -77,7 +77,7 @@ func (r *AuditRepository) Log(ctx context.Context, userID *string, action string
 	)
 
 	if err != nil {
-		log.Printf("ERROR: Failed to create audit log entry: %v", err)
+		slog.Error("failed to create audit log entry", "error", err)
 		return err
 	}
 
@@ -258,12 +258,12 @@ func (r *AuditRepository) StartCleanupWorker(ctx context.Context, interval, rete
 		checkInID := appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusInProgress, nil, monitorConfig)
 		deleted, err := r.DeleteOlderThan(ctx, retention)
 		if err != nil {
-			log.Printf("ERROR: Audit log cleanup failed: %v", err)
+			slog.Error("audit log cleanup failed", "error", err)
 			_ = appSentry.CaptureError(err, "component", "audit_worker", "operation", "cleanup")
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusError, checkInID, monitorConfig)
 		} else {
 			if deleted > 0 {
-				log.Printf("INFO: Audit log cleanup deleted %d old entries", deleted)
+				slog.Info("audit log cleanup deleted old entries", "count", deleted)
 			}
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusOK, checkInID, monitorConfig)
 		}
@@ -279,7 +279,7 @@ func (r *AuditRepository) StartCleanupWorker(ctx context.Context, interval, rete
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("INFO: Audit log cleanup worker stopped")
+				slog.Info("audit log cleanup worker stopped")
 				return
 			case <-ticker.C:
 				runCleanup()
@@ -287,5 +287,5 @@ func (r *AuditRepository) StartCleanupWorker(ctx context.Context, interval, rete
 		}
 	}()
 
-	log.Printf("INFO: Audit log cleanup worker started (interval: %v, retention: %v)", interval, retention)
+	slog.Info("audit log cleanup worker started", "interval", interval, "retention", retention)
 }

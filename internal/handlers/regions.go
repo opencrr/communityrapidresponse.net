@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -187,7 +187,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Add bootstrap mode info
 	bootstrapMode, fullAdminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), id)
 	if err != nil {
-		log.Printf("WARN: Failed to check bootstrap mode: %v", err)
+		slog.Warn("failed to check bootstrap mode", "error", err)
 		// Non-fatal: continue with default values
 	} else {
 		region.BootstrapMode = bootstrapMode
@@ -199,7 +199,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if claims.IsSuperuser {
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, id)
 		if err != nil {
-			log.Printf("WARN: Failed to check superuser membership: %v", err)
+			slog.Warn("failed to check superuser membership", "error", err)
 		} else {
 			region.IsMember = isMember
 		}
@@ -219,8 +219,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug logging for region creation authorization
-	log.Printf("DEBUG: Region create - UserID=%s Email=%s IsSuperuser=%v PostcardVerified=%v VouchVerified=%v Tier=%d",
-		claims.UserID, claims.Email, claims.IsSuperuser, claims.PostcardVerified, claims.VouchVerified, claims.VerificationTier)
+	slog.Debug("region create authorization", "user_id", claims.UserID, "email", claims.Email, "is_superuser", claims.IsSuperuser, "postcard_verified", claims.PostcardVerified, "vouch_verified", claims.VouchVerified, "tier", claims.VerificationTier)
 
 	// Require at least Tier 1 (postcard verified)
 	if claims.VerificationTier < models.TierPostcard {
@@ -277,7 +276,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// Get user's admin regions to include in error response
 			adminRegions, err := h.regionRepo.GetUserAdminRegions(r.Context(), claims.UserID)
 			if err != nil {
-				log.Printf("WARN: Failed to get admin regions for error response: %v", err)
+				slog.Warn("failed to get admin regions for error response", "error", err)
 				adminRegions = nil
 			}
 
@@ -304,7 +303,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if parentRegionID == nil || *parentRegionID == "" {
 		autoParentID, err := h.autoCreateParentRegions(r.Context(), req, claims.UserID)
 		if err != nil {
-			log.Printf("ERROR: Failed to auto-create parent regions: %v", err)
+			slog.Error("failed to auto-create parent regions", "error", err)
 			_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "region", "operation", "auto_create_parents")
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 			return
@@ -333,7 +332,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Add creator as admin of the region
 	if err := h.regionRepo.AddUserToRegion(r.Context(), claims.UserID, region.ID, true); err != nil {
-		log.Printf("WARN: Failed to add creator as admin: %v", err)
+		slog.Warn("failed to add creator as admin", "error", err)
 	}
 
 	// Audit log: region created
@@ -508,7 +507,7 @@ func (h *RegionHandler) autoCreateParentRegions(ctx context.Context, req models.
 				return nil, errors.New("could not determine state from location: " + err.Error())
 			}
 			stateName = detectedState
-			log.Printf("INFO: Auto-detected state: %s", stateName)
+			slog.Info("auto-detected state", "state", stateName)
 		}
 
 		stateID, err := h.getOrCreateStateRegion(ctx, stateName, lat, lng, userID)
@@ -534,7 +533,7 @@ func (h *RegionHandler) autoCreateParentRegions(ctx context.Context, req models.
 			if stateName == "" {
 				stateName = countyBoundary.State
 			}
-			log.Printf("INFO: Auto-detected county: %s, state: %s", countyName, stateName)
+			slog.Info("auto-detected county and state", "county", countyName, "state", stateName)
 		}
 
 		// First, get or create the state
@@ -580,12 +579,12 @@ func (h *RegionHandler) getOrCreateStateRegion(ctx context.Context, stateName st
 	// Check if state region already exists
 	existingState, err := h.regionRepo.GetByNameAndType(ctx, stateName, models.RegionTypeState)
 	if err == nil && existingState != nil {
-		log.Printf("INFO: Found existing state region: %s (ID: %s)", stateName, existingState.ID)
+		slog.Info("found existing state region", "name", stateName, "region_id", existingState.ID)
 		return existingState.ID, nil
 	}
 
 	// State doesn't exist - fetch boundary and create it
-	log.Printf("INFO: Creating new state region: %s", stateName)
+	slog.Info("creating new state region", "name", stateName)
 	stateBoundary, err := h.mapboxService.GetStateBoundary(ctx, stateName, lat, lng)
 	if err != nil {
 		return "", err
@@ -601,7 +600,7 @@ func (h *RegionHandler) getOrCreateStateRegion(ctx context.Context, stateName st
 		return "", err
 	}
 
-	log.Printf("INFO: Created state region: %s (ID: %s)", newState.Name, newState.ID)
+	slog.Info("created state region", "name", newState.Name, "region_id", newState.ID)
 	return newState.ID, nil
 }
 
@@ -610,12 +609,12 @@ func (h *RegionHandler) getOrCreateCountyRegion(ctx context.Context, countyName,
 	// Check if county region already exists
 	existingCounty, err := h.regionRepo.GetByNameAndType(ctx, countyName, models.RegionTypeCounty)
 	if err == nil && existingCounty != nil {
-		log.Printf("INFO: Found existing county region: %s (ID: %s)", countyName, existingCounty.ID)
+		slog.Info("found existing county region", "name", countyName, "region_id", existingCounty.ID)
 		return existingCounty.ID, nil
 	}
 
 	// County doesn't exist - fetch boundary and create it
-	log.Printf("INFO: Creating new county region: %s", countyName)
+	slog.Info("creating new county region", "name", countyName)
 	countyBoundary, err := h.mapboxService.GetCountyBoundary(ctx, countyName, stateName, lat, lng)
 	if err != nil {
 		return "", err
@@ -632,7 +631,7 @@ func (h *RegionHandler) getOrCreateCountyRegion(ctx context.Context, countyName,
 		return "", err
 	}
 
-	log.Printf("INFO: Created county region: %s (ID: %s)", newCounty.Name, newCounty.ID)
+	slog.Info("created county region", "name", newCounty.Name, "region_id", newCounty.ID)
 	return newCounty.ID, nil
 }
 

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
@@ -72,7 +72,7 @@ func (h *MFAHandler) InitSetup(w http.ResponseWriter, r *http.Request) {
 
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
-		log.Printf("MFA InitSetup: No claims in context")
+		slog.Info("mfa init setup: no claims in context")
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}

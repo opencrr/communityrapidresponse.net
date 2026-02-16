@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -290,19 +290,18 @@ func (s *MapboxService) GetCityBoundary(ctx context.Context, lat, lng float64, g
 	if address != nil {
 		addressCity = address.City
 	}
-	log.Printf("INFO: GetCityBoundary called - geocode BoundaryType: %s, BoundaryName: %s, address.City: %s",
-		geocodeResult.BoundaryType, geocodeResult.BoundaryName, addressCity)
+	slog.Info("get city boundary called", "boundary_type", geocodeResult.BoundaryType, "boundary_name", geocodeResult.BoundaryName, "address_city", addressCity)
 
 	// Always try city name lookup first if we have a city in the address
 	// This is more reliable than coordinate-based lookup which may return county boundaries
 	if address != nil && address.City != "" {
 		cityBoundary, err := s.fetchCityBoundaryByName(ctx, address.City, address.State, lat, lng)
 		if err == nil && cityBoundary != nil {
-			log.Printf("INFO: Found city boundary for %s via name lookup", address.City)
+			slog.Info("found city boundary via name lookup", "city", address.City)
 			return cityBoundary, nil
 		}
 		if err != nil {
-			log.Printf("WARNING: City name lookup failed for %s: %v, trying coordinate-based lookup", address.City, err)
+			slog.Warn("city name lookup failed, trying coordinate-based lookup", "city", address.City, "error", err)
 		}
 	}
 
@@ -311,14 +310,14 @@ func (s *MapboxService) GetCityBoundary(ctx context.Context, lat, lng float64, g
 	if err == nil && boundary != nil {
 		// Check if OSM returned a county when we expected a city
 		if geocodeResult.BoundaryType == "city" && boundary.Type == "county" {
-			log.Printf("WARNING: OSM returned county boundary for city-type geocode result")
+			slog.Warn("osm returned county boundary for city-type geocode result")
 		}
 		return boundary, nil
 	}
 
 	// Log the error but fall back to circular buffer
 	if err != nil {
-		log.Printf("Warning: Failed to fetch OSM boundary, falling back to circular buffer: %v\n", err)
+		slog.Warn("failed to fetch osm boundary, falling back to circular buffer", "error", err)
 	}
 
 	// Fall back to circular buffer polygon around the point
@@ -448,7 +447,7 @@ func (s *MapboxService) fetchOSMBoundary(ctx context.Context, lat, lng float64, 
 		boundaryName = geocodeResult.BoundaryName
 	}
 
-	log.Printf("INFO: OSM boundary lookup result - name: %s, type: %s, state: %s", boundaryName, boundaryType, boundaryState)
+	slog.Info("osm boundary lookup result", "name", boundaryName, "type", boundaryType, "state", boundaryState)
 
 	return &CityBoundary{
 		PlaceID: fmt.Sprintf("osm_%d", osmResp.PlaceID),
@@ -472,7 +471,7 @@ func (s *MapboxService) fetchCityBoundaryByName(ctx context.Context, cityName, s
 		searchQuery = cityName + ", USA"
 	}
 
-	log.Printf("Info: Searching OSM for city boundary: %s\n", searchQuery)
+	slog.Info("searching osm for city boundary", "query", searchQuery)
 
 	// Use Nominatim search API with polygon output and address details
 	// Don't use featuretype filter as it's too restrictive - let OSM find the best match
@@ -526,7 +525,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	log.Printf("Info: OSM search returned %d results\n", len(osmResults))
+	slog.Info("osm search returned results", "count", len(osmResults))
 
 	if len(osmResults) == 0 {
 		return nil, fmt.Errorf("no results found for: %s", cityName)
@@ -548,8 +547,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 	// Look for a result with polygon geometry
 	for i := range osmResults {
 		r := &osmResults[i]
-		log.Printf("Info: OSM result %d: name=%s, type=%s, category=%s, addresstype=%s, hasGeoJSON=%v",
-			i, r.Name, r.Type, r.Category, r.AddressType, len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
+		slog.Info("osm result", "index", i, "name", r.Name, "type", r.Type, "category", r.Category, "address_type", r.AddressType, "has_geojson", len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
 
 		if len(r.GeoJSON) == 0 || string(r.GeoJSON) == "null" {
 			continue
@@ -557,7 +555,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 
 		// Skip state and county level boundaries - we only want city-level
 		if r.AddressType == "state" || r.AddressType == "county" {
-			log.Printf("Info: Skipping result %d - is a %s, not a city", i, r.AddressType)
+			slog.Info("skipping result, not a city", "index", i, "address_type", r.AddressType)
 			continue
 		}
 
@@ -570,7 +568,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 		}
 
 		if geoType.Type != "Polygon" && geoType.Type != "MultiPolygon" {
-			log.Printf("Info: Skipping result with geometry type: %s", geoType.Type)
+			slog.Info("skipping result with unsupported geometry type", "geometry_type", geoType.Type)
 			continue
 		}
 
@@ -581,7 +579,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 
 		if isCityType || isValidCategory {
 			result = r
-			log.Printf("Info: Found polygon result: name=%s, type=%s, category=%s, addresstype=%s", r.Name, r.Type, r.Category, r.AddressType)
+			slog.Info("found polygon result", "name", r.Name, "type", r.Type, "category", r.Category, "address_type", r.AddressType)
 			break
 		}
 	}
@@ -590,7 +588,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 		return nil, fmt.Errorf("no valid polygon boundary found for: %s", cityName)
 	}
 
-	log.Printf("Info: Using city boundary: name=%s, type=%s, category=%s\n", result.Name, result.Type, result.Category)
+	slog.Info("using city boundary", "name", result.Name, "type", result.Type, "category", result.Category)
 
 	// Use the result's name if available, otherwise use the search city name
 	boundaryName := result.Name
@@ -623,16 +621,16 @@ func (s *MapboxService) GetStateBoundary(ctx context.Context, stateName string, 
 	}
 
 	for _, searchQuery := range searchQueries {
-		log.Printf("INFO: Searching OSM for state boundary: %s", searchQuery)
+		slog.Info("searching osm for state boundary", "query", searchQuery)
 
 		result, err := s.searchStateBoundary(ctx, searchQuery, stateName, lat, lng)
 		if err == nil && result != nil {
 			return result, nil
 		}
 		if err != nil {
-			log.Printf("INFO: Search '%s' failed with error: %v", searchQuery, err)
+			slog.Info("state boundary search failed", "query", searchQuery, "error", err)
 		} else {
-			log.Printf("INFO: Search '%s' did not find valid state boundary, trying next...", searchQuery)
+			slog.Info("state boundary search did not find valid result, trying next", "query", searchQuery)
 		}
 	}
 
@@ -691,15 +689,14 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	log.Printf("INFO: OSM state search returned %d results", len(osmResults))
+	slog.Info("osm state search returned results", "count", len(osmResults))
 
 	// Find first result with valid polygon geometry that is actually a state
 	for i, result := range osmResults {
-		log.Printf("INFO: OSM state result %d: name=%s, type=%s, category=%s, addresstype=%s, displayName=%s",
-			i, result.Name, result.Type, result.Category, result.AddressType, result.DisplayName)
+		slog.Info("osm state result", "index", i, "name", result.Name, "type", result.Type, "category", result.Category, "address_type", result.AddressType, "display_name", result.DisplayName)
 
 		if len(result.GeoJSON) == 0 || string(result.GeoJSON) == "null" {
-			log.Printf("INFO: Skipping result %d - no geometry", i)
+			slog.Info("skipping result, no geometry", "index", i)
 			continue
 		}
 
@@ -711,7 +708,7 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 		}
 
 		if geoType.Type != "Polygon" && geoType.Type != "MultiPolygon" {
-			log.Printf("INFO: Skipping result %d - unsupported geometry type: %s", i, geoType.Type)
+			slog.Info("skipping result, unsupported geometry type", "index", i, "geometry_type", geoType.Type)
 			continue
 		}
 
@@ -719,7 +716,7 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 		// addresstype=state is the definitive indicator for US states
 		// We must NOT accept generic administrative boundaries as they can be cities/counties
 		if result.AddressType != "state" {
-			log.Printf("INFO: Skipping result %d - not a state (addresstype=%s, not 'state')", i, result.AddressType)
+			slog.Info("skipping result, not a state", "index", i, "address_type", result.AddressType)
 			continue
 		}
 
@@ -727,7 +724,7 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 		resultName := strings.ToLower(result.Name)
 		searchName := strings.ToLower(stateName)
 		if !strings.Contains(resultName, searchName) && !strings.Contains(searchName, resultName) {
-			log.Printf("INFO: Skipping result %d - name '%s' doesn't match '%s'", i, result.Name, stateName)
+			slog.Info("skipping result, name mismatch", "index", i, "result_name", result.Name, "expected_name", stateName)
 			continue
 		}
 
@@ -737,7 +734,7 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 			boundaryName = stateName
 		}
 
-		log.Printf("INFO: Found state boundary: %s (type=%s, category=%s)", boundaryName, result.Type, result.Category)
+		slog.Info("found state boundary", "name", boundaryName, "type", result.Type, "category", result.Category)
 		return &StateBoundary{
 			PlaceID: fmt.Sprintf("osm_%d", result.PlaceID),
 			Name:    boundaryName,
@@ -763,7 +760,7 @@ func (s *MapboxService) GetCountyBoundary(ctx context.Context, countyName, state
 	} else {
 		searchQuery = countyName + ", USA"
 	}
-	log.Printf("INFO: Searching OSM for county boundary: %s", searchQuery)
+	slog.Info("searching osm for county boundary", "query", searchQuery)
 
 	apiURL := fmt.Sprintf(
 		"https://nominatim.openstreetmap.org/search?format=jsonv2&q=%s&polygon_geojson=1&limit=5&countrycodes=us&addressdetails=1",
@@ -812,12 +809,11 @@ func (s *MapboxService) getCountyBoundaryWithURL(ctx context.Context, apiURL, co
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	log.Printf("INFO: OSM county search returned %d results", len(osmResults))
+	slog.Info("osm county search returned results", "count", len(osmResults))
 
 	// Find first result with valid polygon geometry that is a county
 	for i, result := range osmResults {
-		log.Printf("INFO: OSM county result %d: name=%s, type=%s, category=%s, addresstype=%s, hasGeoJSON=%v",
-			i, result.Name, result.Type, result.Category, result.AddressType, len(result.GeoJSON) > 0 && string(result.GeoJSON) != "null")
+		slog.Info("osm county result", "index", i, "name", result.Name, "type", result.Type, "category", result.Category, "address_type", result.AddressType, "has_geojson", len(result.GeoJSON) > 0 && string(result.GeoJSON) != "null")
 
 		if len(result.GeoJSON) == 0 || string(result.GeoJSON) == "null" {
 			continue
@@ -836,7 +832,7 @@ func (s *MapboxService) getCountyBoundaryWithURL(ctx context.Context, apiURL, co
 
 		// Must be addresstype=county to be a county boundary
 		if result.AddressType != "county" {
-			log.Printf("INFO: Skipping result %d - not a county (addresstype=%s)", i, result.AddressType)
+			slog.Info("skipping result, not a county", "index", i, "address_type", result.AddressType)
 			continue
 		}
 
@@ -846,7 +842,7 @@ func (s *MapboxService) getCountyBoundaryWithURL(ctx context.Context, apiURL, co
 			boundaryName = countyName
 		}
 
-		log.Printf("INFO: Found county boundary: %s", boundaryName)
+		slog.Info("found county boundary", "name", boundaryName)
 		return &CountyBoundary{
 			PlaceID: fmt.Sprintf("osm_%d", result.PlaceID),
 			Name:    boundaryName,
@@ -938,7 +934,7 @@ func (s *MapboxService) GetCountyForCoordinates(ctx context.Context, lat, lng fl
 		state = osmResp.Address.State
 	}
 
-	log.Printf("INFO: Found county via reverse geocoding: %s, %s", countyName, state)
+	slog.Info("found county via reverse geocoding", "county", countyName, "state", state)
 
 	return &CountyBoundary{
 		PlaceID: fmt.Sprintf("osm_%d", osmResp.PlaceID),
@@ -967,7 +963,7 @@ func (s *MapboxService) GetLocalityBoundary(ctx context.Context, localityName, c
 		searchQuery = localityName + ", USA"
 	}
 
-	log.Printf("INFO: Searching OSM for locality boundary: %s", searchQuery)
+	slog.Info("searching osm for locality boundary", "query", searchQuery)
 
 	apiURL := fmt.Sprintf(
 		"https://nominatim.openstreetmap.org/search?format=jsonv2&q=%s&polygon_geojson=1&limit=5&countrycodes=us&addressdetails=1",
@@ -1015,7 +1011,7 @@ func (s *MapboxService) getLocalityBoundaryWithURL(ctx context.Context, apiURL, 
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	log.Printf("INFO: OSM locality search returned %d results", len(osmResults))
+	slog.Info("osm locality search returned results", "count", len(osmResults))
 
 	// Find the first result that is a locality type with valid polygon (if any)
 	var bestResult *struct {
@@ -1027,12 +1023,11 @@ func (s *MapboxService) getLocalityBoundaryWithURL(ctx context.Context, apiURL, 
 
 	for i := range osmResults {
 		r := &osmResults[i]
-		log.Printf("INFO: OSM locality result %d: name=%s, type=%s, category=%s, addresstype=%s, hasGeoJSON=%v",
-			i, r.Name, r.Type, r.Category, r.AddressType, len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
+		slog.Info("osm locality result", "index", i, "name", r.Name, "type", r.Type, "category", r.Category, "address_type", r.AddressType, "has_geojson", len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
 
 		// Skip state, county, and city level boundaries - we only want locality-level (borough, suburb)
 		if r.AddressType == "state" || r.AddressType == "county" || r.AddressType == "city" {
-			log.Printf("INFO: Skipping result %d - is a %s, not a locality", i, r.AddressType)
+			slog.Info("skipping result, not a locality", "index", i, "address_type", r.AddressType)
 			continue
 		}
 
@@ -1086,7 +1081,7 @@ func (s *MapboxService) getLocalityBoundaryWithURL(ctx context.Context, apiURL, 
 
 	// Return result even without geometry (name/center only)
 	if bestResult != nil {
-		log.Printf("INFO: Found locality: %s (hasGeometry=%v)", bestResult.Name, bestResult.HasGeometry)
+		slog.Info("found locality", "name", bestResult.Name, "has_geometry", bestResult.HasGeometry)
 		return &LocalityBoundary{
 			PlaceID: fmt.Sprintf("osm_%d", bestResult.PlaceID),
 			Name:    bestResult.Name,
@@ -1098,7 +1093,7 @@ func (s *MapboxService) getLocalityBoundaryWithURL(ctx context.Context, apiURL, 
 	}
 
 	// No OSM result found - return boundary with just name/center (no geometry)
-	log.Printf("INFO: No OSM result for locality %s, returning without geometry", localityName)
+	slog.Info("no osm result for locality, returning without geometry", "locality", localityName)
 	return &LocalityBoundary{
 		PlaceID: "",
 		Name:    localityName,
@@ -1127,7 +1122,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 		searchQuery = neighborhoodName + ", " + stateName + ", USA"
 	}
 
-	log.Printf("INFO: Searching OSM for neighborhood boundary: %s", searchQuery)
+	slog.Info("searching osm for neighborhood boundary", "query", searchQuery)
 
 	apiURL := fmt.Sprintf(
 		"https://nominatim.openstreetmap.org/search?format=jsonv2&q=%s&polygon_geojson=1&limit=5&countrycodes=us",
@@ -1169,7 +1164,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	log.Printf("INFO: OSM neighborhood search returned %d results", len(osmResults))
+	slog.Info("osm neighborhood search returned results", "count", len(osmResults))
 
 	// Find the first result that is a neighborhood type
 	var bestResult *struct {
@@ -1181,8 +1176,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 
 	for i := range osmResults {
 		r := &osmResults[i]
-		log.Printf("INFO: OSM neighborhood result %d: name=%s, type=%s, category=%s, hasGeoJSON=%v",
-			i, r.Name, r.Type, r.Category, len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
+		slog.Info("osm neighborhood result", "index", i, "name", r.Name, "type", r.Type, "category", r.Category, "has_geojson", len(r.GeoJSON) > 0 && string(r.GeoJSON) != "null")
 
 		// Accept neighbourhood, suburb, quarter types for neighborhoods
 		isNeighborhoodType := r.Type == "neighbourhood" || r.Type == "suburb" || r.Type == "quarter" ||
@@ -1234,7 +1228,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 
 	// Return result even without geometry (name/center only)
 	if bestResult != nil {
-		log.Printf("INFO: Found neighborhood: %s (hasGeometry=%v)", bestResult.Name, bestResult.HasGeometry)
+		slog.Info("found neighborhood", "name", bestResult.Name, "has_geometry", bestResult.HasGeometry)
 		return &NeighborhoodBoundary{
 			PlaceID:  fmt.Sprintf("osm_%d", bestResult.PlaceID),
 			Name:     bestResult.Name,
@@ -1248,7 +1242,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 
 	// No OSM result found - return boundary with just name/center (no geometry)
 	// This is expected for most neighborhoods
-	log.Printf("INFO: No OSM result for neighborhood %s, returning without geometry", neighborhoodName)
+	slog.Info("no osm result for neighborhood, returning without geometry", "neighborhood", neighborhoodName)
 	return &NeighborhoodBoundary{
 		PlaceID:  "",
 		Name:     neighborhoodName,

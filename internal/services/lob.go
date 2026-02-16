@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -92,7 +92,7 @@ func (s *LobService) ValidateAddress(ctx context.Context, address *models.Addres
 	// except special test addresses. For development convenience, we use mock mode.
 	if s.shouldUseMockMode() {
 		if s.isTestKey() {
-			log.Printf("INFO: Lob test API key detected, using mock address validation")
+			slog.Info("lob test api key detected, using mock address validation")
 		}
 		// Return mock result for development
 		return &AddressValidationResult{
@@ -240,9 +240,9 @@ func (s *LobService) SendPostcard(ctx context.Context, address *models.Address, 
 	// in development we use mock mode to avoid Lob API calls entirely.
 	if s.shouldUseMockMode() {
 		if s.isTestKey() {
-			log.Printf("INFO: Lob test API key detected, using mock postcard (not calling Lob API)")
+			slog.Info("lob test api key detected, using mock postcard")
 		} else {
-			log.Printf("INFO: Lob API key not configured, using mock mode")
+			slog.Info("lob api key not configured, using mock mode")
 		}
 		return "mock_lob_" + verificationCode, nil
 	}
@@ -343,7 +343,7 @@ func (s *LobService) SendPostcard(ctx context.Context, address *models.Address, 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Check if this is an API key error - fall back to mock mode for development
 		if strings.Contains(string(body), "invalid_api_key") || strings.Contains(string(body), "unauthorized") {
-			log.Printf("WARNING: Lob API key is invalid, using mock mode")
+			slog.Warn("lob api key is invalid, using mock mode")
 			return "mock_lob_" + verificationCode, nil
 		}
 		return "", fmt.Errorf("API error: %s", string(body))

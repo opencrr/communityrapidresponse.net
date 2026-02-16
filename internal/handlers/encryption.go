@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
@@ -173,10 +173,10 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	if h.encryptedSecretRepo != nil {
 		if err := h.encryptedSecretRepo.FlagRekeyForUser(r.Context(), claims.UserID); err != nil {
 			// Log but don't fail - the key rotation itself succeeded
-			log.Printf("ERROR: Failed to flag re-keys after key rotation for user %s: %v", claims.UserID, err)
+			slog.Error("failed to flag re-keys after key rotation", "user_id", claims.UserID, "error", err)
 		} else if h.notificationService != nil {
 			if err := h.notificationService.QueueRekeyingNeededEvent(r.Context(), claims.UserID); err != nil {
-				log.Printf("ERROR: Failed to queue rekey notification for user %s: %v", claims.UserID, err)
+				slog.Error("failed to queue rekey notification", "user_id", claims.UserID, "error", err)
 			}
 		}
 	}
@@ -338,11 +338,11 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 		// Verify the caller has a valid (non-rekey-needed) wrapped DEK for this secret
 		_, dekErr := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), entry.SecretID, claims.UserID)
 		if dekErr != nil {
-			log.Printf("WARN: Rejecting re-key for secret %s: caller %s has no valid key", entry.SecretID, claims.UserID)
+			slog.Warn("rejecting re-key: caller has no valid key", "secret_id", entry.SecretID, "caller_id", claims.UserID)
 			continue
 		}
 		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {
-			log.Printf("ERROR: Failed to submit re-key for secret %s target %s: %v", entry.SecretID, entry.TargetUserID, err)
+			slog.Error("failed to submit re-key", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "error", err)
 			continue
 		}
 		successCount++

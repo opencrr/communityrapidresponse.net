@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,11 +37,11 @@ func (s *NotificationService) QueueInviteLinkUpdatedEvent(ctx context.Context, g
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue invite link update event for group %s: %v", groupID, err)
+		slog.Error("failed to queue invite link update event", "group_id", groupID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued invite link update event for group %s in region %s", groupID, regionID)
+	slog.Info("queued invite link update event", "group_id", groupID, "region_id", regionID)
 	return nil
 }
 
@@ -59,11 +59,11 @@ func (s *NotificationService) QueueVerificationComplete(ctx context.Context, use
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue verification complete notification for user %s: %v", userID, err)
+		slog.Error("failed to queue verification complete notification", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued verification complete notification for user %s", userID)
+	slog.Info("queued verification complete notification", "user_id", userID)
 	return nil
 }
 
@@ -81,11 +81,11 @@ func (s *NotificationService) QueueVouchReceived(ctx context.Context, userID, vo
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue vouch received notification for user %s: %v", userID, err)
+		slog.Error("failed to queue vouch received notification", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued vouch received notification for user %s from voucher %s", userID, voucherID)
+	slog.Info("queued vouch received notification", "user_id", userID, "voucher_id", voucherID)
 	return nil
 }
 
@@ -103,11 +103,11 @@ func (s *NotificationService) QueueVouchComplete(ctx context.Context, userID, re
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue vouch complete notification for user %s: %v", userID, err)
+		slog.Error("failed to queue vouch complete notification", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued vouch complete notification for user %s", userID)
+	slog.Info("queued vouch complete notification", "user_id", userID)
 	return nil
 }
 
@@ -125,11 +125,11 @@ func (s *NotificationService) QueueSubRegionInvitation(ctx context.Context, user
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue sub-region invitation notification for user %s: %v", userID, err)
+		slog.Error("failed to queue sub-region invitation notification", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued sub-region invitation notification for user %s from inviter %s", userID, inviterID)
+	slog.Info("queued sub-region invitation notification", "user_id", userID, "inviter_id", inviterID)
 	return nil
 }
 
@@ -148,10 +148,10 @@ func (s *NotificationService) QueueRekeyingNeededEvent(ctx context.Context, user
 	}
 
 	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		log.Printf("ERROR: Failed to queue re-keying needed event for user %s: %v", userID, err)
+		slog.Error("failed to queue re-keying needed event", "user_id", userID, "error", err)
 		return err
 	}
 
-	log.Printf("INFO: Queued re-keying needed event for user %s", userID)
+	slog.Info("queued re-keying needed event", "user_id", userID)
 	return nil
 }

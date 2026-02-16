@@ -3,7 +3,7 @@ package sentry
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	gosentry "github.com/getsentry/sentry-go"
 	"github.com/getsentry/sentry-go/attribute"
@@ -18,7 +18,7 @@ var meter gosentry.Meter
 // Init initializes the Sentry SDK. If cfg.DSN is empty, Sentry is disabled (no-op).
 func Init(cfg *config.SentryConfig) error {
 	if cfg.DSN == "" {
-		log.Println("Sentry disabled (SENTRY_DSN not set)")
+		slog.Info("sentry disabled", "reason", "SENTRY_DSN not set")
 		return nil
 	}
 
@@ -38,7 +38,7 @@ func Init(cfg *config.SentryConfig) error {
 
 	initMeter()
 
-	log.Printf("Sentry initialized (environment=%s, release=%s, traces=%.2f)", cfg.Environment, cfg.Release, cfg.TracesSampleRate)
+	slog.Info("sentry initialized", "environment", cfg.Environment, "release", cfg.Release, "traces_sample_rate", cfg.TracesSampleRate)
 	return nil
 }
 

@@ -60,11 +60,18 @@ type Config struct {
 	Blocklist    BlocklistConfig
 	CORS         CORSConfig
 	Sentry       SentryConfig
+	Log          LogConfig
 }
 
 // CORSConfig holds CORS configuration
 type CORSConfig struct {
 	AllowedOrigins []string // Comma-separated origins, default "*" for dev
+}
+
+// LogConfig holds structured logging configuration
+type LogConfig struct {
+	Format string // "json" for structured JSON, "text" for human-readable (default "text")
+	Level  string // "debug", "info", "warn", "error" (default "info")
 }
 
 // SentryConfig holds Sentry error tracking configuration
@@ -337,6 +344,10 @@ func Load() *Config {
 			Release:          getEnv("SENTRY_RELEASE", ""),
 			TracesSampleRate: getEnvFloat("SENTRY_TRACES_SAMPLE_RATE", 0),
 			Debug:            getEnvBool("SENTRY_DEBUG", false),
+		},
+		Log: LogConfig{
+			Format: getEnv("LOG_FORMAT", "text"),
+			Level:  getEnv("LOG_LEVEL", "info"),
 		},
 	}
 }

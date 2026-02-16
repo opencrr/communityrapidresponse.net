@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"time"
 
 	gosentry "github.com/getsentry/sentry-go"
@@ -82,7 +82,7 @@ func (w *NotificationWorker) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("INFO: Notification worker shutting down")
+				slog.Info("notification worker shutting down")
 				return
 			case <-ticker.C:
 				w.runWithCheckIn(ctx, monitorSlug, monitorConfig)
@@ -90,23 +90,22 @@ func (w *NotificationWorker) Start(ctx context.Context) {
 		}
 	}()
 
-	log.Printf("INFO: Notification worker started (interval: %s, batch: %d)",
-		w.cfg.WorkerInterval, w.cfg.BatchSize)
+	slog.Info("notification worker started", "interval", w.cfg.WorkerInterval, "batch_size", w.cfg.BatchSize)
 }
 
 // runWithCheckIn wraps processQueue with Sentry cron check-ins
 func (w *NotificationWorker) runWithCheckIn(ctx context.Context, monitorSlug string, monitorConfig *gosentry.MonitorConfig) {
 	checkInID := appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusInProgress, nil, monitorConfig)
 	if checkInID != nil {
-		log.Printf("DEBUG: Cron check-in started (monitor=%s, id=%s)", monitorSlug, *checkInID)
+		slog.Debug("cron check-in started", "monitor", monitorSlug, "id", *checkInID)
 	} else {
-		log.Printf("DEBUG: Cron check-in skipped (Sentry not initialized)")
+		slog.Debug("cron check-in skipped, sentry not initialized")
 	}
 
 	err := w.processQueue(ctx)
 
 	if err != nil {
-		log.Printf("ERROR: Notification worker queue processing failed: %v", err)
+		slog.Error("notification worker queue processing failed", "error", err)
 		appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusError, checkInID, monitorConfig)
 	} else {
 		appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusOK, checkInID, monitorConfig)
@@ -125,7 +124,7 @@ func (w *NotificationWorker) processQueue(ctx context.Context) error {
 
 	notifications, err := w.queue.Dequeue(ctx, w.cfg.BatchSize)
 	if err != nil {
-		log.Printf("ERROR: Failed to dequeue notifications: %v", err)
+		slog.Error("failed to dequeue notifications", "error", err)
 		_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "dequeue")
 		return err
 	}
@@ -134,7 +133,7 @@ func (w *NotificationWorker) processQueue(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("INFO: Processing %d notifications", len(notifications))
+	slog.Info("processing notifications", "count", len(notifications))
 
 	for _, n := range notifications {
 		// Check if this is a fan-out event (no user_id set)
@@ -145,7 +144,7 @@ func (w *NotificationWorker) processQueue(ctx context.Context) error {
 			case models.NotificationTypeRekeyingNeeded:
 				w.fanOutRekeyingNotification(ctx, n)
 			default:
-				log.Printf("ERROR: Unknown fan-out event type: %s", n.NotificationType)
+				slog.Error("unknown fan-out event type", "notification_type", n.NotificationType)
 				_ = w.queue.Nack(ctx, n.ID, "unknown fan-out type")
 			}
 			continue
@@ -160,7 +159,7 @@ func (w *NotificationWorker) processQueue(ctx context.Context) error {
 // fanOutInviteLinkNotification expands a fan-out event to individual user notifications
 func (w *NotificationWorker) fanOutInviteLinkNotification(ctx context.Context, event *models.EmailNotification) {
 	if event.ResourceID == nil {
-		log.Printf("ERROR: Fan-out event %s missing region ID", event.ID)
+		slog.Error("fan-out event missing region id", "event_id", event.ID)
 		_ = w.queue.Nack(ctx, event.ID, "missing region ID")
 		return
 	}
@@ -173,7 +172,7 @@ func (w *NotificationWorker) fanOutInviteLinkNotification(ctx context.Context, e
 	for {
 		users, err := w.userLookup.GetVerifiedUsersInRegion(ctx, regionID, offset, batchSize)
 		if err != nil {
-			log.Printf("ERROR: Failed to get users for fan-out in region %s: %v", regionID, err)
+			slog.Error("failed to get users for fan-out", "region_id", regionID, "error", err)
 			_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "fan_out_users")
 			_ = w.queue.Nack(ctx, event.ID, err.Error())
 			return
@@ -196,7 +195,7 @@ func (w *NotificationWorker) fanOutInviteLinkNotification(ctx context.Context, e
 				QueuedAt:         time.Now().UTC(),
 			}
 			if err := w.queue.Enqueue(ctx, notification); err != nil {
-				log.Printf("ERROR: Failed to queue notification for user %s: %v", user.ID, err)
+				slog.Error("failed to queue notification for user", "user_id", user.ID, "error", err)
 			} else {
 				totalQueued++
 			}
@@ -207,14 +206,14 @@ func (w *NotificationWorker) fanOutInviteLinkNotification(ctx context.Context, e
 
 	// Ack the fan-out event
 	_ = w.queue.Ack(ctx, event.ID, "")
-	log.Printf("INFO: Fan-out complete for region %s: queued %d notifications", regionID, totalQueued)
+	slog.Info("fan-out complete", "region_id", regionID, "queued_count", totalQueued)
 }
 
 // fanOutRekeyingNotification expands a re-keying event to individual user notifications
 // for all users sharing encrypted secrets with the user who rotated their keys
 func (w *NotificationWorker) fanOutRekeyingNotification(ctx context.Context, event *models.EmailNotification) {
 	if event.ResourceID == nil {
-		log.Printf("ERROR: Re-keying fan-out event %s missing user ID", event.ID)
+		slog.Error("re-keying fan-out event missing user id", "event_id", event.ID)
 		_ = w.queue.Nack(ctx, event.ID, "missing user ID")
 		return
 	}
@@ -222,14 +221,14 @@ func (w *NotificationWorker) fanOutRekeyingNotification(ctx context.Context, eve
 	rotatedUserID := *event.ResourceID
 
 	if w.secretKeyLookup == nil {
-		log.Printf("ERROR: SecretKeyLookup not configured, cannot fan out re-keying notification")
+		slog.Error("secret key lookup not configured, cannot fan out re-keying notification")
 		_ = w.queue.Nack(ctx, event.ID, "secret key lookup not configured")
 		return
 	}
 
 	userIDs, err := w.secretKeyLookup.GetUsersWithSharedSecrets(ctx, rotatedUserID)
 	if err != nil {
-		log.Printf("ERROR: Failed to get users sharing secrets with %s: %v", rotatedUserID, err)
+		slog.Error("failed to get users sharing secrets", "rotated_user_id", rotatedUserID, "error", err)
 		_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "fan_out_rekey_users")
 		_ = w.queue.Nack(ctx, event.ID, err.Error())
 		return
@@ -248,14 +247,14 @@ func (w *NotificationWorker) fanOutRekeyingNotification(ctx context.Context, eve
 			QueuedAt:         time.Now().UTC(),
 		}
 		if err := w.queue.Enqueue(ctx, notification); err != nil {
-			log.Printf("ERROR: Failed to queue re-keying notification for user %s: %v", userID, err)
+			slog.Error("failed to queue re-keying notification", "user_id", userID, "error", err)
 		} else {
 			totalQueued++
 		}
 	}
 
 	_ = w.queue.Ack(ctx, event.ID, "")
-	log.Printf("INFO: Re-keying fan-out complete for user %s: queued %d notifications", rotatedUserID, totalQueued)
+	slog.Info("re-keying fan-out complete", "rotated_user_id", rotatedUserID, "queued_count", totalQueued)
 }
 
 // processNotification processes a single notification
@@ -263,7 +262,7 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 	// Get user for email address
 	user, err := w.userLookup.GetByID(ctx, n.UserID)
 	if err != nil {
-		log.Printf("ERROR: Failed to get user %s for notification: %v", n.UserID, err)
+		slog.Error("failed to get user for notification", "user_id", n.UserID, "error", err)
 		_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "get_user")
 		_ = w.queue.Nack(ctx, n.ID, err.Error())
 		return
@@ -271,7 +270,7 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 
 	// Skip if user is blocked
 	if user.IsBlocked {
-		log.Printf("INFO: Skipping notification for blocked user %s", n.UserID)
+		slog.Info("skipping notification for blocked user", "user_id", n.UserID)
 		_ = w.queue.Ack(ctx, n.ID, "")
 		return
 	}
@@ -283,12 +282,12 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 	}
 	recentlySent, err := w.queue.WasSentRecently(ctx, n.UserID, string(n.NotificationType), resourceID, w.cfg.RateLimitDuration)
 	if err != nil {
-		log.Printf("ERROR: Failed to check rate limit for user %s: %v", n.UserID, err)
+		slog.Error("failed to check rate limit", "user_id", n.UserID, "error", err)
 		_ = w.queue.Nack(ctx, n.ID, err.Error())
 		return
 	}
 	if recentlySent {
-		log.Printf("INFO: Rate limited notification for user %s (type: %s)", n.UserID, n.NotificationType)
+		slog.Info("rate limited notification", "user_id", n.UserID, "notification_type", n.NotificationType)
 		_ = w.queue.Ack(ctx, n.ID, "")
 		return
 	}
@@ -300,7 +299,7 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 
 	// Enrich data based on notification type
 	if err := w.enrichTemplateData(ctx, n, data); err != nil {
-		log.Printf("ERROR: Failed to enrich template data for notification %s: %v", n.ID, err)
+		slog.Error("failed to enrich template data", "notification_id", n.ID, "error", err)
 		// Continue with partial data - don't fail the notification
 	}
 
@@ -311,18 +310,18 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 	contentHash := hashEmailContent(n.UserID, msg.Subject, msg.TextContent)
 	isDuplicate, err := w.queue.WasContentSentRecently(ctx, contentHash, w.cfg.RateLimitDuration)
 	if err != nil {
-		log.Printf("ERROR: Failed to check content deduplication for notification %s: %v", n.ID, err)
+		slog.Error("failed to check content deduplication", "notification_id", n.ID, "error", err)
 		// Continue anyway - better to potentially send a duplicate than to fail
 	}
 	if isDuplicate {
-		log.Printf("INFO: Skipping duplicate content for user %s (notification %s)", n.UserID, n.ID)
+		slog.Info("skipping duplicate content", "user_id", n.UserID, "notification_id", n.ID)
 		_ = w.queue.Ack(ctx, n.ID, contentHash)
 		return
 	}
 
 	// Send email
 	if err := w.emailService.Send(ctx, msg); err != nil {
-		log.Printf("ERROR: Failed to send notification %s to user %s: %v", n.ID, n.UserID, err)
+		slog.Error("failed to send notification", "notification_id", n.ID, "user_id", n.UserID, "error", err)
 		_ = appSentry.CaptureError(err, "component", "notification_worker", "operation", "send_email")
 		_ = w.queue.Nack(ctx, n.ID, err.Error())
 		return
@@ -330,7 +329,7 @@ func (w *NotificationWorker) processNotification(ctx context.Context, n *models.
 
 	// Mark as sent with content hash
 	_ = w.queue.Ack(ctx, n.ID, contentHash)
-	log.Printf("INFO: Sent notification %s (type: %s) to user %s", n.ID, n.NotificationType, n.UserID)
+	slog.Info("sent notification", "notification_id", n.ID, "notification_type", n.NotificationType, "user_id", n.UserID)
 }
 
 // enrichTemplateData adds context-specific data to the template
