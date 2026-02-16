@@ -781,6 +781,33 @@ func (r *RegionRepository) IsUserInRegion(ctx context.Context, userID, regionID 
 	return isMember, err
 }
 
+// IsUserVerifiedInRegion checks if a user is a verified member of a region (directly or through hierarchy).
+// Unlike IsUserInRegion, this excludes pending memberships.
+func (r *RegionRepository) IsUserVerifiedInRegion(ctx context.Context, userID, regionID string) (bool, error) {
+	query := `
+		WITH RECURSIVE user_accessible_regions AS (
+			-- Base case: regions the user is a verified member of
+			SELECT gr.id, gr.parent_region_id
+			FROM geographic_regions gr
+			INNER JOIN user_regions ur ON gr.id = ur.region_id
+			WHERE ur.user_id = ? AND ur.verification_status = 'verified'
+
+			UNION
+
+			-- Recursive case: parent regions
+			SELECT gr.id, gr.parent_region_id
+			FROM geographic_regions gr
+			INNER JOIN user_accessible_regions uar ON gr.id = uar.parent_region_id
+		)
+		SELECT COUNT(*) > 0
+		FROM user_accessible_regions
+		WHERE id = ?
+	`
+	var isMember bool
+	err := r.db.QueryRowContext(ctx, query, userID, regionID).Scan(&isMember)
+	return isMember, err
+}
+
 // AddUserToRegion adds a user to a region with verified status
 // Parent region membership is determined dynamically via ListForUser
 func (r *RegionRepository) AddUserToRegion(ctx context.Context, userID, regionID string, isAdmin bool) error {
