@@ -857,14 +857,13 @@ func (r *UserRepository) GetSoleVerifiedSchools(ctx context.Context, userID stri
 
 // IncrementFailedLoginAttempts atomically increments the failed login counter and returns the new count
 func (r *UserRepository) IncrementFailedLoginAttempts(ctx context.Context, userID string) (int, error) {
-	query := `UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, query, userID)
-	if err != nil {
-		return 0, err
-	}
-
 	var count int
-	err = r.db.QueryRowContext(ctx, `SELECT failed_login_attempts FROM users WHERE id = ?`, userID).Scan(&count)
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?`, userID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT failed_login_attempts FROM users WHERE id = ?`, userID).Scan(&count)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -887,14 +886,13 @@ func (r *UserRepository) ResetFailedLoginAttempts(ctx context.Context, userID st
 
 // IncrementFailedMFAAttempts atomically increments the failed MFA counter and returns the new count
 func (r *UserRepository) IncrementFailedMFAAttempts(ctx context.Context, userID string) (int, error) {
-	query := `UPDATE users SET failed_mfa_attempts = failed_mfa_attempts + 1 WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, query, userID)
-	if err != nil {
-		return 0, err
-	}
-
 	var count int
-	err = r.db.QueryRowContext(ctx, `SELECT failed_mfa_attempts FROM users WHERE id = ?`, userID).Scan(&count)
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET failed_mfa_attempts = failed_mfa_attempts + 1 WHERE id = ?`, userID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT failed_mfa_attempts FROM users WHERE id = ?`, userID).Scan(&count)
+	})
 	if err != nil {
 		return 0, err
 	}

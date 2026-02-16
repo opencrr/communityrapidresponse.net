@@ -247,6 +247,13 @@ func (h *MFAHandler) handleMFAFailure(w http.ResponseWriter, r *http.Request, us
 	failedCount, incrErr := h.userRepo.IncrementFailedMFAAttempts(r.Context(), userID)
 	if incrErr != nil {
 		slog.WarnContext(r.Context(), "failed to increment MFA attempts", "user_id", userID, "error", incrErr)
+		// Fail closed: treat DB errors as lockout to prevent bypass
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error":              "mfa_locked",
+			"message":            "Too many failed MFA attempts. Please log in again to retry.",
+			"remaining_attempts": 0,
+		})
+		return
 	}
 
 	if h.auditRepo != nil {
@@ -321,6 +328,12 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 
 	// Check if MFA attempts are already exhausted
 	if user.FailedMFAAttempts >= mfaLockoutThreshold {
+		if h.auditRepo != nil {
+			logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionMFALocked, nil, nil, map[string]string{
+				"failed_attempts": fmt.Sprintf("%d", user.FailedMFAAttempts),
+				"reason":          "already_locked",
+			}), "mfa_locked")
+		}
 		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
 			"error":              "mfa_locked",
 			"message":            "Too many failed MFA attempts. Please log in again to retry.",
