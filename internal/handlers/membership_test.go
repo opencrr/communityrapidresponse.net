@@ -1217,6 +1217,54 @@ func TestMembershipHandler_VoteOnRequest_EdgeCases(t *testing.T) {
 		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM sub_region_membership_requests WHERE id = ?", membershipRequest.ID)
 	})
 
+	t.Run("voting on expired request returns conflict", func(t *testing.T) {
+		membershipRequest := &models.SubRegionMembershipRequest{
+			UserID:         requester.ID,
+			RegionID:       subRegion.ID,
+			ParentRegionID: parentRegion.ID,
+			RequestType:    models.MembershipRequestTypeRequest,
+			InitiatedBy:    requester.ID,
+		}
+		if err := suite.membershipRepo.Create(context.Background(), membershipRequest); err != nil {
+			t.Fatalf("Failed to create test membership request: %v", err)
+		}
+
+		// Set expires_at to the past (status stays 'pending' to simulate the race window)
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE sub_region_membership_requests SET expires_at = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE id = ?",
+			membershipRequest.ID)
+
+		body := map[string]bool{"vote": true}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/membership-requests/"+membershipRequest.ID+"/vote", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		q := req.URL.Query()
+		q.Set("id", membershipRequest.ID)
+		req.URL.RawQuery = q.Encode()
+
+		claims := &middleware.Claims{
+			UserID:           admin1.ID,
+			Email:            admin1.Email,
+			VerificationTier: admin1.VerificationTier,
+			PostcardVerified: admin1.PostcardVerified,
+			VouchVerified:    admin1.VouchVerified,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.VoteOnRequest(rec, req)
+
+		if rec.Code != http.StatusConflict {
+			t.Errorf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Cleanup
+		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM sub_region_membership_requests WHERE id = ?", membershipRequest.ID)
+	})
+
 	t.Run("multiple approvals trigger membership grant", func(t *testing.T) {
 		membershipRequest := &models.SubRegionMembershipRequest{
 			UserID:         requester.ID,
