@@ -172,7 +172,7 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/verification/vouch", r.authenticated(r.methodHandler(http.MethodPost, r.verification.Vouch)))
 	r.mux.HandleFunc("/api/v1/verification/vouch/request", r.authenticated(r.methodHandler(http.MethodPost, r.verification.RequestVouchVerification)))
 	r.mux.HandleFunc("/api/v1/verification/vouch/pending", r.authenticated(r.methodHandler(http.MethodGet, r.verification.GetPendingVouchRequests)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/status/", r.handleVouchStatus)
+	r.mux.HandleFunc("/api/v1/verification/vouch/status/", r.authenticated(r.handleVouchStatus))
 
 	// Protected routes - blocklist proposals
 	r.mux.HandleFunc("/api/v1/blocklist-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.blocklistProposals.ListProposals)))

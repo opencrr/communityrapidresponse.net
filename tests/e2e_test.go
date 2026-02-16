@@ -2866,3 +2866,46 @@ func TestE2E_MeshtasticChannelScoping(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_VouchStatusAuthRequired(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	fakeUserID := "00000000-0000-0000-0000-000000000000"
+	fakeRegionID := "00000000-0000-0000-0000-000000000001"
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		resp := suite.request("GET", fmt.Sprintf("/api/v1/verification/vouch/status/%s?region_id=%s", fakeUserID, fakeRegionID), nil, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("invalid token returns 401", func(t *testing.T) {
+		resp := suite.request("GET", fmt.Sprintf("/api/v1/verification/vouch/status/%s?region_id=%s", fakeUserID, fakeRegionID), nil, "invalid.token.here")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("authenticated request succeeds", func(t *testing.T) {
+		email := fmt.Sprintf("vouch_status_auth_%s@test.com", suffix)
+		userID, token := suite.registerOrGetUser(
+			fmt.Sprintf("vs_auth_%s", suffix),
+			email,
+			"securepassword123",
+		)
+		defer suite.cleanup(userID)
+
+		resp := suite.request("GET", fmt.Sprintf("/api/v1/verification/vouch/status/%s?region_id=%s", userID, fakeRegionID), nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+	})
+}
