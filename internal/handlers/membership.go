@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -427,6 +428,9 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 			if lockedRequest.Status != models.MembershipRequestStatusPending {
 				return database.ErrProposalClosed
 			}
+			if time.Now().After(lockedRequest.ExpiresAt) {
+				return database.ErrProposalClosed
+			}
 			hasVoted, txErr := h.membershipRepo.HasVotedTx(r.Context(), tx, requestID, claims.UserID)
 			if txErr != nil {
 				return txErr
@@ -461,6 +465,8 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 		})
 	} else {
 		if request.Status != models.MembershipRequestStatusPending {
+			err = database.ErrProposalClosed
+		} else if time.Now().After(request.ExpiresAt) {
 			err = database.ErrProposalClosed
 		} else {
 			hasVoted, checkErr := h.membershipRepo.HasVoted(r.Context(), requestID, claims.UserID)
