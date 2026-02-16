@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -142,7 +142,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, secret string, sec
 
 	token, err := generateCSRFToken(secret)
 	if err != nil {
-		log.Printf("csrf: failed to generate token: %v", err)
+		slog.Error("failed to generate csrf token", "error", err)
 		return
 	}
 

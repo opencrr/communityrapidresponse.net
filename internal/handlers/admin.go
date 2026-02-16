@@ -4,7 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -163,19 +163,19 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 	isAdmin := user.PostcardVerified
 	upgradedCount, err := h.regionRepo.UpgradeAllPendingUserRegions(r.Context(), userID, isAdmin)
 	if err != nil {
-		log.Printf("WARN: Failed to upgrade pending user_regions for user %s: %v", userID, err)
+		slog.WarnContext(r.Context(), "failed to upgrade pending user_regions", "user_id", userID, "error", err)
 		// Don't fail the request - the main vouch verification was granted
 	} else if upgradedCount > 0 {
-		log.Printf("INFO: Upgraded %d pending user_regions to verified for user %s (isAdmin=%v)", upgradedCount, userID, isAdmin)
+		slog.InfoContext(r.Context(), "upgraded pending user_regions to verified", "count", upgradedCount, "user_id", userID, "is_admin", isAdmin)
 	}
 
 	// If user now has both verifications, also upgrade is_admin on already-verified regions
 	if isAdmin {
 		adminUpgradeCount, err := h.regionRepo.UpgradeVerifiedUserRegionsToAdmin(r.Context(), userID)
 		if err != nil {
-			log.Printf("WARN: Failed to upgrade verified user_regions to admin for user %s: %v", userID, err)
+			slog.WarnContext(r.Context(), "failed to upgrade verified user_regions to admin", "user_id", userID, "error", err)
 		} else if adminUpgradeCount > 0 {
-			log.Printf("INFO: Upgraded %d verified user_regions to admin for user %s", adminUpgradeCount, userID)
+			slog.InfoContext(r.Context(), "upgraded verified user_regions to admin", "count", adminUpgradeCount, "user_id", userID)
 			upgradedCount += adminUpgradeCount
 		}
 	}
@@ -578,7 +578,7 @@ func (h *AdminHandler) exportAuditLogsCSV(w http.ResponseWriter, logs []models.A
 	// Write header
 	header := []string{"ID", "User ID", "Action", "Resource Type", "Resource ID", "Details", "IP Address", "User Agent", "Created At"}
 	if err := writer.Write(header); err != nil {
-		log.Printf("ERROR: Failed to write CSV header: %v", err)
+		slog.Error("failed to write CSV header", "error", err)
 		return
 	}
 
@@ -596,7 +596,7 @@ func (h *AdminHandler) exportAuditLogsCSV(w http.ResponseWriter, logs []models.A
 			logEntry.CreatedAt.Format(time.RFC3339),
 		}
 		if err := writer.Write(row); err != nil {
-			log.Printf("ERROR: Failed to write CSV row: %v", err)
+			slog.Error("failed to write CSV row", "error", err)
 			return
 		}
 	}
@@ -612,7 +612,7 @@ func (h *AdminHandler) exportAuditLogsJSON(w http.ResponseWriter, logs []models.
 		"exported_at": time.Now().UTC(),
 		"count":      len(logs),
 	}); err != nil {
-		log.Printf("ERROR: Failed to encode JSON export: %v", err)
+		slog.Error("failed to encode JSON export", "error", err)
 	}
 }
 

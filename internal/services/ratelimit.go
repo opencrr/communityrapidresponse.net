@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -129,7 +130,7 @@ func (r *DBRateLimiter) StartCleanupWorker(ctx context.Context, interval time.Du
 			case <-ticker.C:
 				if err := r.Cleanup(ctx, maxAge); err != nil {
 					// Log error but continue
-					fmt.Printf("rate limit cleanup error: %v\n", err)
+					slog.Error("rate limit cleanup failed", "error", err)
 				}
 			}
 		}
@@ -250,7 +251,7 @@ func (r *InMemoryRateLimiter) StartCleanupWorker(ctx context.Context, interval t
 				return
 			case <-ticker.C:
 				if err := r.Cleanup(ctx, maxAge); err != nil {
-					fmt.Printf("rate limit cleanup error: %v\n", err)
+					slog.Error("rate limit cleanup failed", "error", err)
 				}
 			}
 		}

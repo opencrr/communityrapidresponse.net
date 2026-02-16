@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/smtp"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
@@ -49,7 +49,7 @@ func (s *SMTPEmailService) Backend() string {
 // Send sends a generic email message via SMTP
 func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 	if !s.enabled {
-		log.Printf("[SMTP DISABLED] Would send email to %s: %s", msg.To, msg.Subject)
+		slog.Info("smtp disabled, would send email", "to", msg.To, "subject", msg.Subject)
 		return nil
 	}
 
@@ -97,7 +97,7 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 		return fmt.Errorf("failed to send email via SMTP: %w", err)
 	}
 
-	log.Printf("Email sent via SMTP to %s", msg.To)
+	slog.Info("email sent via smtp", "to", msg.To)
 	return nil
 }
 
@@ -146,7 +146,7 @@ func (s *SMTPEmailService) sendWithTLS(addr string, auth smtp.Auth, from, to str
 		return fmt.Errorf("failed to close email body: %w", err)
 	}
 
-	log.Printf("Email sent via SMTP (TLS) to %s", to)
+	slog.Info("email sent via smtp with tls", "to", to)
 	return nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -213,7 +213,7 @@ func (s *PostgridService) SendPostcard(ctx context.Context, address *models.Addr
 
 	if s.printAPIKey == "" {
 		// Return mock request ID for development
-		log.Printf("INFO: Postgrid Print & Mail API key not configured, using mock mode")
+		slog.Info("postgrid print and mail api key not configured, using mock mode")
 		return "mock_postgrid_" + verificationCode, nil
 	}
 
@@ -307,7 +307,7 @@ func (s *PostgridService) SendPostcard(ctx context.Context, address *models.Addr
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		// Check if this is an API key error - fall back to mock mode for development
 		if strings.Contains(string(body), "invalid_api_key") {
-			log.Printf("WARNING: Postgrid print/mail API key is invalid, using mock mode")
+			slog.Warn("postgrid print/mail api key is invalid, using mock mode")
 			return "mock_postgrid_" + verificationCode, nil
 		}
 		return "", fmt.Errorf("API error: %s", string(body))

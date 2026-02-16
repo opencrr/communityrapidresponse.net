@@ -60,11 +60,18 @@ type Config struct {
 	Blocklist    BlocklistConfig
 	CORS         CORSConfig
 	Sentry       SentryConfig
+	Log          LogConfig
 }
 
 // CORSConfig holds CORS configuration
 type CORSConfig struct {
 	AllowedOrigins []string // Comma-separated origins, default "*" for dev
+}
+
+// LogConfig holds structured logging configuration
+type LogConfig struct {
+	Format string // "json" for structured JSON, "text" for human-readable (default "text")
+	Level  string // "debug", "info", "warn", "error" (default "info")
 }
 
 // SentryConfig holds Sentry error tracking configuration
@@ -338,6 +345,10 @@ func Load() *Config {
 			TracesSampleRate: getEnvFloat("SENTRY_TRACES_SAMPLE_RATE", 0),
 			Debug:            getEnvBool("SENTRY_DEBUG", false),
 		},
+		Log: LogConfig{
+			Format: getEnv("LOG_FORMAT", "text"),
+			Level:  getEnv("LOG_LEVEL", "info"),
+		},
 	}
 }
 
@@ -400,6 +411,22 @@ func (c *Config) Validate() error {
 		} else if len(c.MFA.EncryptionKey) != 32 {
 			errs = append(errs, fmt.Sprintf("MFA_ENCRYPTION_KEY must be exactly 32 characters (got %d)", len(c.MFA.EncryptionKey)))
 		}
+	}
+
+	// Log format must be valid
+	switch c.Log.Format {
+	case "json", "text":
+		// valid
+	default:
+		errs = append(errs, fmt.Sprintf("LOG_FORMAT %q is not valid (must be json or text)", c.Log.Format))
+	}
+
+	// Log level must be valid
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error":
+		// valid
+	default:
+		errs = append(errs, fmt.Sprintf("LOG_LEVEL %q is not valid (must be debug, info, warn, or error)", c.Log.Level))
 	}
 
 	// Email backend must be valid

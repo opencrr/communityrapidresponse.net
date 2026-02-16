@@ -1,31 +1,42 @@
 package middleware
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/logging"
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 )
 
-// Logger logs HTTP requests
+// Logger logs HTTP requests with structured fields including request ID.
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
+		// Generate request ID and add to context
+		requestID := uuid.New().String()
+		ctx := logging.WithRequestID(r.Context(), requestID)
+		r = r.WithContext(ctx)
+
+		// Add request ID to response headers
+		w.Header().Set("X-Request-ID", requestID)
 
 		// Wrap response writer to capture status code
 		wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
 		next.ServeHTTP(wrapped, r)
 
-		log.Printf(
-			"%s %s %d %s %s",
-			r.Method,
-			r.URL.Path,
-			wrapped.status,
-			time.Since(start),
-			r.RemoteAddr,
+		slog.Info("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", wrapped.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"remote_addr", r.RemoteAddr,
+			"request_id", requestID,
 		)
 	})
 }
@@ -36,7 +47,11 @@ func Recoverer(next http.Handler) http.Handler {
 		defer func() {
 			if err := recover(); err != nil {
 				appSentry.RecoverAndReport(err)
-				log.Printf("panic: %v\n%s", err, debug.Stack())
+				slog.Error("panic recovered",
+					"error", err,
+					"stack", string(debug.Stack()),
+					"request_id", logging.RequestID(r.Context()),
+				)
 				http.Error(w, `{"error":"internal_error","message":"Internal server error"}`, http.StatusInternalServerError)
 			}
 		}()

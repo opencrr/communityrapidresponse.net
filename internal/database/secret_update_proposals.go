@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -369,12 +369,12 @@ func (r *SecretUpdateProposalRepository) StartExpirationWorker(ctx context.Conte
 	runExpiration := func() {
 		checkInID := appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusInProgress, nil, monitorConfig)
 		if expired, err := r.ExpirePendingProposals(ctx); err != nil {
-			log.Printf("ERROR: Secret proposal expiration failed: %v", err)
+			slog.Error("secret proposal expiration failed", "error", err)
 			_ = appSentry.CaptureError(err, "component", "secret_proposal_worker", "operation", "expire_proposals")
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusError, checkInID, monitorConfig)
 		} else {
 			if expired > 0 {
-				log.Printf("INFO: Expired %d secret update proposals", expired)
+				slog.Info("expired secret update proposals", "count", expired)
 			}
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusOK, checkInID, monitorConfig)
 		}
@@ -389,7 +389,7 @@ func (r *SecretUpdateProposalRepository) StartExpirationWorker(ctx context.Conte
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("INFO: Secret proposal expiration worker stopped")
+				slog.Info("secret proposal expiration worker stopped")
 				return
 			case <-ticker.C:
 				runExpiration()
@@ -397,7 +397,7 @@ func (r *SecretUpdateProposalRepository) StartExpirationWorker(ctx context.Conte
 		}
 	}()
 
-	log.Printf("INFO: Secret proposal expiration worker started (interval: %v)", interval)
+	slog.Info("secret proposal expiration worker started", "interval", interval)
 }
 
 // scanProposal scans a single proposal row

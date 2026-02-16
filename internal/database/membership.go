@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -545,12 +545,12 @@ func (r *MembershipRepository) StartExpirationWorker(ctx context.Context, interv
 	runExpiration := func() {
 		checkInID := appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusInProgress, nil, monitorConfig)
 		if expired, err := r.ExpirePendingRequests(ctx); err != nil {
-			log.Printf("ERROR: Membership request expiration failed: %v", err)
+			slog.Error("membership request expiration failed", "error", err)
 			_ = appSentry.CaptureError(err, "component", "membership_worker", "operation", "expire_requests")
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusError, checkInID, monitorConfig)
 		} else {
 			if expired > 0 {
-				log.Printf("INFO: Expired %d membership requests", expired)
+				slog.Info("expired membership requests", "count", expired)
 			}
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusOK, checkInID, monitorConfig)
 		}
@@ -566,7 +566,7 @@ func (r *MembershipRepository) StartExpirationWorker(ctx context.Context, interv
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("INFO: Membership request expiration worker stopped")
+				slog.Info("membership request expiration worker stopped")
 				return
 			case <-ticker.C:
 				runExpiration()
@@ -574,7 +574,7 @@ func (r *MembershipRepository) StartExpirationWorker(ctx context.Context, interv
 		}
 	}()
 
-	log.Printf("INFO: Membership request expiration worker started (interval: %v)", interval)
+	slog.Info("membership request expiration worker started", "interval", interval)
 }
 
 // --- Transactional methods for race condition prevention ---

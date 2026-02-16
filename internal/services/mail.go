@@ -2,7 +2,7 @@ package services
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 )
@@ -12,17 +12,17 @@ import (
 func NewMailService(cfg *config.Config) (PostgridServiceInterface, error) {
 	switch cfg.MailProvider {
 	case config.MailProviderPostgrid:
-		log.Printf("INFO: Using Postgrid as mail provider")
+		slog.Info("using postgrid as mail provider")
 		return NewPostgridService(&cfg.Postgrid), nil
 
 	case config.MailProviderLob:
-		log.Printf("INFO: Using Lob as mail provider (90-day data retention)")
+		slog.Info("using lob as mail provider", "data_retention", "90 days")
 		return NewLobService(&cfg.Lob), nil
 
 	default:
 		// Default to Lob for better privacy
 		if cfg.MailProvider == "" {
-			log.Printf("INFO: MAIL_PROVIDER not set, defaulting to Lob")
+			slog.Info("mail provider not set, defaulting to lob")
 			return NewLobService(&cfg.Lob), nil
 		}
 		return nil, fmt.Errorf("unknown mail provider: %s (valid options: lob, postgrid)", cfg.MailProvider)

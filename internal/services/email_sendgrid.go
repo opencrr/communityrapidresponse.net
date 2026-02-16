@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -55,7 +55,7 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 	}
 
 	if !s.enabled {
-		log.Printf("[SENDGRID DISABLED] Would send email to %s: %s", msg.To, msg.Subject)
+		slog.Info("sendgrid disabled, would send email", "to", msg.To, "subject", msg.Subject)
 		return nil
 	}
 
@@ -101,7 +101,7 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 		return fmt.Errorf("SendGrid API error: status %d", resp.StatusCode)
 	}
 
-	log.Printf("Email sent via SendGrid to %s", msg.To)
+	slog.Info("email sent via sendgrid", "to", msg.To)
 	return nil
 }
 

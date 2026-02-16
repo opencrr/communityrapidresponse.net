@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -450,12 +450,12 @@ func (r *BlocklistProposalRepository) StartExpirationWorker(ctx context.Context,
 	runExpiration := func() {
 		checkInID := appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusInProgress, nil, monitorConfig)
 		if expired, err := r.ExpirePendingProposals(ctx); err != nil {
-			log.Printf("ERROR: Blocklist proposal expiration failed: %v", err)
+			slog.Error("blocklist proposal expiration failed", "error", err)
 			_ = appSentry.CaptureError(err, "component", "blocklist_worker", "operation", "expire_proposals")
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusError, checkInID, monitorConfig)
 		} else {
 			if expired > 0 {
-				log.Printf("INFO: Expired %d blocklist proposals", expired)
+				slog.Info("expired blocklist proposals", "count", expired)
 			}
 			appSentry.CheckIn(monitorSlug, gosentry.CheckInStatusOK, checkInID, monitorConfig)
 		}
@@ -471,7 +471,7 @@ func (r *BlocklistProposalRepository) StartExpirationWorker(ctx context.Context,
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("INFO: Blocklist proposal expiration worker stopped")
+				slog.Info("blocklist proposal expiration worker stopped")
 				return
 			case <-ticker.C:
 				runExpiration()
@@ -479,7 +479,7 @@ func (r *BlocklistProposalRepository) StartExpirationWorker(ctx context.Context,
 		}
 	}()
 
-	log.Printf("INFO: Blocklist proposal expiration worker started (interval: %v)", interval)
+	slog.Info("blocklist proposal expiration worker started", "interval", interval)
 }
 
 // ApplyBlocklist applies the blocklist to a user - removes them from ALL regions and blocks their address
