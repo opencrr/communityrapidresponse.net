@@ -469,6 +469,24 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		// Reject known .env.example default values
+		type devDefault struct {
+			envVar       string
+			defaultValue string
+			actualValue  string
+		}
+		knownDevDefaults := []devDefault{
+			{"JWT_SECRET", "development_secret_key_change_in_production_at_least_32_chars", c.JWT.Secret},
+			{"MFA_ENCRYPTION_KEY", "01234567890123456789012345678901", c.MFA.EncryptionKey},
+			{"DB_PASSWORD", "devpassword", c.Database.Password},
+			{"JWT_ISSUER", "communityrapidresponse-dev", c.JWT.Issuer},
+		}
+		for _, d := range knownDevDefaults {
+			if d.actualValue == d.defaultValue {
+				errs = append(errs, fmt.Sprintf("%s is set to the .env.example default — must be changed in production/staging", d.envVar))
+			}
+		}
+
 		// Email backend credentials
 		if c.Email.Backend == EmailBackendSendGrid && c.Email.SendGridAPIKey == "" {
 			errs = append(errs, "SENDGRID_API_KEY is required when EMAIL_BACKEND=sendgrid")
