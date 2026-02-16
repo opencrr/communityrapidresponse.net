@@ -2362,3 +2362,130 @@ func TestIntegration_RegionAPI_SubRegionsExcludeAncestors(t *testing.T) {
 		}
 	})
 }
+
+// TestIntegration_VouchCrossRegionRejection verifies that a voucher must be a
+// member of the specific target region, not just any region shared with the vouchee.
+// (Security audit #14)
+func TestIntegration_VouchCrossRegionRejection(t *testing.T) {
+	suite := SetupIntegrationTest(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	geoJSON := `{"type":"Polygon","coordinates":[[[-125.0,45.0],[-116.0,45.0],[-116.0,49.0],[-125.0,49.0],[-125.0,45.0]]]}`
+
+	// Create two separate region hierarchies
+	stateA := &models.GeographicRegion{
+		Name:       fmt.Sprintf("CrossVouch StateA %s", suffix),
+		RegionType: models.RegionTypeState,
+	}
+	_ = suite.regionRepo.Create(ctx, stateA, geoJSON)
+	defer suite.cleanupRegion(stateA.ID)
+
+	countyA := &models.GeographicRegion{
+		Name:           fmt.Sprintf("CrossVouch CountyA %s", suffix),
+		RegionType:     models.RegionTypeCounty,
+		ParentRegionID: &stateA.ID,
+	}
+	_ = suite.regionRepo.Create(ctx, countyA, geoJSON)
+	defer suite.cleanupRegion(countyA.ID)
+
+	cityA := &models.GeographicRegion{
+		Name:           fmt.Sprintf("CrossVouch CityA %s", suffix),
+		RegionType:     models.RegionTypeCity,
+		ParentRegionID: &countyA.ID,
+	}
+	_ = suite.regionRepo.Create(ctx, cityA, geoJSON)
+	defer suite.cleanupRegion(cityA.ID)
+
+	stateB := &models.GeographicRegion{
+		Name:       fmt.Sprintf("CrossVouch StateB %s", suffix),
+		RegionType: models.RegionTypeState,
+	}
+	_ = suite.regionRepo.Create(ctx, stateB, geoJSON)
+	defer suite.cleanupRegion(stateB.ID)
+
+	countyB := &models.GeographicRegion{
+		Name:           fmt.Sprintf("CrossVouch CountyB %s", suffix),
+		RegionType:     models.RegionTypeCounty,
+		ParentRegionID: &stateB.ID,
+	}
+	_ = suite.regionRepo.Create(ctx, countyB, geoJSON)
+	defer suite.cleanupRegion(countyB.ID)
+
+	cityB := &models.GeographicRegion{
+		Name:           fmt.Sprintf("CrossVouch CityB %s", suffix),
+		RegionType:     models.RegionTypeCity,
+		ParentRegionID: &countyB.ID,
+	}
+	_ = suite.regionRepo.Create(ctx, cityB, geoJSON)
+	defer suite.cleanupRegion(cityB.ID)
+
+	// Register voucher and vouchee
+	voucherEmail := fmt.Sprintf("crossvouch_voucher_%s@test.com", suffix)
+	voucherID, _ := suite.registerUser(fmt.Sprintf("cv_voucher_%s", suffix), voucherEmail, "securepassword123")
+	defer suite.cleanup(voucherID)
+
+	voucheeEmail := fmt.Sprintf("crossvouch_vouchee_%s@test.com", suffix)
+	voucheeID, _ := suite.registerUser(fmt.Sprintf("cv_vouchee_%s", suffix), voucheeEmail, "securepassword123")
+	defer suite.cleanup(voucheeID)
+
+	// Both users share City A (so UsersShareRegion returns true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, voucherID, cityA.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, voucheeID, cityA.ID, false)
+	defer func() {
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id IN (?, ?) AND region_id = ?", voucherID, voucheeID, cityA.ID)
+	}()
+
+	// Vouchee has pending vouch request in City B (voucher is NOT in City B)
+	_, _ = suite.db.ExecContext(ctx,
+		"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'pending', NOW())",
+		voucheeID, cityB.ID)
+	defer func() {
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ? AND region_id = ?", voucheeID, cityB.ID)
+	}()
+
+	t.Run("voucher not in target region gets 403", func(t *testing.T) {
+		// Re-login to get a fresh token
+		token := suite.reloginUser(voucherEmail, "securepassword123")
+
+		resp := suite.request("POST", "/api/v1/verification/vouch", map[string]string{
+			"vouched_user_id": voucheeID,
+			"region_id":       cityB.ID,
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 403, got %d: %v", resp.StatusCode, body)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if body["error"] != "not_in_region" {
+			t.Errorf("Expected error 'not_in_region', got '%v'", body["error"])
+		}
+	})
+
+	t.Run("voucher in target region can vouch", func(t *testing.T) {
+		// Add voucher to City B so they can vouch there
+		_ = suite.regionRepo.AddUserToRegion(ctx, voucherID, cityB.ID, false)
+		defer func() {
+			_, _ = suite.db.ExecContext(ctx, "DELETE FROM vouches WHERE voucher_user_id = ? AND region_id = ?", voucherID, cityB.ID)
+			_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ? AND region_id = ?", voucherID, cityB.ID)
+		}()
+
+		token := suite.reloginUser(voucherEmail, "securepassword123")
+
+		resp := suite.request("POST", "/api/v1/verification/vouch", map[string]string{
+			"vouched_user_id": voucheeID,
+			"region_id":       cityB.ID,
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusCreated {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Expected status 201, got %d: %v", resp.StatusCode, body)
+		}
+	})
+}

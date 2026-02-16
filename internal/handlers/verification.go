@@ -872,14 +872,21 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check geographic proximity (users must share a region)
-	shareRegion, err := h.vouchRepo.UsersShareRegion(r.Context(), claims.UserID, vouchedUserID)
+	// Verify voucher is a member of the target region (not just any shared region).
+	// In bootstrap mode, pending members can vouch (they're all bootstrapping together).
+	// In normal mode, only verified members can vouch.
+	var isVoucherInRegion bool
+	if bootstrapMode {
+		isVoucherInRegion, err = h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+	} else {
+		isVoucherInRegion, err = h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, regionID)
+	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check geographic proximity", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Failed to check voucher region membership", "verification", "vouch_for_user")
 		return
 	}
-	if !shareRegion {
-		writeError(w, http.StatusBadRequest, "no_shared_region", "You can only vouch for users in your geographic region")
+	if !isVoucherInRegion {
+		writeError(w, http.StatusForbidden, "not_in_region", "You must be a member of this region to vouch")
 		return
 	}
 

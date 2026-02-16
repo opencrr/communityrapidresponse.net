@@ -1362,8 +1362,8 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 		}
 	})
 
-	t.Run("users must share region to vouch", func(t *testing.T) {
-		// Create users who don't share any region
+	t.Run("voucher not in target region cannot vouch", func(t *testing.T) {
+		// Create users where voucher is NOT in the target region
 		voucher := suite.createTestUserWithFlags("no_region_voucher", true, true)
 		vouchee := suite.createTestUser("no_region_vouchee", models.TierUnverified)
 		defer suite.cleanup(voucher.ID, vouchee.ID)
@@ -1394,14 +1394,14 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 		rec := httptest.NewRecorder()
 		suite.handler.Vouch(rec, req)
 
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
 		}
 
 		var resp map[string]interface{}
 		_ = json.NewDecoder(rec.Body).Decode(&resp)
-		if resp["error"] != "no_shared_region" {
-			t.Errorf("Expected error 'no_shared_region', got %v", resp["error"])
+		if resp["error"] != "not_in_region" {
+			t.Errorf("Expected error 'not_in_region', got %v", resp["error"])
 		}
 	})
 
@@ -3612,6 +3612,292 @@ func TestVerificationHandler_GetPendingVouchRequests_CircularVouchFilter(t *test
 
 		if foundCircularUser {
 			t.Errorf("Bug: Admin pending list includes user who vouched for admin (would create circular vouch)")
+		}
+	})
+}
+
+// =============================================================================
+// Security Fix Tests: Voucher Must Be in Target Region
+// =============================================================================
+// These tests verify that vouching requires the voucher to be a verified
+// member of the specific target region. (Security audit #14)
+
+func TestVerificationHandler_Vouch_VoucherMustBeInTargetRegion(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	// Clean up test data
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@targetregiontest.com'")
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE name LIKE 'TargetRegion%'")
+
+	t.Run("vouch fails when voucher is not in target region (bootstrap mode)", func(t *testing.T) {
+		// Scenario: voucher is verified in Region A, vouchee has a pending
+		// vouch request in Region B where voucher has no membership at all.
+
+		voucher := suite.createTestUserWithFlags("tr_voucher1", false, false)
+		vouchee := suite.createTestUserWithFlags("tr_vouchee1", false, false)
+
+		// Create two separate regions
+		regionA := suite.createTestRegion("TargetRegion CityA", models.RegionTypeCity, nil, voucher.ID)
+		regionB := suite.createTestRegion("TargetRegion CityB", models.RegionTypeCity, nil, vouchee.ID)
+
+		// Both users in Region A (so they share a region)
+		suite.addUserToRegion(voucher.ID, regionA.ID, false)
+		suite.addUserToRegion(vouchee.ID, regionA.ID, false)
+
+		// Vouchee has pending request in Region B (voucher is NOT in Region B)
+		suite.addUserToRegionPending(vouchee.ID, regionB.ID)
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(regionA.ID, regionB.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": regionB.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
+			VouchVerified:    false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 (forbidden), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		if resp["error"] != "not_in_region" {
+			t.Errorf("Expected error 'not_in_region', got '%v'", resp["error"])
+		}
+	})
+
+	t.Run("vouch succeeds when voucher is in target region (bootstrap mode)", func(t *testing.T) {
+		// Positive case: voucher IS in the target region
+
+		voucher := suite.createTestUserWithFlags("tr_voucher2", false, false)
+		vouchee := suite.createTestUserWithFlags("tr_vouchee2", false, false)
+
+		region := suite.createTestRegion("TargetRegion CityC", models.RegionTypeCity, nil, voucher.ID)
+
+		// Both users in the same region; vouchee has pending request there
+		suite.addUserToRegion(voucher.ID, region.ID, false)
+		suite.addUserToRegionPending(vouchee.ID, region.ID)
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(region.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ?", voucher.ID)
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": region.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
+			VouchVerified:    false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("Expected status 201 (created), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("vouch succeeds when voucher has pending membership in bootstrap mode", func(t *testing.T) {
+		// In bootstrap mode, pending members can vouch for each other
+		// (they're all bootstrapping together).
+
+		voucher := suite.createTestUserWithFlags("tr_voucher3", false, false)
+		vouchee := suite.createTestUserWithFlags("tr_vouchee3", false, false)
+
+		region := suite.createTestRegion("TargetRegion CityD", models.RegionTypeCity, nil, voucher.ID)
+
+		// Both users have pending status in the same region (bootstrap mode)
+		suite.addUserToRegionPending(voucher.ID, region.ID)
+		suite.addUserToRegionPending(vouchee.ID, region.ID)
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(region.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ?", voucher.ID)
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": region.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierUnverified,
+			PostcardVerified: false,
+			VouchVerified:    false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("Expected status 201 (created), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("vouch fails when voucher has only pending membership in normal mode", func(t *testing.T) {
+		// In normal mode, only verified members can vouch. A pending member
+		// with fully-verified user flags should still be rejected by the
+		// region membership check.
+
+		voucher := suite.createTestUserWithFlags("tr_voucher4", true, true)
+		vouchee := suite.createTestUserWithFlags("tr_vouchee4", false, false)
+
+		region := suite.createTestRegion("TargetRegion CityE", models.RegionTypeCity, nil, voucher.ID)
+
+		// Exit bootstrap mode
+		adminIDs := suite.exitBootstrapMode(region.ID)
+
+		// Voucher has only pending membership in the target region
+		suite.addUserToRegionPending(voucher.ID, region.ID)
+		suite.addUserToRegionPending(vouchee.ID, region.ID)
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(region.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+			for _, id := range adminIDs {
+				_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", id)
+				_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", id)
+			}
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": region.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierPostcard,
+			PostcardVerified: true,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 (forbidden), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		if resp["error"] != "not_in_region" {
+			t.Errorf("Expected error 'not_in_region', got '%v'", resp["error"])
+		}
+	})
+
+	t.Run("vouch fails when voucher is not in target region (normal mode)", func(t *testing.T) {
+		// Cross-region scenario in normal mode (>= 3 admins)
+
+		voucher := suite.createTestUserWithFlags("tr_voucher5", true, true)
+		vouchee := suite.createTestUserWithFlags("tr_vouchee5", false, false)
+
+		regionA := suite.createTestRegion("TargetRegion CityF", models.RegionTypeCity, nil, voucher.ID)
+		regionB := suite.createTestRegion("TargetRegion CityG", models.RegionTypeCity, nil, voucher.ID)
+
+		// Exit bootstrap mode in Region B
+		adminIDs := suite.exitBootstrapMode(regionB.ID)
+
+		// Both users share Region A
+		suite.addUserToRegion(voucher.ID, regionA.ID, true)
+		suite.addUserToRegion(vouchee.ID, regionA.ID, false)
+
+		// Vouchee has pending request in Region B; voucher is NOT in Region B
+		suite.addUserToRegionPending(vouchee.ID, regionB.ID)
+
+		defer suite.cleanup(voucher.ID, vouchee.ID)
+		defer suite.cleanupRegions(regionA.ID, regionB.ID)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, vouchee.ID)
+			for _, id := range adminIDs {
+				_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", id)
+				_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", id)
+			}
+		}()
+
+		body := map[string]interface{}{
+			"user_id":   vouchee.ID,
+			"region_id": regionB.ID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/vouch", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           voucher.ID,
+			Email:            voucher.Email,
+			VerificationTier: models.TierPostcard,
+			PostcardVerified: true,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rr := httptest.NewRecorder()
+		suite.handler.Vouch(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 (forbidden), got %d. Body: %s", rr.Code, rr.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		if resp["error"] != "not_in_region" {
+			t.Errorf("Expected error 'not_in_region', got '%v'", resp["error"])
 		}
 	})
 }
