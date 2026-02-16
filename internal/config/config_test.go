@@ -204,10 +204,11 @@ func validProdConfig() *Config {
 		},
 		JWT: JWTConfig{
 			Secret: "production_secret_key_at_least_32_characters_long",
+			Issuer: "communityrapidresponse-prod",
 		},
 		MFA: MFAConfig{
 			Required:      true,
-			EncryptionKey: "01234567890123456789012345678901",
+			EncryptionKey: "abcdefghijklmnopqrstuvwxyz012345",
 		},
 		Mapbox: MapboxConfig{
 			SecretToken: "sk.mapbox-secret-token",
@@ -444,6 +445,66 @@ func TestValidate(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "SMTP_PASSWORD") {
 			t.Errorf("expected error about SMTP_PASSWORD, got: %v", err)
+		}
+	})
+
+	t.Run("production rejects .env.example JWT_SECRET default", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.JWT.Secret = "development_secret_key_change_in_production_at_least_32_chars"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for .env.example JWT_SECRET default")
+		}
+		if !strings.Contains(err.Error(), "JWT_SECRET is set to the .env.example default") {
+			t.Errorf("expected error about JWT_SECRET default, got: %v", err)
+		}
+	})
+
+	t.Run("production rejects .env.example MFA_ENCRYPTION_KEY default", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.MFA.EncryptionKey = "01234567890123456789012345678901"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for .env.example MFA_ENCRYPTION_KEY default")
+		}
+		if !strings.Contains(err.Error(), "MFA_ENCRYPTION_KEY is set to the .env.example default") {
+			t.Errorf("expected error about MFA_ENCRYPTION_KEY default, got: %v", err)
+		}
+	})
+
+	t.Run("production rejects .env.example DB_PASSWORD default", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.Database.Password = "devpassword"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for .env.example DB_PASSWORD default")
+		}
+		if !strings.Contains(err.Error(), "DB_PASSWORD is set to the .env.example default") {
+			t.Errorf("expected error about DB_PASSWORD default, got: %v", err)
+		}
+	})
+
+	t.Run("production rejects .env.example JWT_ISSUER default", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.JWT.Issuer = "communityrapidresponse-dev"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for .env.example JWT_ISSUER default")
+		}
+		if !strings.Contains(err.Error(), "JWT_ISSUER is set to the .env.example default") {
+			t.Errorf("expected error about JWT_ISSUER default, got: %v", err)
+		}
+	})
+
+	t.Run("development allows .env.example defaults", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.JWT.Secret = "development_secret_key_change_in_production_at_least_32_chars"
+		cfg.MFA.EncryptionKey = "01234567890123456789012345678901"
+		cfg.MFA.Required = true
+		cfg.Database.Password = "devpassword"
+		cfg.JWT.Issuer = "communityrapidresponse-dev"
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected dev config with .env.example defaults to pass, got: %v", err)
 		}
 	})
 
