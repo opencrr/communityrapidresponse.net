@@ -412,13 +412,25 @@ func (h *SecretUpdateHandler) GetProposal(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Fetch raw proposal first to get scope fields for access check
+	rawProposal, err := h.proposalRepo.GetByID(r.Context(), proposalID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
+		return
+	}
+
+	// Verify the caller has admin access to the proposal's scope
+	adminCount, err := h.verifyAdminAccess(w, r, claims, rawProposal.RegionID, rawProposal.SchoolID, rawProposal.DistrictID)
+	if err != nil {
+		return // verifyAdminAccess already wrote the error response
+	}
+
 	proposal, err := h.proposalRepo.GetByIDWithVotes(r.Context(), proposalID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 		return
 	}
 
-	adminCount := h.consensusConfig.VoteFloor
 	proposal.VotesNeeded = h.consensusConfig.RequiredVotes(adminCount)
 
 	wrappedDEK, dErr := h.proposalRepo.GetWrappedDEK(r.Context(), proposalID, claims.UserID)

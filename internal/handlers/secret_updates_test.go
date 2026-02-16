@@ -1392,14 +1392,12 @@ func TestSecretUpdateHandler_GetProposal_MissingID(t *testing.T) {
 func TestSecretUpdateHandler_GetProposal_NotFound(t *testing.T) {
 	suite := setupSecretUpdateTestSuite(t)
 
-	// GetByIDWithVotes — the query JOINs encrypted_secrets, signal_groups, regions, schools, districts, users
-	// Return empty rows to trigger "proposal not found"
-	suite.mock.ExpectQuery("SELECT p.id.*FROM secret_update_proposals p").
+	// GetByID — return empty rows to trigger "proposal not found"
+	suite.mock.ExpectQuery("SELECT.*FROM secret_update_proposals.*WHERE id").
 		WithArgs("prop-nonexistent").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "encrypted_secret_id", "secret_type", "scope_name", "group_name",
-			"proposed_by", "username",
-			"encrypted_payload", "encryption_iv", "reason",
+			"id", "encrypted_secret_id", "region_id", "school_id", "district_id",
+			"proposed_by", "encrypted_payload", "encryption_iv", "reason",
 			"status", "created_at", "expires_at", "resolved_at", "finalized_at",
 		}))
 
@@ -1413,16 +1411,132 @@ func TestSecretUpdateHandler_GetProposal_NotFound(t *testing.T) {
 	}
 }
 
+func TestSecretUpdateHandler_GetProposal_NonAdminForbidden(t *testing.T) {
+	suite := setupSecretUpdateTestSuite(t)
+
+	createdAt := time.Now().UTC()
+	regionID := "region-1"
+	claims := regionAdminClaims()
+
+	// GetByID — returns proposal with region scope
+	suite.mock.ExpectQuery("SELECT.*FROM secret_update_proposals.*WHERE id").
+		WithArgs("prop-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "encrypted_secret_id", "region_id", "school_id", "district_id",
+			"proposed_by", "encrypted_payload", "encryption_iv", "reason",
+			"status", "created_at", "expires_at", "resolved_at", "finalized_at",
+		}).AddRow("prop-1", "secret-1", &regionID, nil, nil,
+			"admin-user-123", "enc-data", "enc-iv", nil,
+			"pending", createdAt, createdAt.Add(72*time.Hour), nil, nil))
+
+	// verifyAdminAccess: IsUserAdmin returns false
+	suite.mock.ExpectQuery("user_admin_regions").
+		WithArgs(claims.UserID, regionID).
+		WillReturnRows(sqlmock.NewRows([]string{"is_admin"}).AddRow(false))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/secret-proposals?id=prop-1", nil, claims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetProposal(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+
+	if err := suite.mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestSecretUpdateHandler_GetProposal_SuperuserBypass(t *testing.T) {
+	suite := setupSecretUpdateTestSuite(t)
+
+	createdAt := time.Now().UTC()
+	regionID := "region-1"
+	suClaims := superuserClaims()
+
+	// GetByID — returns proposal with region scope
+	suite.mock.ExpectQuery("SELECT.*FROM secret_update_proposals.*WHERE id").
+		WithArgs("prop-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "encrypted_secret_id", "region_id", "school_id", "district_id",
+			"proposed_by", "encrypted_payload", "encryption_iv", "reason",
+			"status", "created_at", "expires_at", "resolved_at", "finalized_at",
+		}).AddRow("prop-1", "secret-1", &regionID, nil, nil,
+			"admin-user-123", "enc-data", "enc-iv", nil,
+			"pending", createdAt, createdAt.Add(72*time.Hour), nil, nil))
+
+	// Superuser skips IsUserAdmin — goes directly to GetAdminCount
+	suite.mock.ExpectQuery("COUNT").
+		WithArgs(regionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
+
+	// GetByIDWithVotes
+	suite.mock.ExpectQuery("SELECT p.id.*FROM secret_update_proposals p").
+		WithArgs("prop-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "encrypted_secret_id", "secret_type", "scope_name", "group_name",
+			"proposed_by", "username",
+			"encrypted_payload", "encryption_iv", "reason",
+			"status", "created_at", "expires_at", "resolved_at", "finalized_at",
+		}).AddRow("prop-1", "secret-1", "signal_invite", "Region One", "Group One",
+			"admin-user-123", "adminuser",
+			"enc-data", "enc-iv", nil,
+			"pending", createdAt, createdAt.Add(72*time.Hour), nil, nil))
+
+	// Votes subquery
+	suite.mock.ExpectQuery("SELECT v.voter_id.*FROM secret_update_votes v").
+		WithArgs("prop-1").
+		WillReturnRows(sqlmock.NewRows([]string{"voter_id", "username", "vote", "voted_at"}))
+
+	// GetWrappedDEK for caller
+	suite.mock.ExpectQuery("SELECT wrapped_dek FROM proposal_wrapped_keys").
+		WithArgs("prop-1", suClaims.UserID).
+		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/secret-proposals?id=prop-1", nil, suClaims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetProposal(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	if err := suite.mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestSecretUpdateHandler_GetProposal_Success(t *testing.T) {
 	suite := setupSecretUpdateTestSuite(t)
 
 	createdAt := time.Now().UTC()
+	regionID := "region-1"
 	claims := regionAdminClaims()
 
+	// GetByID — returns proposal with region scope
+	suite.mock.ExpectQuery("SELECT.*FROM secret_update_proposals.*WHERE id").
+		WithArgs("prop-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "encrypted_secret_id", "region_id", "school_id", "district_id",
+			"proposed_by", "encrypted_payload", "encryption_iv", "reason",
+			"status", "created_at", "expires_at", "resolved_at", "finalized_at",
+		}).AddRow("prop-1", "secret-1", &regionID, nil, nil,
+			"admin-user-123", "enc-data", "enc-iv", nil,
+			"pending", createdAt, createdAt.Add(72*time.Hour), nil, nil))
+
+	// verifyAdminAccess: IsUserAdmin
+	suite.mock.ExpectQuery("user_admin_regions").
+		WithArgs(claims.UserID, regionID).
+		WillReturnRows(sqlmock.NewRows([]string{"is_admin"}).AddRow(true))
+
+	// GetAdminCount
+	suite.mock.ExpectQuery("COUNT").
+		WithArgs(regionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
+
 	// GetByIDWithVotes — complex JOIN query
-	// Scans: id, encrypted_secret_id, secret_type, scope_name, group_name,
-	//        proposed_by (id), username, encrypted_payload, encryption_iv, reason,
-	//        status, created_at, expires_at, resolved_at, finalized_at
 	suite.mock.ExpectQuery("SELECT p.id.*FROM secret_update_proposals p").
 		WithArgs("prop-1").
 		WillReturnRows(sqlmock.NewRows([]string{
