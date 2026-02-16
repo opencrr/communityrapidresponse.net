@@ -105,9 +105,9 @@ Key endpoint groups:
   - GET `/api/v1/invitations` - list user's pending invitations
   - POST `/api/v1/invitations/:id/respond` - accept/decline invitation
 - `/api/v1/schools/*` - school management
-  - GET `/api/v1/schools` - search schools (public)
+  - GET `/api/v1/schools` - search schools (auth)
   - GET `/api/v1/schools/my` - list user's schools (auth)
-  - GET `/api/v1/schools/:id` - get school details (public, optional auth)
+  - GET `/api/v1/schools/:id` - get school details (auth)
   - POST `/api/v1/schools/:id/join` - join a school (auth)
   - POST `/api/v1/schools/:id/leave` - leave a school (auth)
   - POST `/api/v1/schools/:id/vouch` - vouch for school member (auth)
@@ -116,8 +116,8 @@ Key endpoint groups:
   - GET `/api/v1/schools/:id/members` - list school members (auth)
   - GET/POST `/api/v1/schools/:id/signal-groups` - list/create school Signal groups (auth/admin)
 - `/api/v1/school-districts/*` - school district management
-  - GET `/api/v1/school-districts` - search districts (public)
-  - GET `/api/v1/school-districts/:id` - get district details (public)
+  - GET `/api/v1/school-districts` - search districts (auth)
+  - GET `/api/v1/school-districts/:id` - get district details (auth)
   - GET/POST `/api/v1/school-districts/:id/signal-groups` - list/create district Signal groups (auth/admin)
 
 **Region Type Hierarchy:**
@@ -162,6 +162,8 @@ Key endpoint groups:
 - **Email Security**: Sensitive data (invite links, verification codes, addresses) NEVER included in emails
 - Bcrypt password hashing (cost factor 12), minimum 12 characters
 - Rate limiting: 3 verification requests/30 days, 10 vouches/month, 5 blacklist proposals/month, 100 API requests/min/IP
+- **Auth rate limiting** (per IP): login 10/5min, register 3/hr, forgot-password 5/15min, reset-password 10/15min, resend-verification 3/15min
+- **Account lockout**: 10 failed login attempts → 15-minute lock; resets on successful login; audit-logged
 - Audit logging for all admin actions (90-day retention)
 - Only fully verified users (both postcard AND vouch) can vouch for others
 - Blacklisting requires minimum 3 admins in region (prevents abuse)

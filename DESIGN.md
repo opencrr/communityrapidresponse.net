@@ -1865,7 +1865,7 @@ Response: 200
 
 ### Schools
 
-**GET /api/v1/schools** (Public)
+**GET /api/v1/schools** (Authenticated)
 
 Search schools by name and/or state.
 ```
@@ -1880,9 +1880,9 @@ Query Parameters:
 
 List the current user's school memberships with verification status.
 
-**GET /api/v1/schools/:id** (Public, optional auth)
+**GET /api/v1/schools/:id** (Authenticated)
 
-Get school details. If authenticated, includes user's membership status.
+Get school details including user's membership status.
 
 **POST /api/v1/schools/:id/join** (Authenticated)
 
@@ -1924,11 +1924,11 @@ Create a Signal group for a school.
 
 ### School Districts
 
-**GET /api/v1/school-districts** (Public)
+**GET /api/v1/school-districts** (Authenticated)
 
 Search school districts by name and/or state.
 
-**GET /api/v1/school-districts/:id** (Public)
+**GET /api/v1/school-districts/:id** (Authenticated)
 
 Get district details including associated schools.
 
@@ -2697,18 +2697,31 @@ All data stored by the system must be encrypted at rest to protect against unaut
    - Verification requests: 3 per user per 30 days
    - Vouch requests: 10 per user per month
    - API: 100 requests per minute per IP
+   - Authentication endpoints (per IP):
+     - Login: 10 per 5 minutes
+     - Registration: 3 per hour
+     - Forgot password: 5 per 15 minutes
+     - Reset password: 10 per 15 minutes
+     - Resend verification: 3 per 15 minutes
 
-2. **Vouch Fraud Prevention**
+2. **Account Lockout**
+   - 10 consecutive failed login attempts triggers 15-minute account lock
+   - Counter resets on successful login
+   - Locked accounts return 429 with "account_locked" error
+   - Lockout state tracked via `failed_login_attempts` and `locked_until` columns
+   - Account lock events are audit-logged
+
+3. **Vouch Fraud Prevention**
    - Geographic proximity validation (users must share a region)
    - Detection of circular vouching patterns
    - Blacklist check before allowing vouch
 
-3. **Signal Group Spam Prevention**
+4. **Signal Group Spam Prevention**
    - Limit: 5 groups per region
    - Admin-created only
    - Deletion proposals for inactive groups
 
-4. **Surreptitious Access Prevention**
+5. **Surreptitious Access Prevention**
    - User blacklisting via 3-admin consensus
    - Minimum 3 admins required to enable blacklisting (prevents abuse)
    - Blacklist cascades to sub-regions
@@ -2968,7 +2981,7 @@ All data stored by the system must be encrypted at rest to protect against unaut
 
 ---
 
-**Document Version**: 2.6
-**Last Updated**: 2026-02-07
+**Document Version**: 2.7
+**Last Updated**: 2026-02-14
 **Author**: Brian Oldfield
 **Status**: Draft
