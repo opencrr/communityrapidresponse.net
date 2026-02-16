@@ -1584,6 +1584,8 @@ func TestVerificationHandler_GetVouchStatus(t *testing.T) {
 		// getPathParam uses query params, so include user_id as query param
 		path := fmt.Sprintf("/api/v1/verification/vouch/status?user_id=%s&region_id=%s", targetUser.ID, region.ID)
 		req := httptest.NewRequest("GET", path, nil)
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, &middleware.Claims{UserID: voucher1.ID})
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		suite.handler.GetVouchStatus(rec, req)
@@ -1615,6 +1617,8 @@ func TestVerificationHandler_GetVouchStatus(t *testing.T) {
 
 		path := fmt.Sprintf("/api/v1/verification/vouch/status?user_id=%s&region_id=%s", noVouchUser.ID, region.ID)
 		req := httptest.NewRequest("GET", path, nil)
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, &middleware.Claims{UserID: voucher1.ID})
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		suite.handler.GetVouchStatus(rec, req)
@@ -1637,7 +1641,8 @@ func TestVerificationHandler_GetVouchStatus(t *testing.T) {
 	t.Run("missing user_id fails", func(t *testing.T) {
 		path := fmt.Sprintf("/api/v1/verification/vouch/status?region_id=%s", region.ID)
 		req := httptest.NewRequest("GET", path, nil)
-		// No user_id query param
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, &middleware.Claims{UserID: voucher1.ID})
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		suite.handler.GetVouchStatus(rec, req)
@@ -1650,13 +1655,27 @@ func TestVerificationHandler_GetVouchStatus(t *testing.T) {
 	t.Run("missing region_id fails", func(t *testing.T) {
 		path := fmt.Sprintf("/api/v1/verification/vouch/status?user_id=%s", targetUser.ID)
 		req := httptest.NewRequest("GET", path, nil)
-		// No region_id query param
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, &middleware.Claims{UserID: voucher1.ID})
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		suite.handler.GetVouchStatus(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		path := fmt.Sprintf("/api/v1/verification/vouch/status?user_id=%s&region_id=%s", targetUser.ID, region.ID)
+		req := httptest.NewRequest("GET", path, nil)
+		// No claims in context
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetVouchStatus(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

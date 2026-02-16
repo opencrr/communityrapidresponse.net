@@ -1063,6 +1063,12 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 
 // GetVouchStatus handles GET /api/v1/verification/vouch/status/:user_id
 func (h *VerificationHandler) GetVouchStatus(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
 	userID := getPathParam(r, "user_id")
 	if userID == "" {
 		writeError(w, http.StatusBadRequest, "missing_parameter", "User ID required")
