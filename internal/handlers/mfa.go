@@ -13,6 +13,9 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
+// mfaLockoutThreshold is the number of failed MFA attempts before lockout
+const mfaLockoutThreshold = 5
+
 // MFAHandler handles MFA-related endpoints
 type MFAHandler struct {
 	db            *database.DB
@@ -238,6 +241,49 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleMFAFailure increments the MFA failure counter and returns the appropriate response.
+// Returns 429 if the lockout threshold is reached, otherwise 401 with remaining attempts.
+func (h *MFAHandler) handleMFAFailure(w http.ResponseWriter, r *http.Request, userID, errorCode, errorMessage string) {
+	failedCount, incrErr := h.userRepo.IncrementFailedMFAAttempts(r.Context(), userID)
+	if incrErr != nil {
+		slog.WarnContext(r.Context(), "failed to increment MFA attempts", "user_id", userID, "error", incrErr)
+		// Fail closed: treat DB errors as lockout to prevent bypass
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error":              "mfa_locked",
+			"message":            "Too many failed MFA attempts. Please log in again to retry.",
+			"remaining_attempts": 0,
+		})
+		return
+	}
+
+	if h.auditRepo != nil {
+		logAuditError(r, h.auditRepo.Log(r.Context(), &userID, models.AuditActionMFAVerifyFailed, nil, nil, map[string]string{
+			"failed_attempts": fmt.Sprintf("%d", failedCount),
+		}), "mfa_verify_failed")
+	}
+
+	if failedCount >= mfaLockoutThreshold {
+		if h.auditRepo != nil {
+			logAuditError(r, h.auditRepo.Log(r.Context(), &userID, models.AuditActionMFALocked, nil, nil, map[string]string{
+				"failed_attempts": fmt.Sprintf("%d", failedCount),
+			}), "mfa_locked")
+		}
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error":              "mfa_locked",
+			"message":            "Too many failed MFA attempts. Please log in again to retry.",
+			"remaining_attempts": 0,
+		})
+		return
+	}
+
+	remaining := mfaLockoutThreshold - failedCount
+	writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+		"error":              errorCode,
+		"message":            errorMessage,
+		"remaining_attempts": remaining,
+	})
+}
+
 // Verify verifies a TOTP code or backup code during login
 // Requires pending MFA token
 func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +323,22 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 
 	if user.MFASecret == nil || *user.MFASecret == "" {
 		writeServerError(w, r, fmt.Errorf("MFA secret is nil or empty for user %s", user.ID), "MFA configuration error", "mfa", "mfa_config_check")
+		return
+	}
+
+	// Check if MFA attempts are already exhausted
+	if user.FailedMFAAttempts >= mfaLockoutThreshold {
+		if h.auditRepo != nil {
+			logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionMFALocked, nil, nil, map[string]string{
+				"failed_attempts": fmt.Sprintf("%d", user.FailedMFAAttempts),
+				"reason":          "already_locked",
+			}), "mfa_locked")
+		}
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error":              "mfa_locked",
+			"message":            "Too many failed MFA attempts. Please log in again to retry.",
+			"remaining_attempts": 0,
+		})
 		return
 	}
 
@@ -322,7 +384,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 			})
 			if txErr != nil {
 				if txErr == services.ErrInvalidBackupCode {
-					writeError(w, http.StatusUnauthorized, "invalid_backup_code", "Invalid backup code")
+					h.handleMFAFailure(w, r, user.ID, "invalid_backup_code", "Invalid backup code")
 					return
 				}
 				if txErr == services.ErrNoBackupCodes {
@@ -343,7 +405,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 			updatedCodes, err := h.mfaService.ValidateBackupCode(*user.MFABackupCodes, req.BackupCode)
 			if err != nil {
 				if err == services.ErrInvalidBackupCode {
-					writeError(w, http.StatusUnauthorized, "invalid_backup_code", "Invalid backup code")
+					h.handleMFAFailure(w, r, user.ID, "invalid_backup_code", "Invalid backup code")
 					return
 				}
 				if err == services.ErrNoBackupCodes {
@@ -365,12 +427,15 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !authenticated {
-		// Audit log: MFA verification failed
-		if h.auditRepo != nil {
-			logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionMFAVerifyFailed, nil, nil, nil), "mfa_verify_failed")
-		}
-		writeError(w, http.StatusUnauthorized, "invalid_code", "Invalid MFA code")
+		h.handleMFAFailure(w, r, user.ID, "invalid_code", "Invalid MFA code")
 		return
+	}
+
+	// Reset MFA attempt counter on successful verification
+	if user.FailedMFAAttempts > 0 {
+		if resetErr := h.userRepo.ResetFailedMFAAttempts(r.Context(), user.ID); resetErr != nil {
+			slog.WarnContext(r.Context(), "failed to reset MFA attempts", "user_id", user.ID, "error", resetErr)
+		}
 	}
 
 	// Audit log: MFA verification succeeded

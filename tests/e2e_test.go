@@ -2909,3 +2909,144 @@ func TestE2E_VouchStatusAuthRequired(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_MFABruteForceProtection(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	email := fmt.Sprintf("mfa_brute_%s@test.com", suffix)
+	username := fmt.Sprintf("mfa_brute_%s", suffix[:8])
+	password := "securepassword123"
+
+	// Register user
+	resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
+		"username": username, "email": email, "password": password,
+	}, "")
+	defer func() { _ = resp.Body.Close() }()
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(resp.Body).Decode(&registerResp)
+	userID := registerResp.UserID
+	defer suite.cleanup(userID)
+
+	// Setup MFA for the user via the MFA service directly
+	mfaConfig := &config.MFAConfig{
+		EncryptionKey: "01234567890123456789012345678901",
+		Issuer:        "Test MFA",
+	}
+	mfaService, _ := services.NewMFAService(mfaConfig)
+	key, _ := mfaService.GenerateSecret(email)
+	encryptedSecret, _ := mfaService.EncryptSecret(key.Secret())
+	_ = suite.userRepo.SetMFASecret(context.Background(), userID, encryptedSecret)
+	backupCodes, _ := mfaService.GenerateBackupCodes(10)
+	hashedCodes, _ := mfaService.HashBackupCodes(backupCodes)
+	_ = suite.userRepo.EnableMFA(context.Background(), userID, hashedCodes)
+
+	// Login to get a pending_mfa token
+	getPendingToken := func() string {
+		loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": email, "password": password,
+		}, "")
+		defer func() { _ = loginResp.Body.Close() }()
+		var body models.LoginResponse
+		_ = json.NewDecoder(loginResp.Body).Decode(&body)
+		return body.Token
+	}
+
+	t.Run("failed MFA attempts show remaining_attempts", func(t *testing.T) {
+		// Reset MFA attempts
+		_ = suite.userRepo.ResetFailedMFAAttempts(context.Background(), userID)
+
+		pendingToken := getPendingToken()
+
+		for i := 1; i <= 4; i++ {
+			resp := suite.request("POST", "/api/v1/mfa/verify", map[string]string{
+				"code": "000000",
+			}, pendingToken)
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("Attempt %d: expected 401, got %d", i, resp.StatusCode)
+			}
+
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+
+			expectedRemaining := 5 - i
+			remaining := int(body["remaining_attempts"].(float64))
+			if remaining != expectedRemaining {
+				t.Errorf("Attempt %d: expected %d remaining, got %d", i, expectedRemaining, remaining)
+			}
+		}
+	})
+
+	t.Run("5th failed attempt returns 429", func(t *testing.T) {
+		// Reset and exhaust
+		_ = suite.userRepo.ResetFailedMFAAttempts(context.Background(), userID)
+		pendingToken := getPendingToken()
+
+		for i := 1; i <= 5; i++ {
+			resp := suite.request("POST", "/api/v1/mfa/verify", map[string]string{
+				"code": "000000",
+			}, pendingToken)
+			defer func() { _ = resp.Body.Close() }()
+
+			if i < 5 {
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Errorf("Attempt %d: expected 401, got %d", i, resp.StatusCode)
+				}
+			} else {
+				if resp.StatusCode != http.StatusTooManyRequests {
+					t.Errorf("Attempt 5: expected 429, got %d", resp.StatusCode)
+				}
+				var body map[string]interface{}
+				_ = json.NewDecoder(resp.Body).Decode(&body)
+				if body["error"] != "mfa_locked" {
+					t.Errorf("Expected error 'mfa_locked', got '%v'", body["error"])
+				}
+			}
+		}
+	})
+
+	t.Run("locked user gets 429 immediately", func(t *testing.T) {
+		// Get pending token first (login resets counter), then set counter
+		pendingToken := getPendingToken()
+
+		// Set counter to threshold AFTER login
+		for i := 0; i < 5; i++ {
+			_, _ = suite.userRepo.IncrementFailedMFAAttempts(context.Background(), userID)
+		}
+
+		resp := suite.request("POST", "/api/v1/mfa/verify", map[string]string{
+			"code": "000000",
+		}, pendingToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("Expected 429 for locked user, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("re-login resets MFA attempts", func(t *testing.T) {
+		// Set some failed MFA attempts
+		_ = suite.userRepo.ResetFailedMFAAttempts(context.Background(), userID)
+		for i := 0; i < 3; i++ {
+			_, _ = suite.userRepo.IncrementFailedMFAAttempts(context.Background(), userID)
+		}
+
+		// Verify pre-condition
+		userBefore, _ := suite.userRepo.GetByID(context.Background(), userID)
+		if userBefore.FailedMFAAttempts != 3 {
+			t.Fatalf("Pre-condition: expected 3 failed MFA attempts, got %d", userBefore.FailedMFAAttempts)
+		}
+
+		// Re-login (this should reset MFA attempts)
+		_ = getPendingToken()
+
+		// Verify counter was reset
+		userAfter, _ := suite.userRepo.GetByID(context.Background(), userID)
+		if userAfter.FailedMFAAttempts != 0 {
+			t.Errorf("Expected FailedMFAAttempts=0 after re-login, got %d", userAfter.FailedMFAAttempts)
+		}
+	})
+}

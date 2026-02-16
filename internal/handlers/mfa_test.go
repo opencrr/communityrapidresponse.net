@@ -374,3 +374,218 @@ func TestMFAHandler_VerifyUserWithMFADisabled(t *testing.T) {
 		}
 	})
 }
+
+// setupMFAEnabledUser creates a user with MFA fully enabled and returns the user, handler, and pending MFA token helper
+func setupMFAEnabledUser(t *testing.T, suffix string) (*database.DB, *database.UserRepository, *middleware.JWTAuth, *MFAHandler, *models.User) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	mfaService := testMFAService(t)
+	auditRepo := database.NewAuditRepository(db)
+	handler := NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, auditRepo)
+
+	user := createTestUserForMFA(t, db, userRepo, suffix)
+
+	key, _ := mfaService.GenerateSecret(user.Email)
+	encryptedSecret, _ := mfaService.EncryptSecret(key.Secret())
+	backupCodes, _ := mfaService.GenerateBackupCodes(10)
+	hashedCodes, _ := mfaService.HashBackupCodes(backupCodes)
+
+	_ = userRepo.SetMFASecret(context.Background(), user.ID, encryptedSecret)
+	_ = userRepo.EnableMFA(context.Background(), user.ID, hashedCodes)
+
+	user.MFAEnabled = true
+	user.MFASetupRequired = false
+
+	return db, userRepo, jwtAuth, handler, user
+}
+
+func TestMFAHandler_BruteForceProtection(t *testing.T) {
+	_, userRepo, jwtAuth, handler, user := setupMFAEnabledUser(t, "brute")
+
+	// Reset MFA attempts before test
+	_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+
+	t.Run("failed TOTP attempts return remaining_attempts", func(t *testing.T) {
+		// Reset for clean state
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+
+		pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+
+		body := map[string]string{"code": "000000"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+pendingToken)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		remaining, ok := resp["remaining_attempts"]
+		if !ok {
+			t.Error("Expected remaining_attempts in response")
+		} else if int(remaining.(float64)) != 4 {
+			t.Errorf("Expected 4 remaining attempts, got %v", remaining)
+		}
+	})
+
+	t.Run("5 failed attempts locks out with 429", func(t *testing.T) {
+		// Reset and exhaust attempts
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+
+		for i := 0; i < 5; i++ {
+			pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+			body := map[string]string{"code": "000000"}
+			bodyBytes, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+pendingToken)
+			rec := httptest.NewRecorder()
+
+			jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+			if i < 4 {
+				if rec.Code != http.StatusUnauthorized {
+					t.Errorf("Attempt %d: expected 401, got %d", i+1, rec.Code)
+				}
+			} else {
+				// 5th attempt should return 429
+				if rec.Code != http.StatusTooManyRequests {
+					t.Errorf("Attempt %d: expected 429, got %d: %s", i+1, rec.Code, rec.Body.String())
+				}
+				var resp map[string]interface{}
+				_ = json.NewDecoder(rec.Body).Decode(&resp)
+				if resp["error"] != "mfa_locked" {
+					t.Errorf("Expected error 'mfa_locked', got '%v'", resp["error"])
+				}
+				if int(resp["remaining_attempts"].(float64)) != 0 {
+					t.Errorf("Expected 0 remaining attempts, got %v", resp["remaining_attempts"])
+				}
+			}
+		}
+	})
+
+	t.Run("already locked user gets 429 before validation", func(t *testing.T) {
+		// Set counter to threshold via DB
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+		for i := 0; i < 5; i++ {
+			_, _ = userRepo.IncrementFailedMFAAttempts(context.Background(), user.ID)
+		}
+
+		pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+		body := map[string]string{"code": "000000"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+pendingToken)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusTooManyRequests {
+			t.Errorf("Expected 429 for already-locked user, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "mfa_locked" {
+			t.Errorf("Expected error 'mfa_locked', got '%v'", resp["error"])
+		}
+	})
+
+	t.Run("failed backup code counts toward lockout", func(t *testing.T) {
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+
+		pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+		body := map[string]string{"backup_code": "INVALID-CODE"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+pendingToken)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected 401 for invalid backup code, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Verify counter was incremented
+		retrieved, _ := userRepo.GetByID(context.Background(), user.ID)
+		if retrieved.FailedMFAAttempts != 1 {
+			t.Errorf("Expected FailedMFAAttempts=1 after invalid backup code, got %d", retrieved.FailedMFAAttempts)
+		}
+	})
+
+	t.Run("successful verification resets counter", func(t *testing.T) {
+		// Set some failed attempts
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+		for i := 0; i < 3; i++ {
+			_, _ = userRepo.IncrementFailedMFAAttempts(context.Background(), user.ID)
+		}
+
+		// Re-enable MFA with fresh backup codes for this sub-test
+		mfaService := testMFAService(t)
+		backupCodes, _ := mfaService.GenerateBackupCodes(10)
+		hashedCodes, _ := mfaService.HashBackupCodes(backupCodes)
+		_ = userRepo.EnableMFA(context.Background(), user.ID, hashedCodes)
+
+		pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+		body := map[string]string{"backup_code": backupCodes[0]}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+pendingToken)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200 for valid backup code, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Verify counter was reset
+		retrieved, _ := userRepo.GetByID(context.Background(), user.ID)
+		if retrieved.FailedMFAAttempts != 0 {
+			t.Errorf("Expected FailedMFAAttempts=0 after success, got %d", retrieved.FailedMFAAttempts)
+		}
+	})
+
+	t.Run("remaining attempts decrease with each failure", func(t *testing.T) {
+		_ = userRepo.ResetFailedMFAAttempts(context.Background(), user.ID)
+
+		expectedRemaining := []int{4, 3, 2, 1}
+		for i, expected := range expectedRemaining {
+			pendingToken, _ := jwtAuth.GenerateTokenWithType(user, middleware.TokenTypePendingMFA)
+			body := map[string]string{"code": "000000"}
+			bodyBytes, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/api/v1/mfa/verify", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+pendingToken)
+			rec := httptest.NewRecorder()
+
+			jwtAuth.AuthenticateWithTypes(http.HandlerFunc(handler.Verify), middleware.TokenTypePendingMFA).ServeHTTP(rec, req)
+
+			var resp map[string]interface{}
+			_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+			remaining := int(resp["remaining_attempts"].(float64))
+			if remaining != expected {
+				t.Errorf("Attempt %d: expected %d remaining, got %d", i+1, expected, remaining)
+			}
+		}
+	})
+}

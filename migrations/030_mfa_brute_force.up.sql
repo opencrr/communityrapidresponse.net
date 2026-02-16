@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN failed_mfa_attempts INT NOT NULL DEFAULT 0;
