@@ -22,7 +22,7 @@ func NewMailService(cfg *config.Config) (PostgridServiceInterface, error) {
 	default:
 		// Default to Lob for better privacy
 		if cfg.MailProvider == "" {
-			slog.Info("MAIL_PROVIDER not set, defaulting to lob")
+			slog.Info("mail provider not set, defaulting to lob")
 			return NewLobService(&cfg.Lob), nil
 		}
 		return nil, fmt.Errorf("unknown mail provider: %s (valid options: lob, postgrid)", cfg.MailProvider)

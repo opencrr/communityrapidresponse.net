@@ -445,7 +445,7 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 				consensusReached = true
 				user, txErr := h.userRepo.GetByIDForUpdate(r.Context(), tx, lockedRequest.UserID)
 				if txErr != nil {
-					slog.Warn("failed to get user for admin check", "error", txErr)
+					slog.WarnContext(r.Context(), "failed to get user for admin check", "error", txErr)
 				}
 				if user != nil {
 					isUserAdmin = user.PostcardVerified && user.VouchVerified
@@ -666,7 +666,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	// Queue email notification to invited user
 	if h.notificationService != nil {
 		if err := h.notificationService.QueueSubRegionInvitation(r.Context(), req.UserID, claims.UserID, regionID); err != nil {
-			slog.Warn("failed to queue sub-region invitation notification", "error", err)
+			slog.WarnContext(r.Context(), "failed to queue sub-region invitation notification", "error", err)
 		}
 	}
 

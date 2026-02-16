@@ -185,6 +185,10 @@ func validDevConfig() *Config {
 			Backend: EmailBackendMock,
 		},
 		MailProvider: MailProviderLob,
+		Log: LogConfig{
+			Format: "text",
+			Level:  "info",
+		},
 	}
 }
 
@@ -216,6 +220,10 @@ func validProdConfig() *Config {
 			Backend:        EmailBackendSendGrid,
 			Enabled:        true,
 			SendGridAPIKey: "sg-api-key",
+		},
+		Log: LogConfig{
+			Format: "json",
+			Level:  "info",
 		},
 	}
 }

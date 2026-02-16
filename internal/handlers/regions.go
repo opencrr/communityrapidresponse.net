@@ -187,7 +187,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Add bootstrap mode info
 	bootstrapMode, fullAdminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), id)
 	if err != nil {
-		slog.Warn("failed to check bootstrap mode", "error", err)
+		slog.WarnContext(r.Context(), "failed to check bootstrap mode", "error", err)
 		// Non-fatal: continue with default values
 	} else {
 		region.BootstrapMode = bootstrapMode
@@ -199,7 +199,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if claims.IsSuperuser {
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, id)
 		if err != nil {
-			slog.Warn("failed to check superuser membership", "error", err)
+			slog.WarnContext(r.Context(), "failed to check superuser membership", "error", err)
 		} else {
 			region.IsMember = isMember
 		}
@@ -219,7 +219,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug logging for region creation authorization
-	slog.Debug("region create authorization", "user_id", claims.UserID, "email", claims.Email, "is_superuser", claims.IsSuperuser, "postcard_verified", claims.PostcardVerified, "vouch_verified", claims.VouchVerified, "tier", claims.VerificationTier)
+	slog.DebugContext(r.Context(), "region create authorization", "user_id", claims.UserID, "is_superuser", claims.IsSuperuser, "postcard_verified", claims.PostcardVerified, "vouch_verified", claims.VouchVerified, "tier", claims.VerificationTier)
 
 	// Require at least Tier 1 (postcard verified)
 	if claims.VerificationTier < models.TierPostcard {
@@ -276,7 +276,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// Get user's admin regions to include in error response
 			adminRegions, err := h.regionRepo.GetUserAdminRegions(r.Context(), claims.UserID)
 			if err != nil {
-				slog.Warn("failed to get admin regions for error response", "error", err)
+				slog.WarnContext(r.Context(), "failed to get admin regions for error response", "error", err)
 				adminRegions = nil
 			}
 
@@ -303,7 +303,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if parentRegionID == nil || *parentRegionID == "" {
 		autoParentID, err := h.autoCreateParentRegions(r.Context(), req, claims.UserID)
 		if err != nil {
-			slog.Error("failed to auto-create parent regions", "error", err)
+			slog.ErrorContext(r.Context(), "failed to auto-create parent regions", "error", err)
 			_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "region", "operation", "auto_create_parents")
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 			return
@@ -332,7 +332,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Add creator as admin of the region
 	if err := h.regionRepo.AddUserToRegion(r.Context(), claims.UserID, region.ID, true); err != nil {
-		slog.Warn("failed to add creator as admin", "error", err)
+		slog.WarnContext(r.Context(), "failed to add creator as admin", "error", err)
 	}
 
 	// Audit log: region created

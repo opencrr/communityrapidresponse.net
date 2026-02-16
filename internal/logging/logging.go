@@ -14,16 +14,16 @@ const requestIDKey contextKey = "request_id"
 // format: "json" for structured JSON output, anything else for human-readable text.
 // level: "debug", "info", "warn", "error" (default "info").
 func Init(format, level string) {
-	var handler slog.Handler
+	var base slog.Handler
 	opts := &slog.HandlerOptions{Level: parseLevel(level)}
 
 	if format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+		base = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+		base = slog.NewTextHandler(os.Stdout, opts)
 	}
 
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(&contextHandler{base: base}))
 }
 
 // WithRequestID returns a context carrying the given request ID.
@@ -37,6 +37,30 @@ func RequestID(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// contextHandler wraps a slog.Handler and injects request_id from context.
+type contextHandler struct {
+	base slog.Handler
+}
+
+func (h *contextHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.base.Enabled(ctx, level)
+}
+
+func (h *contextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if requestID := RequestID(ctx); requestID != "" {
+		r.AddAttrs(slog.String("request_id", requestID))
+	}
+	return h.base.Handle(ctx, r)
+}
+
+func (h *contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &contextHandler{base: h.base.WithAttrs(attrs)}
+}
+
+func (h *contextHandler) WithGroup(name string) slog.Handler {
+	return &contextHandler{base: h.base.WithGroup(name)}
 }
 
 func parseLevel(s string) slog.Level {

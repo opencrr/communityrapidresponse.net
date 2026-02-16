@@ -82,7 +82,7 @@ func (h *AuthHandler) checkAuthRateLimit(w http.ResponseWriter, r *http.Request,
 	allowed, _, _, err := h.rateLimiter.Allow(r.Context(), key, limit, window)
 	if err != nil {
 		// On error, allow the request rather than blocking legitimate users
-		slog.Warn("auth rate limit check failed", "key", key, "error", err)
+		slog.WarnContext(r.Context(), "auth rate limit check failed", "key", key, "error", err)
 		return true
 	}
 
@@ -313,14 +313,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// Increment failed login counter
 		failedCount, incrErr := h.userRepo.IncrementFailedLoginAttempts(r.Context(), user.ID)
 		if incrErr != nil {
-			slog.Warn("failed to increment login attempts", "user_id", user.ID, "error", incrErr)
+			slog.WarnContext(r.Context(), "failed to increment login attempts", "user_id", user.ID, "error", incrErr)
 		}
 
 		// Lock account if threshold exceeded
 		if failedCount >= accountLockoutThreshold {
 			lockUntil := time.Now().Add(accountLockoutDuration)
 			if lockErr := h.userRepo.LockAccount(r.Context(), user.ID, lockUntil); lockErr != nil {
-				slog.Warn("failed to lock account", "user_id", user.ID, "error", lockErr)
+				slog.WarnContext(r.Context(), "failed to lock account", "user_id", user.ID, "error", lockErr)
 			}
 			if h.auditRepo != nil {
 				logAuditError(r, h.auditRepo.Log(r.Context(), &user.ID, models.AuditActionAccountLocked, nil, nil, map[string]string{
@@ -343,7 +343,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Reset failed login attempts on successful password verification
 	if user.FailedLoginAttempts > 0 {
 		if resetErr := h.userRepo.ResetFailedLoginAttempts(r.Context(), user.ID); resetErr != nil {
-			slog.Warn("failed to reset login attempts", "user_id", user.ID, "error", resetErr)
+			slog.WarnContext(r.Context(), "failed to reset login attempts", "user_id", user.ID, "error", resetErr)
 		}
 	}
 
@@ -744,7 +744,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	// Generate random token (32 bytes = 64 hex chars) before transaction
 	rawTokenBytes := make([]byte, 32)
 	if _, err := rand.Read(rawTokenBytes); err != nil {
-		slog.Warn("failed to generate reset token", "error", err)
+		slog.WarnContext(r.Context(), "failed to generate reset token", "error", err)
 		writeJSON(w, http.StatusOK, successResponse)
 		return
 	}
@@ -773,7 +773,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		})
 		if txErr != nil {
 			if !errors.Is(txErr, database.ErrRateLimited) {
-				slog.Warn("failed to create reset token", "error", txErr)
+				slog.WarnContext(r.Context(), "failed to create reset token", "error", txErr)
 			}
 			// Silently succeed to prevent enumeration
 			writeJSON(w, http.StatusOK, successResponse)
@@ -783,7 +783,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		// Fallback for when db is not available (e.g., tests)
 		activeCount, err := h.passwordResetRepo.CountActiveForUser(r.Context(), user.ID)
 		if err != nil {
-			slog.Warn("failed to count active reset tokens", "error", err)
+			slog.WarnContext(r.Context(), "failed to count active reset tokens", "error", err)
 			writeJSON(w, http.StatusOK, successResponse)
 			return
 		}
@@ -793,7 +793,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = h.passwordResetRepo.Create(r.Context(), user.ID, tokenHash, expiresAt)
 		if err != nil {
-			slog.Warn("failed to create reset token", "error", err)
+			slog.WarnContext(r.Context(), "failed to create reset token", "error", err)
 			writeJSON(w, http.StatusOK, successResponse)
 			return
 		}
@@ -804,11 +804,11 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		resetURL := fmt.Sprintf("%s/reset-password?token=%s", h.baseURL, rawToken)
 		emailMessage := h.emailTemplates.BuildPasswordReset(user.Email, resetURL)
 		if err := h.emailService.Send(r.Context(), emailMessage); err != nil {
-			slog.Warn("failed to send password reset email", "error", err)
+			slog.WarnContext(r.Context(), "failed to send password reset email", "error", err)
 		}
 	} else {
 		// In development/mock mode, log the token
-		slog.Info("password reset token generated", "email", user.Email, "token", rawToken)
+		slog.DebugContext(r.Context(), "password reset token generated (mock mode)", "user_id", user.ID)
 	}
 
 	// Audit log
@@ -1036,7 +1036,7 @@ func (h *AuthHandler) DeletionPreflight(w http.ResponseWriter, r *http.Request) 
 	// Check for sole-admin regions
 	soleAdminRegions, err := h.userRepo.GetSoleAdminRegions(r.Context(), claims.UserID)
 	if err != nil {
-		slog.Warn("failed to check sole admin regions", "error", err)
+		slog.WarnContext(r.Context(), "failed to check sole admin regions", "error", err)
 	} else {
 		for _, region := range soleAdminRegions {
 			warnings = append(warnings, map[string]string{
@@ -1051,7 +1051,7 @@ func (h *AuthHandler) DeletionPreflight(w http.ResponseWriter, r *http.Request) 
 	// Check for sole-verified schools
 	soleVerifiedSchools, err := h.userRepo.GetSoleVerifiedSchools(r.Context(), claims.UserID)
 	if err != nil {
-		slog.Warn("failed to check sole verified schools", "error", err)
+		slog.WarnContext(r.Context(), "failed to check sole verified schools", "error", err)
 	} else {
 		for _, school := range soleVerifiedSchools {
 			warnings = append(warnings, map[string]string{

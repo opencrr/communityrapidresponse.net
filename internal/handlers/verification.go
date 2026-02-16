@@ -119,7 +119,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 1: Validate address with Postgrid (address in memory only)
 	validationResult, err := h.postgridService.ValidateAddress(r.Context(), &req.Address)
 	if err != nil {
-		slog.Error("postgrid address validation failed", "error", err)
+		slog.ErrorContext(r.Context(), "postgrid address validation failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "address_validation")
 		writeError(w, http.StatusBadGateway, "address_validation_failed", "Failed to validate address")
 		return
@@ -176,7 +176,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 2: Geocode address with Mapbox (address still in memory only)
 	geocodeResult, err := h.mapboxService.GeocodeAddress(r.Context(), &req.Address)
 	if err != nil {
-		slog.Error("mapbox geocoding failed", "error", err)
+		slog.ErrorContext(r.Context(), "mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
 		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
 		return
@@ -304,7 +304,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 6: Send postcard via Postgrid (address sent to Postgrid, not stored by us)
 	postgridRequestID, err := h.postgridService.SendPostcard(r.Context(), &req.Address, code, postcardRef)
 	if err != nil {
-		slog.Error("postgrid postcard sending failed", "error", err)
+		slog.ErrorContext(r.Context(), "postgrid postcard sending failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "send_postcard")
 		// Clean up the reserved row since the postcard was never sent
 		_ = h.verificationRepo.Delete(r.Context(), verificationReq.ID)
@@ -316,7 +316,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Non-fatal: the postcard was sent and the DB row exists, so the user's
 	// verification flow works regardless. Nothing branches on this column's value.
 	if err := h.verificationRepo.UpdatePostgridRequestID(r.Context(), verificationReq.ID, postgridRequestID); err != nil {
-		slog.Error("failed to update postgrid_request_id", "verification_id", verificationReq.ID, "error", err)
+		slog.ErrorContext(r.Context(), "failed to update postgrid_request_id", "verification_id", verificationReq.ID, "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "update_postgrid_id")
 	}
 
@@ -434,7 +434,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			// Add user to region
 			if verificationReq.RegionID != nil {
 				if err := h.regionRepo.AddUserToRegionTx(r.Context(), tx, claims.UserID, *verificationReq.RegionID, isAdmin); err != nil {
-					slog.Warn("failed to add user to region", "error", err)
+					slog.WarnContext(r.Context(), "failed to add user to region", "error", err)
 				}
 			}
 
@@ -442,9 +442,9 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			if isAdmin {
 				adminUpgradeCount, err := h.regionRepo.UpgradeVerifiedUserRegionsToAdminTx(r.Context(), tx, claims.UserID)
 				if err != nil {
-					slog.Warn("failed to upgrade verified user_regions to admin", "user_id", claims.UserID, "error", err)
+					slog.WarnContext(r.Context(), "failed to upgrade verified user_regions to admin", "user_id", claims.UserID, "error", err)
 				} else if adminUpgradeCount > 0 {
-					slog.Info("upgraded verified user_regions to admin after postcard verification", "count", adminUpgradeCount, "user_id", claims.UserID)
+					slog.InfoContext(r.Context(), "upgraded verified user_regions to admin after postcard verification", "count", adminUpgradeCount, "user_id", claims.UserID)
 				}
 			}
 
@@ -521,7 +521,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 	// Queue verification complete notification
 	if h.notificationService != nil && verificationReq.RegionID != nil {
 		if err := h.notificationService.QueueVerificationComplete(r.Context(), claims.UserID, *verificationReq.RegionID); err != nil {
-			slog.Warn("failed to queue verification complete notification", "error", err)
+			slog.WarnContext(r.Context(), "failed to queue verification complete notification", "error", err)
 		}
 	}
 
@@ -567,7 +567,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	// Geocode address with Mapbox (address in memory only)
 	geocodeResult, err := h.mapboxService.GeocodeAddress(r.Context(), &req.Address)
 	if err != nil {
-		slog.Error("mapbox geocoding failed", "error", err)
+		slog.ErrorContext(r.Context(), "mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
 		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
 		return
@@ -962,7 +962,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				isAdmin := vouchee.PostcardVerified
 
 				if err := h.regionRepo.UpgradeUserRegionToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
-					slog.Error("failed to upgrade user_region", "error", err)
+					slog.ErrorContext(r.Context(), "failed to upgrade user_region", "error", err)
 					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region")
 				}
 			}
@@ -1035,7 +1035,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Queue vouch received notification
 	if h.notificationService != nil {
 		if err := h.notificationService.QueueVouchReceived(r.Context(), vouchedUserID, claims.UserID, regionID); err != nil {
-			slog.Warn("failed to queue vouch received notification", "error", err)
+			slog.WarnContext(r.Context(), "failed to queue vouch received notification", "error", err)
 		}
 	}
 
@@ -1047,7 +1047,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Queue vouch complete notification if auto-upgraded
 	if autoUpgraded && h.notificationService != nil {
 		if err := h.notificationService.QueueVouchComplete(r.Context(), vouchedUserID, regionID); err != nil {
-			slog.Warn("failed to queue vouch complete notification", "error", err)
+			slog.WarnContext(r.Context(), "failed to queue vouch complete notification", "error", err)
 		}
 	}
 
@@ -1079,7 +1079,7 @@ func (h *VerificationHandler) GetVouchStatus(w http.ResponseWriter, r *http.Requ
 	bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 	if err != nil {
 		// Non-fatal: log and continue with default values
-		slog.Warn("failed to check bootstrap mode", "error", err)
+		slog.WarnContext(r.Context(), "failed to check bootstrap mode", "error", err)
 		bootstrapMode = false
 		adminCount = 0
 	}
@@ -1245,10 +1245,10 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 		// Auto-upgrade if user now meets the threshold (e.g., region exited bootstrap mode)
 		if vouchCount >= vouchesRequired && !user.VouchVerified {
 			if err := h.userRepo.SetVouchVerified(r.Context(), claims.UserID, true); err != nil {
-				slog.Error("failed to auto-upgrade vouch verification", "error", err)
+				slog.ErrorContext(r.Context(), "failed to auto-upgrade vouch verification", "error", err)
 				_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "auto_upgrade_vouch")
 			} else {
-				slog.Info("auto-upgraded user to vouch-verified", "user_id", claims.UserID, "vouch_count", vouchCount, "vouches_required", vouchesRequired)
+				slog.InfoContext(r.Context(), "auto-upgraded user to vouch-verified", "user_id", claims.UserID, "vouch_count", vouchCount, "vouches_required", vouchesRequired)
 				// Refresh user data and update response
 				user, _ = h.userRepo.GetByID(r.Context(), claims.UserID)
 				response["vouch_verified"] = true

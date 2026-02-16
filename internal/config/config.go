@@ -413,6 +413,22 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// Log format must be valid
+	switch c.Log.Format {
+	case "json", "text":
+		// valid
+	default:
+		errs = append(errs, fmt.Sprintf("LOG_FORMAT %q is not valid (must be json or text)", c.Log.Format))
+	}
+
+	// Log level must be valid
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error":
+		// valid
+	default:
+		errs = append(errs, fmt.Sprintf("LOG_LEVEL %q is not valid (must be debug, info, warn, or error)", c.Log.Level))
+	}
+
 	// Email backend must be valid
 	if !c.Email.Backend.IsValid() {
 		errs = append(errs, fmt.Sprintf("EMAIL_BACKEND %q is not valid (must be mock, sendgrid, or smtp)", string(c.Email.Backend)))

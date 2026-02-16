@@ -163,19 +163,19 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 	isAdmin := user.PostcardVerified
 	upgradedCount, err := h.regionRepo.UpgradeAllPendingUserRegions(r.Context(), userID, isAdmin)
 	if err != nil {
-		slog.Warn("failed to upgrade pending user_regions", "user_id", userID, "error", err)
+		slog.WarnContext(r.Context(), "failed to upgrade pending user_regions", "user_id", userID, "error", err)
 		// Don't fail the request - the main vouch verification was granted
 	} else if upgradedCount > 0 {
-		slog.Info("upgraded pending user_regions to verified", "count", upgradedCount, "user_id", userID, "is_admin", isAdmin)
+		slog.InfoContext(r.Context(), "upgraded pending user_regions to verified", "count", upgradedCount, "user_id", userID, "is_admin", isAdmin)
 	}
 
 	// If user now has both verifications, also upgrade is_admin on already-verified regions
 	if isAdmin {
 		adminUpgradeCount, err := h.regionRepo.UpgradeVerifiedUserRegionsToAdmin(r.Context(), userID)
 		if err != nil {
-			slog.Warn("failed to upgrade verified user_regions to admin", "user_id", userID, "error", err)
+			slog.WarnContext(r.Context(), "failed to upgrade verified user_regions to admin", "user_id", userID, "error", err)
 		} else if adminUpgradeCount > 0 {
-			slog.Info("upgraded verified user_regions to admin", "count", adminUpgradeCount, "user_id", userID)
+			slog.InfoContext(r.Context(), "upgraded verified user_regions to admin", "count", adminUpgradeCount, "user_id", userID)
 			upgradedCount += adminUpgradeCount
 		}
 	}

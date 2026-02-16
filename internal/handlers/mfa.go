@@ -72,7 +72,7 @@ func (h *MFAHandler) InitSetup(w http.ResponseWriter, r *http.Request) {
 
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
-		slog.Info("mfa init setup: no claims in context")
+		slog.WarnContext(r.Context(), "mfa init setup: no claims in context")
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
 		return
 	}

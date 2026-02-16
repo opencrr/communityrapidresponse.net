@@ -47,7 +47,7 @@ func main() {
 	slog.Info("configuration loaded", "environment", cfg.Env)
 
 	if !cfg.MFA.Required {
-		slog.Warn("MFA is disabled, should only be used in development", "mfa_required", false)
+		slog.Warn("mfa is disabled, should only be used in development", "mfa_required", false)
 	}
 
 	// Initialize Sentry error tracking
