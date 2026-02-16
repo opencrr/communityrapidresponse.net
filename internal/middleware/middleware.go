@@ -94,6 +94,19 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	}
 }
 
+// MaxBodySize limits the size of request bodies to prevent memory exhaustion.
+// Returns 413 Request Entity Too Large if the body exceeds the limit.
+func MaxBodySize(limit int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, limit)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // ContentType sets the Content-Type header for JSON responses
 func ContentType(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

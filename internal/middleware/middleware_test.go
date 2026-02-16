@@ -122,6 +122,63 @@ func TestCORS(t *testing.T) {
 	})
 }
 
+func TestMaxBodySize(t *testing.T) {
+	t.Run("allows body within limit", func(t *testing.T) {
+		handler := MaxBodySize(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body := make([]byte, 512)
+			_, err := r.Body.Read(body)
+			if err != nil && err.Error() == "http: request body too large" {
+				t.Error("Body should be within limit")
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("POST", "/test", strings.NewReader(strings.Repeat("a", 512)))
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("rejects body exceeding limit", func(t *testing.T) {
+		handler := MaxBodySize(64)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body := make([]byte, 128)
+			_, err := r.Body.Read(body)
+			if err == nil {
+				t.Error("Expected error reading oversized body")
+			}
+			http.Error(w, "too large", http.StatusRequestEntityTooLarge)
+		}))
+
+		req := httptest.NewRequest("POST", "/test", strings.NewReader(strings.Repeat("a", 128)))
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("Expected status 413, got %d", rec.Code)
+		}
+	})
+
+	t.Run("nil body passes through", func(t *testing.T) {
+		handler := MaxBodySize(1024)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+	})
+}
+
 func TestContentType(t *testing.T) {
 	handler := ContentType(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

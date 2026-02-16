@@ -211,6 +211,7 @@ func (r *Router) Setup() http.Handler {
 	// Apply middleware chain
 	handler := http.Handler(r.mux)
 	handler = middleware.ContentType(handler)
+	handler = middleware.MaxBodySize(1 << 20)(handler) // 1MB request body limit
 	if r.csrfConfig != nil && r.csrfConfig.Enabled {
 		handler = middleware.CSRFProtection(r.csrfConfig.Secret, r.csrfConfig.SecureCookies)(handler)
 	}
