@@ -133,6 +133,7 @@ const (
 
 	// Account lockout
 	AuditActionAccountLocked = "account_locked"
+	AuditActionMFALocked     = "mfa_locked"
 )
 
 // AuditLogFilter represents filters for querying audit logs

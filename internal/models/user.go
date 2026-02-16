@@ -39,6 +39,7 @@ type User struct {
 	DeletedAt            *time.Time       `json:"-" db:"deleted_at"`
 	FailedLoginAttempts  int              `json:"-" db:"failed_login_attempts"`
 	LockedUntil          *time.Time       `json:"-" db:"locked_until"`
+	FailedMFAAttempts    int              `json:"-" db:"failed_mfa_attempts"`
 }
 
 // UserRegion represents a user's membership in a geographic region

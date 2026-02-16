@@ -347,6 +347,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Reset failed MFA attempts on new login (gives user fresh attempts)
+	if user.FailedMFAAttempts > 0 {
+		if resetErr := h.userRepo.ResetFailedMFAAttempts(r.Context(), user.ID); resetErr != nil {
+			slog.WarnContext(r.Context(), "failed to reset MFA attempts", "user_id", user.ID, "error", resetErr)
+		}
+	}
+
 	// Determine token type based on email verification and MFA status
 	var tokenType middleware.TokenType
 	var mfaAction string
