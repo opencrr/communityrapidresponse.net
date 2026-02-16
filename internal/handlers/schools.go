@@ -374,6 +374,17 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check vouchee is a member of the school (must have called /join first)
+	voucheeMembership, err := h.schoolRepo.GetUserSchool(r.Context(), vouchedUserID, schoolID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check vouchee membership", "school", "check_vouchee_membership")
+		return
+	}
+	if voucheeMembership == nil {
+		writeError(w, http.StatusBadRequest, "not_member", "This user has not joined this school yet")
+		return
+	}
+
 	// Check if vouchee is blocked
 	isBlocked, err := h.schoolRepo.IsUserBlockedInSchool(r.Context(), vouchedUserID, schoolID)
 	if err != nil {

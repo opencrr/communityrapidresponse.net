@@ -635,6 +635,27 @@ func TestSchoolHandler_Vouch(t *testing.T) {
 		}
 	})
 
+	t.Run("vouch for non-member returns error", func(t *testing.T) {
+		nonMemberTarget := suite.createTestUser("school_nonmember_target", models.TierUnverified)
+		defer suite.cleanup([]string{nonMemberTarget.ID}, nil, nil)
+		// Note: nonMemberTarget is NOT added to the school
+
+		claims := &middleware.Claims{
+			UserID:           voucherUser.ID,
+			Email:            voucherUser.Email,
+			VerificationTier: voucherUser.VerificationTier,
+		}
+		requestBody := models.SchoolVouchRequest{
+			UserIdentifier: nonMemberTarget.Email,
+		}
+		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
+		suite.handler.Vouch(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("monthly vouch limit check", func(t *testing.T) {
 		// Create 10 additional users and vouch for each to exhaust the monthly limit
 		limitVoucherUser := suite.createTestUser("school_limit_voucher", models.TierPostcard)
