@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,25 @@ func TestAuthHandler_Register(t *testing.T) {
 			"username": "shortpass",
 			"email":    "short@registertest.com",
 			"password": "short",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Register(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("rejects too long password", func(t *testing.T) {
+		body := map[string]string{
+			"username": "longpass",
+			"email":    "long@registertest.com",
+			"password": strings.Repeat("a", 129),
 		}
 		bodyBytes, _ := json.Marshal(body)
 
@@ -684,6 +704,25 @@ func TestAuthHandler_ChangePassword(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects too long new password", func(t *testing.T) {
+		body := map[string]string{
+			"current_password": "newpassword12345",
+			"new_password":     strings.Repeat("a", 129),
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.Authenticate(http.HandlerFunc(handler.ChangePassword)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", rec.Code)
+		}
+	})
+
 	t.Run("rejects unauthenticated request", func(t *testing.T) {
 		body := map[string]string{
 			"current_password": "newpassword12345",
@@ -886,6 +925,24 @@ func TestAuthHandler_ResetPassword(t *testing.T) {
 		body := map[string]string{
 			"token":    rawToken,
 			"password": "short",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/reset-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ResetPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("rejects too long password", func(t *testing.T) {
+		body := map[string]string{
+			"token":    "long_password_reset_token",
+			"password": strings.Repeat("a", 129),
 		}
 		bodyBytes, _ := json.Marshal(body)
 
