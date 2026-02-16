@@ -289,6 +289,9 @@ func TestSignalGroupHandler_List(t *testing.T) {
 	unverifiedUser := suite.createTestUser("sg_unverified", models.TierUnverified)
 	region := suite.createTestRegion("List Test Region")
 
+	// Add verified user to region so they pass membership check
+	suite.addUserToRegion(verifiedUser.ID, region.ID, false)
+
 	// Create a signal group
 	group := &models.SignalGroup{
 		RegionID:  &region.ID,
@@ -380,6 +383,59 @@ func TestSignalGroupHandler_List(t *testing.T) {
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("non-member verified user gets 403", func(t *testing.T) {
+		nonMember := suite.createTestUser("sg_nonmember", models.TierVouched)
+		defer suite.cleanup([]string{nonMember.ID}, nil, nil)
+
+		req := httptest.NewRequest("GET", "/api/v1/signal-groups?region_id="+region.ID, nil)
+
+		claims := &middleware.Claims{
+			UserID:           nonMember.ID,
+			Email:            nonMember.Email,
+			VerificationTier: nonMember.VerificationTier,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.List(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("superuser can list any region", func(t *testing.T) {
+		superuser := suite.createTestUser("sg_superuser_list", models.TierPostcard)
+		defer suite.cleanup([]string{superuser.ID}, nil, nil)
+		// Note: superuser is NOT added to region
+
+		req := httptest.NewRequest("GET", "/api/v1/signal-groups?region_id="+region.ID, nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.List(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body models.SignalGroupListResponse
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		if len(body.Groups) == 0 {
+			t.Error("Expected at least one group in response")
 		}
 	})
 }
