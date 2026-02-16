@@ -1342,6 +1342,105 @@ func TestE2E_SignalGroupsEmptyResponse(t *testing.T) {
 	})
 }
 
+func TestE2E_SignalGroupRegionAccessControl(t *testing.T) {
+	suite := SetupE2ETest(t)
+	ctx := context.Background()
+
+	// Register user A and make vouch-verified
+	userAID := suite.registerOrGetUserID("sgaccess_a", "sgaccess_a@test.com", "securepassword123")
+	suite.disableMFA(userAID)
+	suite.makeUserVouchVerified(userAID)
+
+	// Login user A to get token with vouch-verified claims
+	respA := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "sgaccess_a@test.com", "password": "securepassword123",
+	}, "")
+	var loginA models.LoginResponse
+	_ = json.NewDecoder(respA.Body).Decode(&loginA)
+	_ = respA.Body.Close()
+	tokenA := loginA.Token
+
+	// Register user B and make superuser (to create regions easily)
+	userBID := suite.registerOrGetUserID("sgaccess_b", "sgaccess_b@test.com", "securepassword123")
+	suite.disableMFA(userBID)
+	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET verification_tier = 2, postcard_verified = TRUE, vouch_verified = TRUE, is_superuser = TRUE WHERE id = ?", userBID)
+
+	respB := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": "sgaccess_b@test.com", "password": "securepassword123",
+	}, "")
+	var loginB models.LoginResponse
+	_ = json.NewDecoder(respB.Body).Decode(&loginB)
+	_ = respB.Body.Close()
+	tokenB := loginB.Token
+
+	// Create two separate regions
+	createRespA := suite.request("POST", "/api/v1/communities", map[string]interface{}{
+		"name": "Access Control Region A",
+		"type": "city",
+		"geometry": map[string]interface{}{
+			"type":        "Polygon",
+			"coordinates": [][][]float64{{{-96.6, 27.4}, {-96.4, 27.4}, {-96.4, 27.5}, {-96.6, 27.5}, {-96.6, 27.4}}},
+		},
+	}, tokenB)
+	var bodyA map[string]string
+	_ = json.NewDecoder(createRespA.Body).Decode(&bodyA)
+	_ = createRespA.Body.Close()
+	regionAID := bodyA["region_id"]
+
+	createRespB := suite.request("POST", "/api/v1/communities", map[string]interface{}{
+		"name": "Access Control Region B",
+		"type": "city",
+		"geometry": map[string]interface{}{
+			"type":        "Polygon",
+			"coordinates": [][][]float64{{{-95.6, 26.4}, {-95.4, 26.4}, {-95.4, 26.5}, {-95.6, 26.5}, {-95.6, 26.4}}},
+		},
+	}, tokenB)
+	var bodyB map[string]string
+	_ = json.NewDecoder(createRespB.Body).Decode(&bodyB)
+	_ = createRespB.Body.Close()
+	regionBID := bodyB["region_id"]
+
+	// Add user A to region A only
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO user_regions (id, user_id, region_id, is_admin, verified_at) VALUES (UUID(), ?, ?, FALSE, NOW()) ON DUPLICATE KEY UPDATE is_admin = FALSE", userAID, regionAID)
+
+	// Create a signal group in region B
+	createGroupResp := suite.request("POST", "/api/v1/signal-groups", map[string]interface{}{
+		"region_id":         regionBID,
+		"name":              "Region B Group",
+		"encrypted_payload": "dGVzdC1lbmNyeXB0ZWQtcGF5bG9hZA==",
+		"encryption_iv":     "dGVzdC1pdi0xMjM=",
+		"wrapped_keys":      []map[string]string{{"user_id": userBID, "wrapped_dek": "dGVzdC13cmFwcGVkLWRlaw=="}},
+	}, tokenB)
+	_ = createGroupResp.Body.Close()
+
+	defer func() {
+		suite.cleanupSignalGroupSecrets(regionAID)
+		suite.cleanupSignalGroupSecrets(regionBID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE region_id IN (?, ?)", regionAID, regionBID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id IN (?, ?)", regionAID, regionBID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id IN (?, ?)", regionAID, regionBID)
+		suite.cleanup(userAID, userBID)
+	}()
+
+	t.Run("user cannot list signal groups for non-member region", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/signal-groups?region_id="+regionBID, nil, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("user can list signal groups for own region", func(t *testing.T) {
+		resp := suite.request("GET", "/api/v1/signal-groups?region_id="+regionAID, nil, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+	})
+}
+
 func TestE2E_AdminHierarchyPropagation(t *testing.T) {
 	suite := SetupE2ETest(t)
 

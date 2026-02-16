@@ -199,6 +199,18 @@ func (h *SignalGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if regionID != "" {
+		// Verify the caller is a member of the requested region (superusers bypass)
+		if !claims.IsSuperuser {
+			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to check region access", "signal_group", "check_region_access")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You do not have access to this region")
+				return
+			}
+		}
 		groups, err = h.groupRepo.ListByRegion(r.Context(), regionID)
 	} else {
 		groups, err = h.groupRepo.ListByUser(r.Context(), claims.UserID)
