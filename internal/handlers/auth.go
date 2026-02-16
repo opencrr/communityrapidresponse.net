@@ -167,6 +167,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
+		return
+	}
+
 	// Check for '+' alias in email (reject outright)
 	if services.ContainsEmailAlias(req.Email) {
 		writeError(w, http.StatusBadRequest, "validation_error", "Email aliases with '+' are not allowed")
@@ -673,6 +678,11 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.NewPassword) > 128 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
+		return
+	}
+
 	// Get user to verify current password
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
@@ -848,6 +858,11 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.Password) < 12 {
 		writeError(w, http.StatusBadRequest, "validation_error", "Password must be at least 12 characters")
+		return
+	}
+
+	if len(req.Password) > 128 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
 		return
 	}
 
