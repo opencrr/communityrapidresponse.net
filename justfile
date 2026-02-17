@@ -495,6 +495,20 @@ tidy:
     @echo "🧹 Tidying modules..."
     go mod tidy
 
+# Run security scanners (gosec + govulncheck)
+security:
+    @echo "🔒 Running security scanners..."
+    @command -v gosec >/dev/null 2>&1 || { echo "Installing gosec..."; go install github.com/securego/gosec/v2/cmd/gosec@latest; }
+    gosec ./...
+    @command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
+    govulncheck ./...
+    @echo "✅ Security scan complete"
+
+# Verify module dependency integrity
+verify:
+    @echo "🔍 Verifying module dependencies..."
+    go mod verify
+
 # =============================================================================
 # Docker Management
 # =============================================================================

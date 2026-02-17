@@ -43,7 +43,7 @@ func GetTestDataDir() string {
 // LoadOSMSearchFixture loads an OSM search fixture from file
 func LoadOSMSearchFixture(name string) ([]OSMSearchResult, error) {
 	path := filepath.Join(GetTestDataDir(), "osm", name)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- test fixture path from controlled test data dir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read fixture %s: %w", name, err)
 	}
@@ -59,7 +59,7 @@ func LoadOSMSearchFixture(name string) ([]OSMSearchResult, error) {
 // LoadOSMReverseFixture loads an OSM reverse geocoding fixture from file
 func LoadOSMReverseFixture(name string) (*OSMReverseResult, error) {
 	path := filepath.Join(GetTestDataDir(), "osm", name)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- test fixture path from controlled test data dir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read fixture %s: %w", name, err)
 	}

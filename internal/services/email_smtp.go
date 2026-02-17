@@ -105,6 +105,7 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 func (s *SMTPEmailService) sendWithTLS(addr string, auth smtp.Auth, from, to string, message []byte) error {
 	tlsConfig := &tls.Config{
 		ServerName: s.host,
+		MinVersion: tls.VersionTLS12,
 	}
 
 	conn, err := tls.Dial("tcp", addr, tlsConfig)

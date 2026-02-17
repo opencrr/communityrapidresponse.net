@@ -1774,7 +1774,7 @@ func generatePostcardRef() (string, error) {
 				return "", err
 			}
 			if int(buf[0]) < maxUnbiased {
-				result[i] = postcardRefCharset[int(buf[0])%len(postcardRefCharset)]
+				result[i] = postcardRefCharset[int(buf[0])%len(postcardRefCharset)] // #nosec G602 -- buf[0] safe: rand.Read fills exactly 1 byte
 				break
 			}
 		}
