@@ -988,7 +988,14 @@ func (r *RegionRepository) GetPendingVouchUsersForAdmin(ctx context.Context, adm
 			u.id, u.username, u.email, u.created_at as user_created_at,
 			gr.id as region_id, gr.name as region_name,
 			ur.verified_at as request_created_at,
-			COALESCE((SELECT COUNT(*) FROM vouches v WHERE v.vouched_user_id = u.id AND v.region_id = gr.id), 0) as vouch_count
+			COALESCE((
+				SELECT COUNT(*) FROM vouches v
+				WHERE v.vouched_user_id = u.id
+				AND (v.region_id = gr.id OR v.region_id IN (
+					SELECT g2.id FROM geographic_regions g2
+					WHERE g2.parent_region_id = gr.id
+				))
+			), 0) as vouch_count
 		FROM user_regions ur
 		JOIN users u ON ur.user_id = u.id
 		JOIN geographic_regions gr ON ur.region_id = gr.id
@@ -1058,7 +1065,14 @@ func (r *RegionRepository) GetPendingVouchUsersForBootstrapMode(ctx context.Cont
 			u.id, u.username, u.email, u.created_at as user_created_at,
 			gr.id as region_id, gr.name as region_name,
 			ur.verified_at as request_created_at,
-			COALESCE((SELECT COUNT(*) FROM vouches v WHERE v.vouched_user_id = u.id AND v.region_id = gr.id), 0) as vouch_count
+			COALESCE((
+				SELECT COUNT(*) FROM vouches v
+				WHERE v.vouched_user_id = u.id
+				AND (v.region_id = gr.id OR v.region_id IN (
+					SELECT g2.id FROM geographic_regions g2
+					WHERE g2.parent_region_id = gr.id
+				))
+			), 0) as vouch_count
 		FROM user_regions ur
 		JOIN users u ON ur.user_id = u.id
 		JOIN geographic_regions gr ON ur.region_id = gr.id
@@ -1491,13 +1505,23 @@ func (r *RegionRepository) IsRegionInBootstrapMode(ctx context.Context, regionID
 	return count < minAdminsToEndBootstrap, count, nil
 }
 
-// GetUserPendingVouchRegion retrieves the region where a user has a pending vouch request
+// GetUserPendingVouchRegion retrieves the most specific region where a user has a pending vouch request.
+// Orders by specificity so the most granular region (city_block > neighborhood > locality > city > county > state) is returned first.
 func (r *RegionRepository) GetUserPendingVouchRegion(ctx context.Context, userID string) (*models.GeographicRegion, error) {
 	query := `
 		SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
 		FROM user_regions ur
 		JOIN geographic_regions gr ON ur.region_id = gr.id
 		WHERE ur.user_id = ? AND ur.verification_status = 'pending'
+		ORDER BY CASE gr.region_type
+			WHEN 'city_block' THEN 1
+			WHEN 'neighborhood' THEN 2
+			WHEN 'locality' THEN 3
+			WHEN 'city' THEN 4
+			WHEN 'county' THEN 5
+			WHEN 'state' THEN 6
+			ELSE 7
+		END ASC
 		LIMIT 1
 	`
 
@@ -1861,4 +1885,251 @@ func (r *RegionRepository) GetUsersInRegion(ctx context.Context, regionID string
 	}
 
 	return users, nil
+}
+
+// GetAncestorRegions returns the ancestor chain for a region (parent → grandparent → ... → state)
+// ordered from most specific to least specific
+func (r *RegionRepository) GetAncestorRegions(ctx context.Context, regionID string) ([]models.GeographicRegion, error) {
+	query := `
+		WITH RECURSIVE ancestors AS (
+			SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+			FROM geographic_regions gr
+			JOIN geographic_regions child ON gr.id = child.parent_region_id
+			WHERE child.id = ?
+			UNION ALL
+			SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+			FROM geographic_regions gr
+			JOIN ancestors a ON gr.id = a.parent_region_id
+		)
+		SELECT id, name, region_type, parent_region_id, created_by, created_at
+		FROM ancestors
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, regionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var regions []models.GeographicRegion
+	for rows.Next() {
+		var region models.GeographicRegion
+		if err := rows.Scan(
+			&region.ID,
+			&region.Name,
+			&region.RegionType,
+			&region.ParentRegionID,
+			&region.CreatedBy,
+			&region.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		regions = append(regions, region)
+	}
+
+	return regions, rows.Err()
+}
+
+// GetAncestorRegionsTx returns the ancestor chain for a region within a transaction
+func (r *RegionRepository) GetAncestorRegionsTx(ctx context.Context, tx *sql.Tx, regionID string) ([]models.GeographicRegion, error) {
+	query := `
+		WITH RECURSIVE ancestors AS (
+			SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+			FROM geographic_regions gr
+			JOIN geographic_regions child ON gr.id = child.parent_region_id
+			WHERE child.id = ?
+			UNION ALL
+			SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+			FROM geographic_regions gr
+			JOIN ancestors a ON gr.id = a.parent_region_id
+		)
+		SELECT id, name, region_type, parent_region_id, created_by, created_at
+		FROM ancestors
+	`
+
+	rows, err := tx.QueryContext(ctx, query, regionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var regions []models.GeographicRegion
+	for rows.Next() {
+		var region models.GeographicRegion
+		if err := rows.Scan(
+			&region.ID,
+			&region.Name,
+			&region.RegionType,
+			&region.ParentRegionID,
+			&region.CreatedBy,
+			&region.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		regions = append(regions, region)
+	}
+
+	return regions, rows.Err()
+}
+
+// AddUserToAncestorRegionsPendingTx adds pending user_region entries for all ancestors of a region.
+// Ignores duplicate key errors (user may already be in that region).
+func (r *RegionRepository) AddUserToAncestorRegionsPendingTx(ctx context.Context, tx *sql.Tx, userID, regionID string) error {
+	ancestors, err := r.GetAncestorRegionsTx(ctx, tx, regionID)
+	if err != nil {
+		return err
+	}
+
+	for _, ancestor := range ancestors {
+		_, err := r.AddUserToRegionPendingTx(ctx, tx, userID, ancestor.ID)
+		if err != nil {
+			// Ignore duplicate key errors — user may already be in this region
+			if strings.Contains(err.Error(), "Duplicate entry") ||
+				strings.Contains(err.Error(), "already has a membership") {
+				continue
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+// AddUserToAncestorRegionsPending adds pending user_region entries for all ancestors of a region (non-transactional).
+// Ignores duplicate key errors (user may already be in that region).
+func (r *RegionRepository) AddUserToAncestorRegionsPending(ctx context.Context, userID, regionID string) error {
+	ancestors, err := r.GetAncestorRegions(ctx, regionID)
+	if err != nil {
+		return err
+	}
+
+	for _, ancestor := range ancestors {
+		_, err := r.AddUserToRegionPending(ctx, userID, ancestor.ID)
+		if err != nil {
+			// Ignore duplicate key errors — user may already be in this region
+			if strings.Contains(err.Error(), "Duplicate entry") ||
+				strings.Contains(err.Error(), "already has a membership") {
+				continue
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+// GetUserPendingVouchRegions retrieves ALL regions where a user has a pending vouch request,
+// ordered most-specific first
+func (r *RegionRepository) GetUserPendingVouchRegions(ctx context.Context, userID string) ([]models.GeographicRegion, error) {
+	query := `
+		SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+		FROM user_regions ur
+		JOIN geographic_regions gr ON ur.region_id = gr.id
+		WHERE ur.user_id = ? AND ur.verification_status = 'pending'
+		ORDER BY CASE gr.region_type
+			WHEN 'city_block' THEN 1 WHEN 'neighborhood' THEN 2 WHEN 'locality' THEN 3
+			WHEN 'city' THEN 4 WHEN 'county' THEN 5 WHEN 'state' THEN 6
+			ELSE 7
+		END ASC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var regions []models.GeographicRegion
+	for rows.Next() {
+		var region models.GeographicRegion
+		if err := rows.Scan(
+			&region.ID,
+			&region.Name,
+			&region.RegionType,
+			&region.ParentRegionID,
+			&region.CreatedBy,
+			&region.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		regions = append(regions, region)
+	}
+
+	return regions, rows.Err()
+}
+
+// UpgradeUserRegionAndAncestorsToVerifiedTx upgrades pending user_region entries
+// for the target region AND all its ancestors.
+// Uses a two-step approach (get ancestors then UPDATE with explicit IDs) to avoid
+// MariaDB compatibility issues with CTEs inside IN() subqueries.
+func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerifiedTx(ctx context.Context, tx *sql.Tx, userID, regionID string, isAdmin bool) error {
+	// Collect target region + all ancestor IDs
+	ancestors, err := r.GetAncestorRegionsTx(ctx, tx, regionID)
+	if err != nil {
+		return err
+	}
+
+	regionIDs := make([]interface{}, 0, len(ancestors)+1)
+	regionIDs = append(regionIDs, regionID)
+	for _, a := range ancestors {
+		regionIDs = append(regionIDs, a.ID)
+	}
+
+	// Build IN clause with correct number of placeholders
+	placeholders := strings.Repeat("?,", len(regionIDs))
+	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
+
+	query := `
+		UPDATE user_regions
+		SET verification_status = 'verified', is_admin = ?, verified_at = ?
+		WHERE user_id = ?
+			AND verification_status = 'pending'
+			AND region_id IN (` + placeholders + `)
+	`
+
+	now := time.Now().UTC()
+	args := make([]interface{}, 0, 3+len(regionIDs))
+	args = append(args, isAdmin, now, userID)
+	args = append(args, regionIDs...)
+
+	_, err = tx.ExecContext(ctx, query, args...)
+	return err
+}
+
+// GetMostSpecificSharedPendingRegion finds the most specific region where the voucher
+// is verified AND the vouchee has a pending membership, excluding state-level regions.
+func (r *RegionRepository) GetMostSpecificSharedPendingRegion(ctx context.Context, voucherID, voucheeID string) (*models.GeographicRegion, error) {
+	query := `
+		SELECT gr.id, gr.name, gr.region_type, gr.parent_region_id, gr.created_by, gr.created_at
+		FROM user_regions ur_voucher
+		JOIN user_regions ur_vouchee ON ur_voucher.region_id = ur_vouchee.region_id
+		JOIN geographic_regions gr ON ur_voucher.region_id = gr.id
+		WHERE ur_voucher.user_id = ? AND ur_voucher.verification_status = 'verified'
+			AND ur_vouchee.user_id = ? AND ur_vouchee.verification_status = 'pending'
+			AND gr.region_type != 'state'
+		ORDER BY CASE gr.region_type
+			WHEN 'city_block' THEN 1 WHEN 'neighborhood' THEN 2 WHEN 'locality' THEN 3
+			WHEN 'city' THEN 4 WHEN 'county' THEN 5 ELSE 6
+		END ASC
+		LIMIT 1
+	`
+
+	region := &models.GeographicRegion{}
+	err := r.db.QueryRowContext(ctx, query, voucherID, voucheeID).Scan(
+		&region.ID,
+		&region.Name,
+		&region.RegionType,
+		&region.ParentRegionID,
+		&region.CreatedBy,
+		&region.CreatedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return region, nil
 }

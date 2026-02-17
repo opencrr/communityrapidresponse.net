@@ -650,9 +650,19 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 				return database.ErrPendingExists
 			}
 
-			// Create pending entry
+			// Create pending entry for the most-specific region
 			userRegionID, err = h.regionRepo.AddUserToRegionPendingTx(r.Context(), tx, claims.UserID, regionID)
-			return err
+			if err != nil {
+				return err
+			}
+
+			// Create pending entries for all ancestor regions
+			if err := h.regionRepo.AddUserToAncestorRegionsPendingTx(r.Context(), tx, claims.UserID, regionID); err != nil {
+				slog.WarnContext(r.Context(), "failed to create ancestor pending entries", "error", err)
+				// Non-fatal: primary pending entry was created
+			}
+
+			return nil
 		})
 		if txErr != nil {
 			if errors.Is(txErr, database.ErrPendingExists) {
@@ -687,6 +697,12 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		if err != nil {
 			writeServerError(w, r, err, "Failed to create vouch request", "verification", "request_vouch")
 			return
+		}
+
+		// Create pending entries for all ancestor regions
+		if err := h.regionRepo.AddUserToAncestorRegionsPending(r.Context(), claims.UserID, regionID); err != nil {
+			slog.WarnContext(r.Context(), "failed to create ancestor pending entries", "error", err)
+			// Non-fatal: primary pending entry was created
 		}
 	}
 
@@ -797,22 +813,43 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get region ID - either from request or from user's pending/verified region
-	// We need to determine region ID early for bootstrap mode check
+	// Get region ID - either from request or auto-detect the best shared region
 	regionID := req.RegionID
 	if regionID == "" {
-		// Auto-detect from pending vouch request first
-		pendingRegion, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), vouchedUserID)
+		// Auto-detect: find the most specific region where voucher is verified
+		// and vouchee has a pending membership (excludes state level)
+		sharedRegion, err := h.regionRepo.GetMostSpecificSharedPendingRegion(r.Context(), claims.UserID, vouchedUserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check pending vouch request", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Failed to check shared region", "verification", "vouch_for_user")
 			return
 		}
-		if pendingRegion != nil {
-			regionID = pendingRegion.ID
+		if sharedRegion != nil {
+			regionID = sharedRegion.ID
 		} else {
-			writeError(w, http.StatusBadRequest, "no_vouch_request", "User has not requested vouch verification for any region")
-			return
+			// Fall back to the vouchee's most specific pending region
+			pendingRegion, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), vouchedUserID)
+			if err != nil {
+				writeServerError(w, r, err, "Failed to check pending vouch request", "verification", "vouch_for_user")
+				return
+			}
+			if pendingRegion != nil {
+				regionID = pendingRegion.ID
+			} else {
+				writeError(w, http.StatusBadRequest, "no_vouch_request", "User has not requested vouch verification for any region")
+				return
+			}
 		}
+	}
+
+	// Enforce state-level vouch cap: no vouching at state level
+	targetRegion, err := h.regionRepo.GetByID(r.Context(), regionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get region", "verification", "vouch_for_user")
+		return
+	}
+	if targetRegion.RegionType == models.RegionTypeState {
+		writeError(w, http.StatusBadRequest, "state_level_vouch", "State-level vouching is not allowed")
+		return
 	}
 
 	// Check bootstrap mode for this region
@@ -826,6 +863,21 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	vouchesRequired := requiredVouchesForTier2 // Normal mode: 2 vouches
 	if bootstrapMode {
 		vouchesRequired = bootstrapVouchesRequired // Bootstrap mode: 3 vouches
+	}
+
+	// Bootstrap mode guard: ancestor-level vouching is NOT allowed in bootstrap mode.
+	// The vouchee's most-specific pending region must equal the target region.
+	if bootstrapMode {
+		mostSpecificPending, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), vouchedUserID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to check vouchee pending region", "verification", "vouch_for_user")
+			return
+		}
+		if mostSpecificPending != nil && mostSpecificPending.ID != regionID {
+			writeError(w, http.StatusBadRequest, "bootstrap_exact_region",
+				"Bootstrap mode requires vouching at the exact region level, not ancestor regions")
+			return
+		}
 	}
 
 	// Check voucher eligibility based on mode (using fresh DB values, not JWT claims)
@@ -947,8 +999,8 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 
-			// Count total vouches for auto-upgrade check
-			totalVouches, err = h.vouchRepo.CountVouchesForUserTx(r.Context(), tx, vouchedUserID, regionID)
+			// Count total vouches with descendant accumulation for auto-upgrade check
+			totalVouches, err = h.vouchRepo.CountVouchesForUserWithDescendantsTx(r.Context(), tx, vouchedUserID, regionID)
 			if err != nil {
 				return err
 			}
@@ -968,9 +1020,11 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				// Normally postcard comes after vouch, but migrated users may already have postcard
 				isAdmin := vouchee.PostcardVerified
 
-				if err := h.regionRepo.UpgradeUserRegionToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
-					slog.ErrorContext(r.Context(), "failed to upgrade user_region", "error", err)
-					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region")
+				// Upgrade the target region AND all ancestor regions from pending → verified
+				if err := h.regionRepo.UpgradeUserRegionAndAncestorsToVerifiedTx(r.Context(), tx, vouchedUserID, regionID, isAdmin); err != nil {
+					slog.ErrorContext(r.Context(), "failed to upgrade user_region and ancestors", "error", err)
+					_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region_ancestors")
+					return err
 				}
 			}
 
@@ -1012,7 +1066,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			writeServerError(w, r, err, "Failed to create vouch", "verification", "vouch_for_user")
 			return
 		}
-		totalVouches, err = h.vouchRepo.CountVouchesForUser(r.Context(), vouchedUserID, regionID)
+		totalVouches, err = h.vouchRepo.CountVouchesForUserWithDescendants(r.Context(), vouchedUserID, regionID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to count vouches", "verification", "vouch_for_user")
 			return
@@ -1023,6 +1077,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			_ = h.userRepo.UpdateVerificationTier(r.Context(), vouchedUserID, models.TierVouched)
 			// Admin requires both postcard and vouch verification
 			// Normally postcard comes after vouch, but migrated users may already have postcard
+			// Upgrade the target region + all ancestor regions
 			_ = h.regionRepo.UpgradeUserRegionToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified)
 		}
 	}
@@ -1102,15 +1157,15 @@ func (h *VerificationHandler) GetVouchStatus(w http.ResponseWriter, r *http.Requ
 		vouchesRequired = bootstrapVouchesRequired
 	}
 
-	// Count vouches
-	totalVouches, err := h.vouchRepo.CountVouchesForUser(r.Context(), userID, regionID)
+	// Count vouches with descendant accumulation
+	totalVouches, err := h.vouchRepo.CountVouchesForUserWithDescendants(r.Context(), userID, regionID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to count vouches", "verification", "get_status")
 		return
 	}
 
-	// Get vouchers
-	vouchers, err := h.vouchRepo.GetVouchersForUser(r.Context(), userID, regionID)
+	// Get vouchers with descendant accumulation
+	vouchers, err := h.vouchRepo.GetVouchersForUserWithDescendants(r.Context(), userID, regionID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to get vouchers", "verification", "get_status")
 		return
@@ -1241,15 +1296,18 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Check for pending vouch verification request (user_regions with status='pending')
+	// Check for pending vouch verification requests (user_regions with status='pending')
 	// OR postcard-verified users with verified region who aren't vouch-verified yet
-	pendingVouchRegion, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), claims.UserID)
-	if err == nil && pendingVouchRegion != nil {
-		// User has a pending vouch request
-		vouchCount, _ := h.vouchRepo.CountVouchesForUser(r.Context(), claims.UserID, pendingVouchRegion.ID)
+	pendingVouchRegions, err := h.regionRepo.GetUserPendingVouchRegions(r.Context(), claims.UserID)
+	if err == nil && len(pendingVouchRegions) > 0 {
+		// Most specific pending region (first in list)
+		mostSpecificRegion := pendingVouchRegions[0]
+
+		// Use descendant-aware vouch counting for the most specific region
+		vouchCount, _ := h.vouchRepo.CountVouchesForUserWithDescendants(r.Context(), claims.UserID, mostSpecificRegion.ID)
 
 		// Check bootstrap mode for this region to determine threshold
-		bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), pendingVouchRegion.ID)
+		bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), mostSpecificRegion.ID)
 		vouchesRequired := requiredVouchesForTier2
 		if err == nil && bootstrapMode {
 			vouchesRequired = bootstrapVouchesRequired
@@ -1269,10 +1327,22 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
+		// Backward compat: keep singular pending_vouch_region (most specific)
 		response["pending_vouch_region"] = map[string]interface{}{
-			"id":   pendingVouchRegion.ID,
-			"name": pendingVouchRegion.Name,
+			"id":   mostSpecificRegion.ID,
+			"name": mostSpecificRegion.Name,
 		}
+
+		// New: include all pending regions with hierarchy info
+		pendingRegionsList := make([]map[string]interface{}, 0, len(pendingVouchRegions))
+		for _, region := range pendingVouchRegions {
+			pendingRegionsList = append(pendingRegionsList, map[string]interface{}{
+				"id":   region.ID,
+				"name": region.Name,
+				"type": string(region.RegionType),
+			})
+		}
+		response["pending_vouch_regions"] = pendingRegionsList
 		response["vouch_count"] = vouchCount
 
 		if err == nil {

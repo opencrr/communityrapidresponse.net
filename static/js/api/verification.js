@@ -63,12 +63,15 @@ export async function requestVouchVerification(address) {
 /**
  * Vouch for another user (Tier 1 only)
  * @param {string} userId - UUID of user to vouch for
+ * @param {string} [regionId] - Optional region ID to vouch at (for ancestor-level vouching)
  * @returns {Promise<Object>} Vouch result
  */
-export async function vouchForUser(userId) {
-    const response = await post('/verification/vouch', {
-        user_id: userId,
-    });
+export async function vouchForUser(userId, regionId = null) {
+    const body = { user_id: userId };
+    if (regionId) {
+        body.region_id = regionId;
+    }
+    const response = await post('/verification/vouch', body);
     return response;
 }
 
