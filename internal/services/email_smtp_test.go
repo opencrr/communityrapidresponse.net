@@ -90,11 +90,8 @@ func TestSMTPSend_CRLFInjectedToField(t *testing.T) {
 		t.Error("sanitized To still contains CR or LF")
 	}
 
-	if strings.Contains(sanitized, "Bcc:") {
-		// The Bcc text is still there but on the same line — not a separate header
-		// This is expected; the key point is no CRLF to start a new header line
-	}
-
+	// The "Bcc:" text remains but is collapsed onto the same line as the To value,
+	// so it cannot act as a separate SMTP header.
 	expected := "victim@example.comBcc: attacker@evil.com"
 	if sanitized != expected {
 		t.Errorf("expected %q, got %q", expected, sanitized)
