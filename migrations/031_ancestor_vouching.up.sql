@@ -21,10 +21,9 @@ CREATE TEMPORARY TABLE IF NOT EXISTS tmp_ancestor_backfill (
 -- Step 2: Populate the temp table using a recursive CTE
 -- For each user_region, walk up the parent chain and collect missing ancestors.
 -- Use the "best" status: if user is verified at child, ancestors should be verified too.
--- is_admin is always FALSE for ancestor entries — admin rights are region-specific
--- and do not propagate upward through the hierarchy.
+-- is_admin propagates upward — ancestor regions need admins for management operations.
 INSERT IGNORE INTO tmp_ancestor_backfill (user_id, region_id, verification_status, is_admin, verified_at)
-SELECT DISTINCT ur.user_id, ancestor_id, ur.verification_status, FALSE, ur.verified_at
+SELECT DISTINCT ur.user_id, ancestor_id, ur.verification_status, ur.is_admin, ur.verified_at
 FROM user_regions ur
 JOIN (
     -- Get all ancestor relationships: (child_id, ancestor_id)
