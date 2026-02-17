@@ -110,14 +110,14 @@ jobs:
           TEST_DB_NAME: communityrapidresponse_test
         run: go test ./tests/... -v -run E2E
 
-      - name: Run tests with coverage
+      - name: Generate coverage report
         env:
           TEST_DB_HOST: 127.0.0.1
           TEST_DB_PORT: 3306
           TEST_DB_USER: root
           TEST_DB_PASSWORD: testroot
           TEST_DB_NAME: communityrapidresponse_test
-        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+        run: go test ./internal/... -coverprofile=coverage.out -covermode=atomic -count=1
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -146,7 +146,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.10.1
           args: --timeout=5m
 
   build:
