@@ -193,7 +193,7 @@ func NewMockMapboxService() *MockMapboxService {
 		DefaultCountyName:       "San Francisco County",
 		DefaultLocalityName:     "",
 		DefaultNeighborhoodName: "",
-		PublicToken:             "pk.mock_public_token",
+		PublicToken:             "pk.mock_public_token", // #nosec G101 -- test mock value
 		GeocodeAddressCalls:     make([]GeocodeAddressCall, 0),
 		ReverseGeocodeCalls:     make([]ReverseGeocodeCall, 0),
 	}

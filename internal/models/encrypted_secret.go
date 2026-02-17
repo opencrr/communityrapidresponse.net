@@ -7,7 +7,7 @@ type SecretType string
 
 const (
 	SecretTypeSignalInvite      SecretType = "signal_invite"
-	SecretTypeMeshtasticChannel SecretType = "meshtastic_channel"
+	SecretTypeMeshtasticChannel SecretType = "meshtastic_channel" // #nosec G101 -- not a credential, enum value
 )
 
 // EncryptedSecret represents an encrypted secret stored for a signal group or meshtastic channel

@@ -1,0 +1,46 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - gosec
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - gocritic
+  settings:
+    gosec:
+      excludes:
+        # math/rand used only for non-security purposes (jitter, test data)
+        - G404
+        # Structured logging (slog) sanitizes values; not injectable
+        - G706
+        # Request/config structs legitimately need Password/Secret/APIKey fields
+        - G117
+        # All HTTP clients use config-driven URLs (env vars), not user input
+        - G704
+    gocritic:
+      enabled-tags:
+        - diagnostic
+      disabled-checks:
+        - exitAfterDefer
+        - appendAssign
+        - ifElseChain
+        - elseif
+        - commentedOutCode
+        - dupBranchBody
+        - sprintfQuotedString
+        - deferInLoop
+  exclusions:
+    paths:
+      - vendor
+    rules:
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - gosec

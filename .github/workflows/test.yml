@@ -110,6 +110,22 @@ jobs:
           TEST_DB_NAME: communityrapidresponse_test
         run: go test ./tests/... -v -run E2E
 
+      - name: Run tests with coverage
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: 3306
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: testroot
+          TEST_DB_NAME: communityrapidresponse_test
+        run: go test ./... -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 14
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -147,6 +163,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Verify dependencies
+        run: go mod verify
+
       - name: Build
         run: go build -o bin/server ./cmd/server
 
@@ -156,3 +175,32 @@ jobs:
           name: server-binary
           path: bin/server
           retention-days: 7
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec
+        run: gosec -exclude=G117,G404,G704,G706 -exclude-dir=tests ./...

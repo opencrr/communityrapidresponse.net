@@ -65,6 +65,7 @@ func (r *EncryptedSecretRepository) CreateTx(ctx context.Context, tx *sql.Tx, se
 	secret.ID = uuid.New().String()
 	secret.UpdatedAt = time.Now().UTC()
 
+	// #nosec G101 -- variable name matches "secret" pattern, not a credential
 	secretQuery := `
 		INSERT INTO encrypted_secrets
 		(id, secret_type, signal_group_id, meshtastic_channel_id, encrypted_payload, encryption_iv, updated_by, updated_at)
