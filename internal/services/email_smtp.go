@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/smtp"
+	"strings"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 )
@@ -46,6 +48,20 @@ func (s *SMTPEmailService) Backend() string {
 	return "smtp"
 }
 
+// sanitizeHeaderValue strips CR and LF characters to prevent SMTP header injection.
+func sanitizeHeaderValue(value string) string {
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	return value
+}
+
+// generateBoundary creates a random MIME boundary string.
+func generateBoundary() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("==boundary-%x==", b)
+}
+
 // Send sends a generic email message via SMTP
 func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 	if !s.enabled {
@@ -60,10 +76,10 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 	}
 
 	// Build MIME message with both text and HTML parts
-	boundary := "==BOUNDARY=="
-	headers := fmt.Sprintf("From: %s\r\n", from)
-	headers += fmt.Sprintf("To: %s\r\n", msg.To)
-	headers += fmt.Sprintf("Subject: %s\r\n", msg.Subject)
+	boundary := generateBoundary()
+	headers := fmt.Sprintf("From: %s\r\n", sanitizeHeaderValue(from))
+	headers += fmt.Sprintf("To: %s\r\n", sanitizeHeaderValue(msg.To))
+	headers += fmt.Sprintf("Subject: %s\r\n", sanitizeHeaderValue(msg.Subject))
 	headers += "MIME-Version: 1.0\r\n"
 	headers += fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary)
 	headers += "\r\n"
