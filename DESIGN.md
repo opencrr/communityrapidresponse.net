@@ -2264,7 +2264,7 @@ Vouching allows unverified users to gain vouch-verification through community en
 
 **Each voucher must:**
 - Be fully verified (BOTH postcard AND vouch verified)
-- Be verified in the same region as the vouchee
+- Be verified in the same region or a shared ancestor region (up to city/county level, NOT state) as the vouchee
 - Not have exceeded 10 vouches this month
 - Not have already vouched for this user
 
@@ -2277,13 +2277,12 @@ Vouching allows unverified users to gain vouch-verification through community en
 
 2. **Vouchee requests vouch verification for a region**
    - User navigates to vouch verification request page
-   - User enters their city and state (text input, NOT dropdown selection)
-   - System attempts to match to an existing region:
-     - Searches `geographic_regions` for matching city/state
-     - If found: Creates `user_regions` entry with `verified: false` (pending vouch)
-     - If not found: Returns error "No region found for [City, State]. Please check spelling or contact support."
+   - User enters their address (street, city, state, zip)
+   - Address is geocoded via Mapbox to identify the full region hierarchy
+   - System creates pending `user_regions` entries at all levels of the hierarchy (neighborhood through state)
+   - Address is discarded from memory after geocoding (never stored)
    - `POST /api/v1/verification/vouch/request`
-   - Request body: `{ "city": "Portland", "state": "OR" }`
+   - Request body: `{ "street": "123 Main St", "city": "Portland", "state": "OR", "zip": "97201" }`
 
 3. **Vouchee connects with verified neighbors (out-of-band)**
    - User finds fully verified neighbors through personal networks
@@ -2304,7 +2303,9 @@ Vouching allows unverified users to gain vouch-verification through community en
 
 6. **System validates vouch request**
    - Verify voucher is fully verified (both postcard AND vouch verified)
-   - Verify voucher is in the same region as vouchee's pending request
+   - Verify voucher shares a region with the vouchee (same region or shared ancestor up to city/county level)
+   - State-level vouching is rejected (ancestor cap is county)
+   - In bootstrap mode, voucher must be in the exact same region (ancestor-level vouching disabled)
    - Verify voucher hasn't exceeded 10 vouches this month
    - Verify voucher hasn't already vouched for this user
    - Verify no circular vouch pattern (vouchee hasn't vouched for voucher)
@@ -2324,10 +2325,12 @@ Vouching allows unverified users to gain vouch-verification through community en
 
 9. **Auto-upgrade triggered on 2nd vouch**
    - System detects vouchee now has ≥2 vouches for region
+   - Vouches accumulate upward: a vouch at neighborhood level counts toward the city threshold too
    - Update user record:
      - Set `vouch_verified: true`
      - Update `user_regions` entry to `verified: true`
-     - If user is also postcard-verified, set `is_admin: true` in `user_regions`
+     - Verification cascades upward: when threshold met at a level, all ancestor regions (city, county, state) are also verified
+     - If user is also postcard-verified, set `is_admin: true` in verified `user_regions`
      - Create audit log entry
    - Notify vouchee: "Congratulations! You are now vouch-verified for [Region]."
    - If also postcard-verified: "You now have full admin rights."
@@ -2341,28 +2344,49 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
+  "street": "123 Main St",
   "city": "Portland",
-  "state": "OR"
+  "state": "OR",
+  "zip": "97201"
 }
 ```
 
 **Response (success):**
 ```json
 {
-  "message": "Vouch verification requested for Portland, OR",
-  "region_id": "uuid-of-matched-region",
-  "region_name": "Portland",
+  "message": "Vouch verification requested",
+  "regions": [
+    { "region_id": "uuid-neighborhood", "region_name": "Pearl District", "type": "neighborhood" },
+    { "region_id": "uuid-city", "region_name": "Portland", "type": "city" },
+    { "region_id": "uuid-county", "region_name": "Multnomah County", "type": "county" },
+    { "region_id": "uuid-state", "region_name": "Oregon", "type": "state" }
+  ],
   "vouches_needed": 2
 }
 ```
 
-**Response (region not found):**
+**Response (geocoding failed):**
 ```json
 {
-  "error": "region_not_found",
-  "message": "No region found for Portland, OR. Please check spelling or contact support."
+  "error": "geocoding_failed",
+  "message": "Could not geocode the provided address. Please check your address and try again."
 }
 ```
+
+#### Vouch Endpoint
+
+```
+POST /api/v1/verification/vouch
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "user_id": "uuid-of-vouchee",
+  "region_id": "uuid-of-shared-region"  // optional — defaults to voucher's most specific shared region
+}
+```
+
+The `region_id` parameter allows the voucher to specify which shared ancestor region to vouch at. If omitted, the system selects the most specific shared region between voucher and vouchee.
 
 #### Post-Verification Capabilities
 
@@ -2390,9 +2414,11 @@ Content-Type: application/json
 #### Anti-Abuse Safeguards
 
 1. **Geographic proximity requirement**
-   - Voucher must be verified in same region as vouchee's pending request
-   - Vouchee must explicitly specify their region (prevents spoofing)
-   - Prevents remote/fake vouching
+   - Voucher must be verified in the same region or a shared ancestor region as the vouchee
+   - Ancestor-level vouching is capped at city/county — state-level vouching is rejected
+   - Bootstrap mode disables ancestor-level vouching (requires exact same region)
+   - Vouchee's address is geocoded to establish region membership (prevents spoofing)
+   - Prevents remote/fake vouching while allowing broader community connections
 
 2. **Rate limiting**
    - Maximum 10 vouches per voucher per month

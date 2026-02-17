@@ -17,7 +17,7 @@ A secure platform that enables communities to connect within specific geographic
   - Grants read-only access to Signal groups in your region
   - Combined with vouch verification, grants full admin rights
 
-- **Vouch Verification**: Endorsed by 2+ fully verified users from the same geographic region
+- **Vouch Verification**: Endorsed by 2+ fully verified users from a shared geographic region (same neighborhood, city, or county)
   - Grants read-only access to Signal groups in your region
   - Combined with postcard verification, grants full admin rights
 

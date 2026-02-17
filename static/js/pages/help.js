@@ -143,8 +143,9 @@ export async function render(container) {
                                 <p>
                                     Enter your address to identify your community (your address is used only
                                     for geocoding and is never stored). Then get vouched for by existing members
-                                    who know you live in the area. Once vouched, you gain <strong>read-only
-                                    access</strong> to your community's Signal groups.
+                                    who know you live in the area &mdash; vouchers can be from anywhere in your
+                                    city or county, not just your exact neighborhood. Once vouched, you gain
+                                    <strong>read-only access</strong> to your community's Signal groups.
                                 </p>
                             </div>
                             <div class="help-card">
@@ -191,6 +192,12 @@ export async function render(container) {
                             your community and then immediately discarded. You are assigned to the most
                             specific community that contains your location.
                         </p>
+                        <p>
+                            Vouching works across the hierarchy &mdash; a verified member from one neighborhood
+                            can vouch for someone in a different neighborhood within the same city or county.
+                            This makes it easier to get started, since you don't need to find verified members
+                            in your exact neighborhood. State-level vouching is not allowed.
+                        </p>
                     </section>
 
                     <section class="help-section">
@@ -204,9 +211,11 @@ export async function render(container) {
                                 <li><strong>3 vouches required</strong> instead of the normal 2</li>
                                 <li><strong>Any community member can vouch</strong> (normally only fully verified admins can vouch)</li>
                                 <li><strong>1-hour cooldown</strong> between vouches from the same person</li>
+                                <li><strong>Exact-region vouching only</strong> &mdash; cross-neighborhood (ancestor-level) vouching is not available</li>
                             </ul>
                             <p style="margin-top: var(--space-2); margin-bottom: 0;">
-                                Once your community has 3 or more full admins, normal verification rules apply.
+                                Once your community has 3 or more full admins, normal verification rules apply,
+                                including the ability for vouchers from anywhere in your city or county to vouch.
                             </p>
                         </div>
                     </section>
@@ -243,10 +252,12 @@ export async function render(container) {
                             <summary>How do I find someone to vouch for me?</summary>
                             <p>
                                 Connect with neighbors through community events, local social media,
-                                or mutual friends. You need 2-3 different members from your community to
-                                vouch for you (3 in bootstrap mode, 2 otherwise). In bootstrap mode, any
-                                community member can vouch; once the community has 3+ admins, only
-                                fully verified admins can vouch.
+                                or mutual friends. You need 2-3 different members to vouch for you
+                                (3 in bootstrap mode, 2 otherwise). Vouchers can be from anywhere in
+                                your city or county &mdash; they don't need to be in your exact neighborhood.
+                                In bootstrap mode, any community member can vouch (but only within the
+                                exact same community); once the community has 3+ admins, only fully
+                                verified admins can vouch.
                             </p>
                         </details>
 
@@ -275,7 +286,8 @@ export async function render(container) {
                                 Bootstrap mode helps new communities establish their first admins. When a community
                                 has fewer than 3 full admins, the verification requirements are adjusted:
                                 any community member can vouch for others, but 3 vouches are required
-                                instead of 2, and there's a 1-hour cooldown between vouches from the same person.
+                                instead of 2, there's a 1-hour cooldown between vouches from the same person,
+                                and vouching must be within the exact same community (no cross-neighborhood vouching).
                                 This prevents a single bad actor from quickly verifying fake accounts while still
                                 allowing new communities to grow.
                             </p>

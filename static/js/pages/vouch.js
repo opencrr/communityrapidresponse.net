@@ -414,7 +414,7 @@ function renderCoordinationInstructions(bootstrapMode = false, vouchesNeeded = 2
                         <div class="instruction-step__number">1</div>
                         <div class="instruction-step__content">
                             <h4>Request Verification</h4>
-                            <p>Enter your city above to request vouch verification. This lets verified members know you're looking to join.</p>
+                            <p>Enter your address above to request vouch verification. This lets verified members in your area know you're looking to join. Your address is only used for geocoding and is never stored.</p>
                         </div>
                     </div>
 
@@ -422,7 +422,7 @@ function renderCoordinationInstructions(bootstrapMode = false, vouchesNeeded = 2
                         <div class="instruction-step__number">2</div>
                         <div class="instruction-step__content">
                             <h4>Connect with Neighbors</h4>
-                            <p>Meet verified community members in person, through local events, or via existing Signal groups. Building real connections is key.</p>
+                            <p>Meet verified community members in person, through local events, or via existing Signal groups. Vouchers can be from anywhere in your city or county &mdash; they don't need to be in your exact neighborhood.</p>
                         </div>
                     </div>
 
@@ -449,7 +449,8 @@ function renderCoordinationInstructions(bootstrapMode = false, vouchesNeeded = 2
                         <div class="privacy-notice__text">
                             <strong>Bootstrap Mode Active</strong>
                             This community is still building its initial admin team. During bootstrap mode, postcard-verified users can vouch for others,
-                            but 3 vouches are required (instead of 2) and there's a 1-hour cooldown between vouches.
+                            but 3 vouches are required (instead of 2), there's a 1-hour cooldown between vouches,
+                            and vouching must be within the exact same community (no cross-neighborhood vouching).
                         </div>
                     </div>
                 ` : ''}
