@@ -408,6 +408,80 @@ func (r *VouchRepository) GetLastVouchTimeByVoucher(ctx context.Context, voucher
 	return &lastVouchTime.Time, nil
 }
 
+// CountVouchesForUserWithDescendants counts vouches at a region AND all its descendant regions.
+// A vouch at region X counts for X and all ancestors. So counting at level Y means
+// counting vouches at Y and all descendants.
+func (r *VouchRepository) CountVouchesForUserWithDescendants(ctx context.Context, userID string, regionID string) (int, error) {
+	query := `
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM geographic_regions WHERE id = ?
+			UNION ALL
+			SELECT gr.id FROM geographic_regions gr
+			JOIN descendants d ON gr.parent_region_id = d.id
+		)
+		SELECT COUNT(*) FROM vouches
+		WHERE vouched_user_id = ? AND region_id IN (SELECT id FROM descendants)
+	`
+	var count int
+	err := r.db.QueryRowContext(ctx, query, regionID, userID).Scan(&count)
+	return count, err
+}
+
+// CountVouchesForUserWithDescendantsTx counts vouches with descendants within a transaction
+func (r *VouchRepository) CountVouchesForUserWithDescendantsTx(ctx context.Context, tx *sql.Tx, userID string, regionID string) (int, error) {
+	query := `
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM geographic_regions WHERE id = ?
+			UNION ALL
+			SELECT gr.id FROM geographic_regions gr
+			JOIN descendants d ON gr.parent_region_id = d.id
+		)
+		SELECT COUNT(*) FROM vouches
+		WHERE vouched_user_id = ? AND region_id IN (SELECT id FROM descendants)
+	`
+	var count int
+	err := tx.QueryRowContext(ctx, query, regionID, userID).Scan(&count)
+	return count, err
+}
+
+// GetVouchersForUserWithDescendants retrieves vouchers who have vouched for a user
+// at a region or any of its descendant regions
+func (r *VouchRepository) GetVouchersForUserWithDescendants(ctx context.Context, userID string, regionID string) ([]models.VoucherInfo, error) {
+	query := `
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM geographic_regions WHERE id = ?
+			UNION ALL
+			SELECT gr.id FROM geographic_regions gr
+			JOIN descendants d ON gr.parent_region_id = d.id
+		)
+		SELECT u.id, u.username, v.created_at
+		FROM vouches v
+		JOIN users u ON v.voucher_user_id = u.id
+		WHERE v.vouched_user_id = ? AND v.region_id IN (SELECT id FROM descendants)
+		ORDER BY v.created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, regionID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var vouchers []models.VoucherInfo
+	for rows.Next() {
+		var v models.VoucherInfo
+		if err := rows.Scan(&v.UserID, &v.Username, &v.VouchedAt); err != nil {
+			return nil, err
+		}
+		vouchers = append(vouchers, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return vouchers, nil
+}
+
 // --- Transactional methods for race condition prevention ---
 
 // HasVouchedTx checks if a user has already vouched for another within a transaction

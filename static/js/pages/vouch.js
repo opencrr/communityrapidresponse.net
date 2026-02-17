@@ -210,6 +210,11 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
                             You've requested vouch verification for <strong>${escapeHtml(verificationStatus.pending_vouch_region.name)}</strong>.
                             Connect with community members to receive vouches.
                         </p>
+                        ${verificationStatus.pending_vouch_regions && verificationStatus.pending_vouch_regions.length > 1 ? `
+                            <p style="font-size: var(--font-size-sm); color: var(--color-gray-500); margin-bottom: var(--space-2);">
+                                Community hierarchy: ${verificationStatus.pending_vouch_regions.slice().reverse().map(r => escapeHtml(r.name)).join(' &gt; ')}
+                            </p>
+                        ` : ''}
                         <p style="font-size: var(--font-size-sm); color: var(--color-gray-500);">
                             ${verificationStatus.vouch_count || 0} of ${pendingVouchesRequired} vouches received
                         </p>
@@ -683,6 +688,7 @@ function renderVouchPendingCards(pending, bootstrapMode = false) {
                     <div class="vouch-card__actions">
                         <button class="btn btn--primary vouch-card-btn"
                                 data-user-id="${req.user_id}"
+                                data-region-id="${req.region_id || ''}"
                                 data-username="${escapeHtml(req.username)}">
                             Vouch for ${escapeHtml(req.username)}
                         </button>
@@ -701,6 +707,7 @@ function bindVouchCardButtons(bootstrapMode = false) {
     document.querySelectorAll('.vouch-card-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const userId = btn.dataset.userId;
+            const regionId = btn.dataset.regionId;
             const username = btn.dataset.username;
 
             let confirmMessage = 'This confirms you know this person and they live in your community.';
@@ -717,7 +724,7 @@ function bindVouchCardButtons(bootstrapMode = false) {
                 try {
                     btn.disabled = true;
                     btn.classList.add('btn--loading');
-                    await vouchForUser(userId);
+                    await vouchForUser(userId, regionId);
                     toast.success(`Vouched for ${username}!`);
                     await loadVouchPendingList(bootstrapMode); // Refresh list
                 } catch (error) {
