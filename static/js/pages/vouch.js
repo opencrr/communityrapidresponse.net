@@ -688,7 +688,7 @@ function renderVouchPendingCards(pending, bootstrapMode = false) {
                     <div class="vouch-card__actions">
                         <button class="btn btn--primary vouch-card-btn"
                                 data-user-id="${req.user_id}"
-                                data-region-id="${req.region_id}"
+                                data-region-id="${req.region_id || ''}"
                                 data-username="${escapeHtml(req.username)}">
                             Vouch for ${escapeHtml(req.username)}
                         </button>

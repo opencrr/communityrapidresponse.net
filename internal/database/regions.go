@@ -988,6 +988,11 @@ func (r *RegionRepository) GetPendingVouchUsersForAdmin(ctx context.Context, adm
 			u.id, u.username, u.email, u.created_at as user_created_at,
 			gr.id as region_id, gr.name as region_name,
 			ur.verified_at as request_created_at,
+			-- Display-only vouch count: counts at the region + direct children only.
+			-- MariaDB cannot use recursive CTEs inside scalar subqueries, so this
+			-- is limited to one level of descendants. The actual verification
+			-- threshold check in the Vouch handler uses the full recursive
+			-- CountVouchesForUserWithDescendants which is correct.
 			COALESCE((
 				SELECT COUNT(*) FROM vouches v
 				WHERE v.vouched_user_id = u.id
@@ -1065,6 +1070,8 @@ func (r *RegionRepository) GetPendingVouchUsersForBootstrapMode(ctx context.Cont
 			u.id, u.username, u.email, u.created_at as user_created_at,
 			gr.id as region_id, gr.name as region_name,
 			ur.verified_at as request_created_at,
+			-- Display-only vouch count: counts at the region + direct children only.
+			-- See GetPendingVouchUsersForAdmin for rationale on the one-level limit.
 			COALESCE((
 				SELECT COUNT(*) FROM vouches v
 				WHERE v.vouched_user_id = u.id
@@ -2058,13 +2065,14 @@ func (r *RegionRepository) GetUserPendingVouchRegions(ctx context.Context, userI
 	return regions, rows.Err()
 }
 
-// UpgradeUserRegionAndAncestorsToVerifiedTx upgrades pending user_region entries
-// for the target region AND all its ancestors.
+// upgradeUserRegionAndAncestorsToVerified is the shared implementation for upgrading
+// pending user_region entries for the target region AND all its ancestors.
 // Uses a two-step approach (get ancestors then UPDATE with explicit IDs) to avoid
 // MariaDB compatibility issues with CTEs inside IN() subqueries.
-func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerifiedTx(ctx context.Context, tx *sql.Tx, userID, regionID string, isAdmin bool) error {
-	// Collect target region + all ancestor IDs
-	ancestors, err := r.GetAncestorRegionsTx(ctx, tx, regionID)
+func (r *RegionRepository) upgradeUserRegionAndAncestorsToVerified(ctx context.Context, execer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}, getAncestors func(ctx context.Context, regionID string) ([]models.GeographicRegion, error), userID, regionID string, isAdmin bool) error {
+	ancestors, err := getAncestors(ctx, regionID)
 	if err != nil {
 		return err
 	}
@@ -2075,7 +2083,6 @@ func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerifiedTx(ctx context
 		regionIDs = append(regionIDs, a.ID)
 	}
 
-	// Build IN clause with correct number of placeholders
 	placeholders := strings.Repeat("?,", len(regionIDs))
 	placeholders = placeholders[:len(placeholders)-1] // trim trailing comma
 
@@ -2092,8 +2099,24 @@ func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerifiedTx(ctx context
 	args = append(args, isAdmin, now, userID)
 	args = append(args, regionIDs...)
 
-	_, err = tx.ExecContext(ctx, query, args...)
+	_, err = execer.ExecContext(ctx, query, args...)
 	return err
+}
+
+// UpgradeUserRegionAndAncestorsToVerifiedTx upgrades pending user_region entries
+// for the target region AND all its ancestors within a transaction.
+func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerifiedTx(ctx context.Context, tx *sql.Tx, userID, regionID string, isAdmin bool) error {
+	return r.upgradeUserRegionAndAncestorsToVerified(ctx, tx, func(ctx context.Context, regionID string) ([]models.GeographicRegion, error) {
+		return r.GetAncestorRegionsTx(ctx, tx, regionID)
+	}, userID, regionID, isAdmin)
+}
+
+// UpgradeUserRegionAndAncestorsToVerified upgrades pending user_region entries
+// for the target region AND all its ancestors (non-transactional).
+func (r *RegionRepository) UpgradeUserRegionAndAncestorsToVerified(ctx context.Context, userID, regionID string, isAdmin bool) error {
+	return r.upgradeUserRegionAndAncestorsToVerified(ctx, r.db, func(ctx context.Context, regionID string) ([]models.GeographicRegion, error) {
+		return r.GetAncestorRegions(ctx, regionID)
+	}, userID, regionID, isAdmin)
 }
 
 // GetMostSpecificSharedPendingRegion finds the most specific region where the voucher

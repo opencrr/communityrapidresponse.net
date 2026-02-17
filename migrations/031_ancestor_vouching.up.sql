@@ -21,8 +21,10 @@ CREATE TEMPORARY TABLE IF NOT EXISTS tmp_ancestor_backfill (
 -- Step 2: Populate the temp table using a recursive CTE
 -- For each user_region, walk up the parent chain and collect missing ancestors.
 -- Use the "best" status: if user is verified at child, ancestors should be verified too.
+-- is_admin is always FALSE for ancestor entries — admin rights are region-specific
+-- and do not propagate upward through the hierarchy.
 INSERT IGNORE INTO tmp_ancestor_backfill (user_id, region_id, verification_status, is_admin, verified_at)
-SELECT DISTINCT ur.user_id, ancestor_id, ur.verification_status, ur.is_admin, ur.verified_at
+SELECT DISTINCT ur.user_id, ancestor_id, ur.verification_status, FALSE, ur.verified_at
 FROM user_regions ur
 JOIN (
     -- Get all ancestor relationships: (child_id, ancestor_id)
@@ -44,7 +46,10 @@ WHERE NOT EXISTS (
     AND existing.region_id = ancestors.ancestor_id
 );
 
--- Step 3: Insert the backfilled entries into user_regions
+-- Step 3: Insert the backfilled entries into user_regions.
+-- INSERT IGNORE suppresses all errors (not just duplicate key), but this is safe here
+-- because all data originates from valid existing user_regions rows — foreign key
+-- and other constraint violations should not occur.
 INSERT IGNORE INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at)
 SELECT UUID(), user_id, region_id, is_admin, verification_status, verified_at
 FROM tmp_ancestor_backfill;

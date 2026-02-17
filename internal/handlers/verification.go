@@ -658,8 +658,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 
 			// Create pending entries for all ancestor regions
 			if err := h.regionRepo.AddUserToAncestorRegionsPendingTx(r.Context(), tx, claims.UserID, regionID); err != nil {
-				slog.WarnContext(r.Context(), "failed to create ancestor pending entries", "error", err)
-				// Non-fatal: primary pending entry was created
+				return fmt.Errorf("create ancestor pending entries: %w", err)
 			}
 
 			return nil
@@ -1078,7 +1077,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			// Admin requires both postcard and vouch verification
 			// Normally postcard comes after vouch, but migrated users may already have postcard
 			// Upgrade the target region + all ancestor regions
-			_ = h.regionRepo.UpgradeUserRegionToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified)
+			_ = h.regionRepo.UpgradeUserRegionAndAncestorsToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified)
 		}
 	}
 
