@@ -212,7 +212,7 @@ function renderRequestVouchSection(bootstrapMode = false, vouchesNeeded = 2, pos
                         </p>
                         ${verificationStatus.pending_vouch_regions && verificationStatus.pending_vouch_regions.length > 1 ? `
                             <p style="font-size: var(--font-size-sm); color: var(--color-gray-500); margin-bottom: var(--space-2);">
-                                Community hierarchy: ${verificationStatus.pending_vouch_regions.map(r => escapeHtml(r.name)).join(' &gt; ')}
+                                Community hierarchy: ${verificationStatus.pending_vouch_regions.slice().reverse().map(r => escapeHtml(r.name)).join(' &gt; ')}
                             </p>
                         ` : ''}
                         <p style="font-size: var(--font-size-sm); color: var(--color-gray-500);">

@@ -1077,7 +1077,10 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			// Admin requires both postcard and vouch verification
 			// Normally postcard comes after vouch, but migrated users may already have postcard
 			// Upgrade the target region + all ancestor regions
-			_ = h.regionRepo.UpgradeUserRegionAndAncestorsToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified)
+			if err := h.regionRepo.UpgradeUserRegionAndAncestorsToVerified(r.Context(), vouchedUserID, regionID, vouchee.PostcardVerified); err != nil {
+				slog.ErrorContext(r.Context(), "failed to upgrade user_region and ancestors", "error", err)
+				_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region_ancestors")
+			}
 		}
 	}
 
