@@ -456,6 +456,12 @@ func (c *Config) Validate() error {
 		if c.Mapbox.SecretToken == "" {
 			errs = append(errs, "MAPBOX_SECRET_TOKEN is required in production/staging")
 		}
+		for _, origin := range c.CORS.AllowedOrigins {
+			if origin == "*" {
+				errs = append(errs, fmt.Sprintf("CORS_ALLOWED_ORIGINS must not contain wildcard '*' in %s", c.Env))
+				break
+			}
+		}
 
 		// Mail provider API key
 		switch c.MailProvider {

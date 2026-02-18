@@ -105,6 +105,22 @@ func TestCORS(t *testing.T) {
 		}
 	})
 
+	t.Run("empty origins denies all cross-origin requests", func(t *testing.T) {
+		handler := CORS(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Origin", "https://example.com")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+			t.Error("Should not add CORS headers when origins list is empty")
+		}
+	})
+
 	t.Run("handles preflight OPTIONS request", func(t *testing.T) {
 		handler := CORS([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			t.Error("Handler should not be called for OPTIONS")
