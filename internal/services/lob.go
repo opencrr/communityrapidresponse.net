@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -136,7 +135,7 @@ func (s *LobService) ValidateAddress(ctx context.Context, address *models.Addres
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -335,7 +334,7 @@ func (s *LobService) SendPostcard(ctx context.Context, address *models.Address, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}

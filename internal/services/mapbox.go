@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -106,7 +105,7 @@ func (s *MapboxService) geocodeAddressWithURL(ctx context.Context, apiURL string
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -217,7 +216,7 @@ func (s *MapboxService) ReverseGeocode(ctx context.Context, lat, lng float64) (*
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -366,7 +365,7 @@ func (s *MapboxService) fetchOSMBoundary(ctx context.Context, lat, lng float64, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -498,7 +497,7 @@ func (s *MapboxService) fetchCityBoundaryByNameWithURL(ctx context.Context, apiU
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -661,7 +660,7 @@ func (s *MapboxService) searchStateBoundaryWithURL(ctx context.Context, apiURL, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -785,7 +784,7 @@ func (s *MapboxService) getCountyBoundaryWithURL(ctx context.Context, apiURL, co
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -881,7 +880,7 @@ func (s *MapboxService) GetCountyForCoordinates(ctx context.Context, lat, lng fl
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -988,7 +987,7 @@ func (s *MapboxService) getLocalityBoundaryWithURL(ctx context.Context, apiURL, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -1142,7 +1141,7 @@ func (s *MapboxService) GetNeighborhoodBoundary(ctx context.Context, neighborhoo
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

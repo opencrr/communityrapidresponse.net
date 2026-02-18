@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -134,7 +133,7 @@ func (s *PostgridService) ValidateAddress(ctx context.Context, address *models.A
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -299,7 +298,7 @@ func (s *PostgridService) SendPostcard(ctx context.Context, address *models.Addr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
