@@ -290,6 +290,9 @@ func main() {
 	verificationHandler.SetStatusCache(statusCache)
 	blocklistProposalHandler.SetStatusCache(statusCache)
 
+	// Wire JWT auth to verification handler for issuing fresh tokens after postcard verification
+	verificationHandler.SetJWTAuth(jwtAuth, cfg.Server.SecureCookies)
+
 	// Wire notification service to handlers
 	verificationHandler.SetNotificationService(notificationService)
 	blocklistProposalHandler.SetNotificationService(notificationService)

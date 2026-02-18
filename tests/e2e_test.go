@@ -3155,6 +3155,143 @@ func TestE2E_MFABruteForceProtection(t *testing.T) {
 }
 
 // =============================================================================
+// Verification Code Lockout E2E Tests
+// =============================================================================
+
+func TestE2E_VerificationCodeLockout(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@veriflockout.com'")
+
+	password := "securepassword123"
+
+	// Create two users: userA owns the verification code, userB is the attacker
+	userAID, tokenA := suite.registerOrGetUser("vlock_a", "usera@veriflockout.com", password)
+	defer suite.cleanup(userAID)
+
+	userBID, tokenB := suite.registerOrGetUser("vlock_b", "userb@veriflockout.com", password)
+	defer suite.cleanup(userBID)
+
+	// Create a region for the verification request (must fit CHAR(36))
+	regionID := fmt.Sprintf("e2e-lockout-%d", time.Now().UnixNano()%1000000000)
+	_, err := suite.db.ExecContext(context.Background(), `
+		INSERT INTO geographic_regions (id, name, region_type, created_at)
+		VALUES (?, 'Lockout Test Region', 'city', NOW())
+	`, regionID)
+	if err != nil {
+		t.Fatalf("Failed to create test region: %v", err)
+	}
+	defer func() {
+		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE region_id = ?", regionID)
+		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE id = ?", regionID)
+	}()
+
+	t.Run("lockout after 5 failed attempts blocks correct user too", func(t *testing.T) {
+		verificationCode := fmt.Sprintf("e2elockout%06d", time.Now().UnixNano()%1000000)
+		reqID := fmt.Sprintf("e2e-vreq-%d", time.Now().UnixNano()%1000000000)
+
+		_, err := suite.db.ExecContext(context.Background(), `
+			INSERT INTO verification_requests (id, user_id, verification_code, status, region_id,
+				postgrid_request_id, boundary_type, boundary_name, boundary_state, created_at, expires_at)
+			VALUES (?, ?, ?, 'mailed', ?, 'test-postgrid', 'city', 'Test City', 'NY', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))
+		`, reqID, userAID, verificationCode, regionID)
+		if err != nil {
+			t.Fatalf("Failed to create verification request: %v", err)
+		}
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", reqID)
+		}()
+
+		// User B (attacker) tries 5 times — should get 403 for first 4, 429 on 5th
+		// (non-transactional fallback returns 403 on user mismatch)
+		for i := 1; i <= 5; i++ {
+			resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]string{
+				"verification_code": verificationCode,
+			}, tokenB)
+			defer func() { _ = resp.Body.Close() }()
+
+			if i < 5 {
+				if resp.StatusCode != http.StatusForbidden {
+					t.Errorf("Attempt %d: expected 403, got %d", i, resp.StatusCode)
+				}
+			} else {
+				if resp.StatusCode != http.StatusTooManyRequests {
+					t.Errorf("Attempt %d: expected 429, got %d", i, resp.StatusCode)
+				}
+				var body map[string]interface{}
+				_ = json.NewDecoder(resp.Body).Decode(&body)
+				if body["error"] != "verification_code_locked" {
+					t.Errorf("Expected error 'verification_code_locked', got '%v'", body["error"])
+				}
+			}
+		}
+
+		// User A (correct user) should also get 429 — code is locked
+		resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]string{
+			"verification_code": verificationCode,
+		}, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("Correct user after lockout: expected 429, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("under threshold correct user can still verify", func(t *testing.T) {
+		verificationCode := fmt.Sprintf("e2eunder%07d", time.Now().UnixNano()%10000000)
+		reqID := fmt.Sprintf("e2e-vreq-ok-%d", time.Now().UnixNano()%1000000000)
+
+		// Make user A vouch-verified so postcard verification can complete
+		suite.makeUserVouchVerified(userAID)
+		// Re-login to pick up vouch-verified claims
+		loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "usera@veriflockout.com", "password": password,
+		}, "")
+		var loginBody models.LoginResponse
+		_ = json.NewDecoder(loginResp.Body).Decode(&loginBody)
+		_ = loginResp.Body.Close()
+		freshTokenA := loginBody.Token
+
+		_, err := suite.db.ExecContext(context.Background(), `
+			INSERT INTO verification_requests (id, user_id, verification_code, status, region_id,
+				postgrid_request_id, boundary_type, boundary_name, boundary_state, created_at, expires_at)
+			VALUES (?, ?, ?, 'mailed', ?, 'test-postgrid', 'city', 'Test City', 'NY', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))
+		`, reqID, userAID, verificationCode, regionID)
+		if err != nil {
+			t.Fatalf("Failed to create verification request: %v", err)
+		}
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", reqID)
+		}()
+
+		// 4 failed attempts from user B (under threshold of 5)
+		// (non-transactional fallback returns 403 on user mismatch)
+		for i := 1; i <= 4; i++ {
+			resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]string{
+				"verification_code": verificationCode,
+			}, tokenB)
+			_ = resp.Body.Close()
+
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("Attempt %d: expected 403, got %d", i, resp.StatusCode)
+			}
+		}
+
+		// User A should still be able to verify
+		resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]string{
+			"verification_code": verificationCode,
+		}, freshTokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Errorf("Correct user after 4 failed attempts: expected 200, got %d: %v", resp.StatusCode, body)
+		}
+	})
+}
+
+// =============================================================================
 // Session Revocation & Stale JWT Claims E2E Tests
 // =============================================================================
 

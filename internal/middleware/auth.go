@@ -325,7 +325,7 @@ func (a *JWTAuth) checkUserRevoked(ctx context.Context, claims *Claims) bool {
 		return true
 	}
 	if status.TokenInvalidatedAt != nil && claims.IssuedAt != nil {
-		if !claims.IssuedAt.After(*status.TokenInvalidatedAt) {
+		if claims.IssuedAt.Before(*status.TokenInvalidatedAt) {
 			return true
 		}
 	}

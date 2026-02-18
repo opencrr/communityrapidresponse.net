@@ -28,6 +28,9 @@ const (
 	// Bootstrap mode constants - used for regions with < 3 full admins
 	bootstrapVouchesRequired = 3 // Higher bar during bootstrap (vs 2 normally)
 	minAdminsToEndBootstrap  = 3 // Exit bootstrap when 3 full admins exist
+
+	// Verification code lockout: max failed attempts before code is permanently locked
+	verificationCodeLockoutThreshold = 5
 )
 
 // VerificationHandler handles verification endpoints
@@ -44,6 +47,8 @@ type VerificationHandler struct {
 	bootstrapCooldownMinutes int
 	notificationService      NotificationServiceInterface
 	statusCache              *middleware.UserStatusCache
+	jwtAuth                  *middleware.JWTAuth
+	secureCookies            bool
 }
 
 // NewVerificationHandler creates a new verification handler
@@ -83,6 +88,14 @@ func (h *VerificationHandler) SetNotificationService(svc NotificationServiceInte
 // on verification changes. Optional - if not set, cache eviction is skipped.
 func (h *VerificationHandler) SetStatusCache(cache *middleware.UserStatusCache) {
 	h.statusCache = cache
+}
+
+// SetJWTAuth sets the JWT auth for issuing fresh tokens after verification.
+// Also needs secureCookies to set the httpOnly cookie correctly.
+// Optional - if not set, no fresh token is returned after verification.
+func (h *VerificationHandler) SetJWTAuth(jwtAuth *middleware.JWTAuth, secureCookies bool) {
+	h.jwtAuth = jwtAuth
+	h.secureCookies = secureCookies
 }
 
 // RequestPostcardVerification handles POST /api/v1/verification/postcard/request
@@ -401,8 +414,18 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 				return err
 			}
 
+			// Check if code is already locked out from too many failed attempts
+			if verificationReq.FailedVerificationAttempts >= verificationCodeLockoutThreshold {
+				return database.ErrVerificationLocked
+			}
+
 			// Verify the request belongs to this user
 			if verificationReq.UserID != claims.UserID {
+				// Increment failed attempts — fail-closed on DB error
+				newCount, incrementErr := h.verificationRepo.IncrementFailedVerificationAttemptsTx(r.Context(), tx, verificationReq.ID)
+				if incrementErr != nil || newCount >= verificationCodeLockoutThreshold {
+					return database.ErrVerificationLocked
+				}
 				return database.ErrVerificationNotFound // Treat as not found for security
 			}
 
@@ -458,6 +481,11 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			return nil
 		})
 		if txErr != nil {
+			if errors.Is(txErr, database.ErrVerificationLocked) {
+				writeError(w, http.StatusTooManyRequests, "verification_code_locked",
+					"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+				return
+			}
 			if errors.Is(txErr, database.ErrVerificationNotFound) {
 				writeError(w, http.StatusNotFound, "invalid_code", "Invalid verification code")
 				return
@@ -485,7 +513,20 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			writeServerError(w, r, err, "Failed to verify code", "verification", "confirm_verification")
 			return
 		}
+		// Check if code is already locked out
+		if verificationReq.FailedVerificationAttempts >= verificationCodeLockoutThreshold {
+			writeError(w, http.StatusTooManyRequests, "verification_code_locked",
+				"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+			return
+		}
 		if verificationReq.UserID != claims.UserID {
+			// Increment failed attempts — fail-closed on DB error
+			newCount, incrementErr := h.verificationRepo.IncrementFailedVerificationAttempts(r.Context(), verificationReq.ID)
+			if incrementErr != nil || newCount >= verificationCodeLockoutThreshold {
+				writeError(w, http.StatusTooManyRequests, "verification_code_locked",
+					"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+				return
+			}
 			writeError(w, http.StatusForbidden, "invalid_code", "Invalid verification code")
 			return
 		}
@@ -524,6 +565,32 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		h.statusCache.Invalidate(claims.UserID)
 	}
 
+	// Generate fresh token with updated claims so the SPA can continue without re-login
+	var freshToken string
+	if h.jwtAuth != nil {
+		freshUser, err := h.userRepo.GetByID(r.Context(), claims.UserID)
+		if err == nil && freshUser != nil {
+			freshToken, err = h.jwtAuth.GenerateToken(freshUser)
+			if err != nil {
+				slog.WarnContext(r.Context(), "failed to generate fresh token after postcard verification", "user_id", claims.UserID, "error", err)
+			} else {
+				sameSite := http.SameSiteLaxMode
+				if h.secureCookies {
+					sameSite = http.SameSiteStrictMode
+				}
+				http.SetCookie(w, &http.Cookie{
+					Name:     "token",
+					Value:    freshToken,
+					Path:     "/",
+					HttpOnly: true,
+					Secure:   h.secureCookies,
+					SameSite: sameSite,
+					MaxAge:   86400,
+				})
+			}
+		}
+	}
+
 	// Side effects outside transaction
 	// Audit log: postcard verified
 	if h.auditRepo != nil {
@@ -550,6 +617,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, http.StatusOK, models.VerifyCodeResponse{
 		Success: true,
+		Token:   freshToken,
 		User: &models.UserVerificationResult{
 			VerificationTier: models.TierPostcard,
 			AdminRegions:     adminRegions,
@@ -1773,13 +1841,13 @@ func (h *VerificationHandler) getOrCreateNeighborhoodRegion(ctx context.Context,
 	return newNeighborhood.ID, nil
 }
 
-// generateVerificationCode generates a random 8-character alphanumeric code
+// generateVerificationCode generates a random 16-character hex code (8 bytes of entropy)
 func generateVerificationCode() (string, error) {
-	bytes := make([]byte, 4)
-	if _, err := rand.Read(bytes); err != nil {
+	codeBytes := make([]byte, 8)
+	if _, err := rand.Read(codeBytes); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(bytes), nil
+	return hex.EncodeToString(codeBytes), nil
 }
 
 // postcardRefCharset excludes ambiguous characters: 0/O, 1/I/L
