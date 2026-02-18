@@ -3,6 +3,8 @@ package tests
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -97,8 +99,14 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	mockPostgrid := mocks.NewMockPostgridService()
 	mockMapbox := mocks.NewMockMapboxService()
 
+	passwordResetRepo := database.NewPasswordResetRepository(db)
+
 	// Create handlers with mock services
-	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
+	authHandler := handlers.NewAuthHandlerWithEmailService(
+		db, userRepo, jwtAuth, nil, jwtConfig.Secret,
+		false, true, auditRepo, passwordResetRepo, nil,
+		"http://localhost:3000", encryptionKeyRepo,
+	)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, vouchRepo, userRepo, regionRepo,
@@ -3454,6 +3462,93 @@ func TestE2E_SessionRevocation(t *testing.T) {
 		_ = resp2.Body.Close()
 		if resp2.StatusCode != http.StatusForbidden {
 			t.Errorf("Expected 403 after superuser revocation, got %d", resp2.StatusCode)
+		}
+	})
+}
+
+func TestE2E_PasswordReset(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	originalPassword := "securepassword123"
+	newPassword := "newsecurepassword456"
+	email := fmt.Sprintf("pwreset-%d@test.com", time.Now().UnixNano())
+	username := fmt.Sprintf("pwreset%d", time.Now().UnixNano()%100000)
+
+	// Register user and get userID
+	userID := suite.registerOrGetUserID(username, email, originalPassword)
+	suite.disableMFA(userID)
+	defer suite.cleanup(userID)
+
+	// Verify login works with original password
+	loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": email, "password": originalPassword,
+	}, "")
+	_ = loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected login 200, got %d", loginResp.StatusCode)
+	}
+
+	// Create a password reset token directly in the DB
+	// (We can't go through forgot-password because email service is nil)
+	rawToken := fmt.Sprintf("%064x", time.Now().UnixNano()) // 64 hex chars
+	tokenHashBytes := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(tokenHashBytes[:])
+	tokenID := fmt.Sprintf("prt-%d", time.Now().UnixNano())
+	expiresAt := time.Now().UTC().Add(1 * time.Hour)
+
+	_, err := suite.db.ExecContext(context.Background(),
+		"INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, NOW(), ?)",
+		tokenID, userID, tokenHash, expiresAt)
+	if err != nil {
+		t.Fatalf("Failed to insert reset token: %v", err)
+	}
+
+	t.Run("reset password with valid token", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/auth/reset-password", map[string]string{
+			"token": rawToken, "password": newPassword,
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			var body map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			t.Fatalf("Expected 200, got %d: %v", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("login with new password succeeds", func(t *testing.T) {
+		// Small delay to let token invalidation propagate through status cache
+		time.Sleep(200 * time.Millisecond)
+
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": email, "password": newPassword,
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected login 200 with new password, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("login with old password fails", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": email, "password": originalPassword,
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected login 401 with old password, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("token reuse rejected", func(t *testing.T) {
+		resp := suite.request("POST", "/api/v1/auth/reset-password", map[string]string{
+			"token": rawToken, "password": "yetanotherpassword12",
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for reused token, got %d", resp.StatusCode)
 		}
 	})
 }

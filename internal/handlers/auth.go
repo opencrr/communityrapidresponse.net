@@ -906,25 +906,41 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update password
-	if err := h.userRepo.UpdatePassword(r.Context(), resetToken.UserID, string(hashedPassword)); err != nil {
-		writeServerError(w, r, err, "Failed to update password", "auth", "reset_password")
-		return
+	// Update password, invalidate tokens, and mark reset token used — all atomically
+	if h.db != nil {
+		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
+			if err := h.userRepo.UpdatePasswordTx(r.Context(), tx, resetToken.UserID, string(hashedPassword)); err != nil {
+				return err
+			}
+			if err := h.userRepo.InvalidateTokensTx(r.Context(), tx, resetToken.UserID); err != nil {
+				return err
+			}
+			if err := h.passwordResetRepo.MarkUsedTx(r.Context(), tx, resetToken.ID); err != nil {
+				return err
+			}
+			return h.passwordResetRepo.InvalidateForUserTx(r.Context(), tx, resetToken.UserID)
+		})
+		if txErr != nil {
+			writeServerError(w, r, txErr, "Failed to reset password", "auth", "reset_password")
+			return
+		}
+	} else {
+		// Non-transactional fallback (unit tests where h.db is nil)
+		if err := h.userRepo.UpdatePassword(r.Context(), resetToken.UserID, string(hashedPassword)); err != nil {
+			writeServerError(w, r, err, "Failed to update password", "auth", "reset_password")
+			return
+		}
+		if err := h.userRepo.InvalidateTokens(r.Context(), resetToken.UserID); err != nil {
+			slog.WarnContext(r.Context(), "failed to invalidate tokens after password reset", "user_id", resetToken.UserID, "error", err)
+		}
+		_ = h.passwordResetRepo.MarkUsed(r.Context(), resetToken.ID)
+		_ = h.passwordResetRepo.InvalidateForUser(r.Context(), resetToken.UserID)
 	}
 
-	// Invalidate existing tokens so old sessions are rejected
-	if err := h.userRepo.InvalidateTokens(r.Context(), resetToken.UserID); err != nil {
-		slog.WarnContext(r.Context(), "failed to invalidate tokens after password reset", "user_id", resetToken.UserID, "error", err)
-	}
+	// Evict status cache so middleware picks up the invalidated epoch immediately
 	if h.jwtAuth != nil {
 		h.jwtAuth.InvalidateUserCache(resetToken.UserID)
 	}
-
-	// Mark token as used
-	_ = h.passwordResetRepo.MarkUsed(r.Context(), resetToken.ID)
-
-	// Invalidate all other tokens for this user
-	_ = h.passwordResetRepo.InvalidateForUser(r.Context(), resetToken.UserID)
 
 	// Audit log
 	if h.auditRepo != nil {

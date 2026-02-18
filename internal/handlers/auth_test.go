@@ -957,6 +957,83 @@ func TestAuthHandler_ResetPassword(t *testing.T) {
 		}
 	})
 
+	t.Run("returns 500 when user deleted before reset (tx rollback)", func(t *testing.T) {
+		// Create a handler with db set, so the transactional path is taken
+		txHandler := NewAuthHandlerWithEmailService(
+			db, userRepo, jwtAuth, nil, "test_secret_key_at_least_32_characters_long",
+			false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
+		)
+
+		// Create a throwaway user and a valid token for them
+		regBody := map[string]string{
+			"username": "resetghost",
+			"email":    "ghost@resetpasstest.com",
+			"password": "securepassword123",
+		}
+		regBytes, _ := json.Marshal(regBody)
+		regReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(regBytes))
+		regReq.Header.Set("Content-Type", "application/json")
+		regRec := httptest.NewRecorder()
+		txHandler.Register(regRec, regReq)
+
+		var ghostResp models.RegisterResponse
+		_ = json.NewDecoder(regRec.Body).Decode(&ghostResp)
+
+		rawToken := "ghost_user_reset_token_test"
+		tokenHash := fmt.Sprintf("%x", sha256Of(rawToken))
+		_, err := passwordResetRepo.Create(context.Background(), ghostResp.UserID, tokenHash, timeInFuture(1))
+		if err != nil {
+			t.Fatalf("Failed to create token: %v", err)
+		}
+
+		// Delete the user — CASCADE removes reset tokens too, but the handler
+		// does GetByTokenHash (non-tx) BEFORE the transaction. To simulate a
+		// race where the user is deleted between token lookup and password update,
+		// we disable FK checks, re-insert the orphaned token, then re-enable.
+		// Must use a single connection since FOREIGN_KEY_CHECKS is session-scoped.
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", ghostResp.UserID)
+		conn, connErr := db.Conn(context.Background())
+		if connErr != nil {
+			t.Fatalf("Failed to get DB connection: %v", connErr)
+		}
+		_, _ = conn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS=0")
+		_, _ = conn.ExecContext(context.Background(),
+			"INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, NOW(), ?)",
+			"ghost-token-id", ghostResp.UserID, tokenHash, timeInFuture(1))
+		_, _ = conn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS=1")
+		_ = conn.Close()
+
+		body := map[string]string{
+			"token":    rawToken,
+			"password": "securepassword123",
+		}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/v1/auth/reset-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		txHandler.ResetPassword(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("Expected 500 for deleted user tx rollback, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Verify the token was NOT consumed (tx rolled back)
+		_, lookupErr := passwordResetRepo.GetByTokenHash(context.Background(), tokenHash)
+		if lookupErr != nil {
+			t.Errorf("Expected token to still be valid after rollback, got error: %v", lookupErr)
+		}
+
+		// Cleanup orphaned token (single connection for FK checks)
+		cleanConn, _ := db.Conn(context.Background())
+		if cleanConn != nil {
+			_, _ = cleanConn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS=0")
+			_, _ = cleanConn.ExecContext(context.Background(), "DELETE FROM password_reset_tokens WHERE user_id = ?", ghostResp.UserID)
+			_, _ = cleanConn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS=1")
+			_ = cleanConn.Close()
+		}
+	})
+
 	// Cleanup
 	_, _ = db.ExecContext(context.Background(), "DELETE FROM password_reset_tokens WHERE user_id = ?", resetRegisterResp.UserID)
 	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resetRegisterResp.UserID)
