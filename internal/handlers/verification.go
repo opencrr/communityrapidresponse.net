@@ -557,10 +557,11 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Invalidate tokens so user gets fresh claims with updated verification status
-	if err := h.userRepo.InvalidateTokens(r.Context(), claims.UserID); err != nil {
-		slog.WarnContext(r.Context(), "failed to invalidate tokens after postcard verification", "user_id", claims.UserID, "error", err)
-	}
+	// Invalidate status cache so any cached state is refreshed.
+	// We intentionally skip InvalidateTokens here: postcard verification is a
+	// privilege upgrade, so stale claims in old tokens only grant less access.
+	// Calling InvalidateTokens would reject the fresh token we issue below
+	// due to second-precision timestamp equality (iat == token_invalidated_at).
 	if h.statusCache != nil {
 		h.statusCache.Invalidate(claims.UserID)
 	}
