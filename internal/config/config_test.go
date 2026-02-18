@@ -222,6 +222,9 @@ func validProdConfig() *Config {
 			Enabled:        true,
 			SendGridAPIKey: "sg-api-key",
 		},
+		CORS: CORSConfig{
+			AllowedOrigins: []string{"https://communityrapidresponse.net"},
+		},
 		Log: LogConfig{
 			Format: "json",
 			Level:  "info",
@@ -445,6 +448,34 @@ func TestValidate(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "SMTP_PASSWORD") {
 			t.Errorf("expected error about SMTP_PASSWORD, got: %v", err)
+		}
+	})
+
+	t.Run("production with wildcard CORS origin fails", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.CORS.AllowedOrigins = []string{"*"}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for wildcard CORS origin in production")
+		}
+		if !strings.Contains(err.Error(), "CORS_ALLOWED_ORIGINS must not contain wildcard") {
+			t.Errorf("expected error about CORS wildcard, got: %v", err)
+		}
+	})
+
+	t.Run("production with explicit CORS origins passes", func(t *testing.T) {
+		cfg := validProdConfig()
+		cfg.CORS.AllowedOrigins = []string{"https://example.com", "https://staging.example.com"}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error for explicit CORS origins, got: %v", err)
+		}
+	})
+
+	t.Run("development with wildcard CORS origin passes", func(t *testing.T) {
+		cfg := validDevConfig()
+		cfg.CORS.AllowedOrigins = []string{"*"}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected dev config with wildcard CORS to pass, got: %v", err)
 		}
 	})
 

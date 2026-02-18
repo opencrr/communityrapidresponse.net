@@ -216,11 +216,7 @@ func (r *Router) Setup() http.Handler {
 		handler = middleware.CSRFProtection(r.csrfConfig.Secret, r.csrfConfig.SecureCookies)(handler)
 	}
 	handler = middleware.SecurityHeadersWithConfig(r.securityConfig)(handler)
-	corsOrigins := r.corsOrigins
-	if len(corsOrigins) == 0 {
-		corsOrigins = []string{"*"}
-	}
-	handler = middleware.CORS(corsOrigins)(handler)
+	handler = middleware.CORS(r.corsOrigins)(handler)
 
 	// Apply rate limiting if configured
 	if r.rateLimiter != nil && r.rateLimitConfig != nil && r.rateLimitConfig.Enabled {
