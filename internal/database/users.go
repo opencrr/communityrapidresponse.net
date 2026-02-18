@@ -906,6 +906,36 @@ func (r *UserRepository) ResetFailedMFAAttempts(ctx context.Context, userID stri
 	return err
 }
 
+// GetUserStatus returns the minimal fields needed for token validation.
+// This is a lightweight query used by the middleware status cache.
+func (r *UserRepository) GetUserStatus(ctx context.Context, userID string) (*models.UserStatus, error) {
+	query := `SELECT token_invalidated_at, is_blocked, deleted_at FROM users WHERE id = ?`
+
+	status := &models.UserStatus{}
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(
+		&status.TokenInvalidatedAt,
+		&status.IsBlocked,
+		&status.DeletedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
+}
+
+// InvalidateTokens sets the token_invalidated_at timestamp so existing tokens
+// issued before this time will be rejected by the auth middleware.
+func (r *UserRepository) InvalidateTokens(ctx context.Context, userID string) error {
+	query := `UPDATE users SET token_invalidated_at = NOW() WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, userID)
+	return err
+}
+
 // GetVerifiedUsersInRegion returns users who are postcard OR vouch verified in a specific region.
 // Results are paginated for memory efficiency when dealing with large regions.
 func (r *UserRepository) GetVerifiedUsersInRegion(ctx context.Context, regionID string, offset, limit int) ([]*models.User, error) {

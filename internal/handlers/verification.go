@@ -43,6 +43,7 @@ type VerificationHandler struct {
 	bootstrapCooldownEnabled bool
 	bootstrapCooldownMinutes int
 	notificationService      NotificationServiceInterface
+	statusCache              *middleware.UserStatusCache
 }
 
 // NewVerificationHandler creates a new verification handler
@@ -76,6 +77,12 @@ func NewVerificationHandler(
 // This is optional - if not set, notifications will not be sent.
 func (h *VerificationHandler) SetNotificationService(svc NotificationServiceInterface) {
 	h.notificationService = svc
+}
+
+// SetStatusCache sets the user status cache for immediate cache eviction
+// on verification changes. Optional - if not set, cache eviction is skipped.
+func (h *VerificationHandler) SetStatusCache(cache *middleware.UserStatusCache) {
+	h.statusCache = cache
 }
 
 // RequestPostcardVerification handles POST /api/v1/verification/postcard/request
@@ -507,6 +514,14 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		if isAdmin {
 			_, _ = h.regionRepo.UpgradeVerifiedUserRegionsToAdmin(r.Context(), claims.UserID)
 		}
+	}
+
+	// Invalidate tokens so user gets fresh claims with updated verification status
+	if err := h.userRepo.InvalidateTokens(r.Context(), claims.UserID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after postcard verification", "user_id", claims.UserID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(claims.UserID)
 	}
 
 	// Side effects outside transaction
@@ -1081,6 +1096,16 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				slog.ErrorContext(r.Context(), "failed to upgrade user_region and ancestors", "error", err)
 				_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "verification", "operation", "upgrade_user_region_ancestors")
 			}
+		}
+	}
+
+	// Invalidate tokens if verification status changed so user gets fresh claims
+	if autoUpgraded {
+		if err := h.userRepo.InvalidateTokens(r.Context(), vouchedUserID); err != nil {
+			slog.WarnContext(r.Context(), "failed to invalidate tokens after vouch upgrade", "user_id", vouchedUserID, "error", err)
+		}
+		if h.statusCache != nil {
+			h.statusCache.Invalidate(vouchedUserID)
 		}
 	}
 

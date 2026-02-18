@@ -1108,12 +1108,12 @@ func TestAuthHandler_DeleteAccount(t *testing.T) {
 		var registerResp models.RegisterResponse
 		_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
 
-		// Disable MFA and block user
+		// Disable MFA and login BEFORE blocking (blocked users can't login)
 		_, _ = db.ExecContext(context.Background(),
-			"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, is_blocked = TRUE, blocked_at = NOW(), block_reason = 'test' WHERE id = ?",
+			"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
 			registerResp.UserID)
 
-		// Login
+		// Login first to get a token
 		loginBody := map[string]string{"email": "user@deletesofttest.com", "password": "securepassword123"}
 		loginBytes, _ := json.Marshal(loginBody)
 		loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
@@ -1124,7 +1124,13 @@ func TestAuthHandler_DeleteAccount(t *testing.T) {
 		var loginResp models.LoginResponse
 		_ = json.NewDecoder(loginRec.Body).Decode(&loginResp)
 
-		// Delete account
+		// NOW block the user (after obtaining the token)
+		_, _ = db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = TRUE, blocked_at = NOW(), block_reason = 'test' WHERE id = ?",
+			registerResp.UserID)
+
+		// Delete account using pre-obtained token
+		// (no status cache in handler unit tests, so middleware won't block the token)
 		deleteBody := map[string]string{"password": "securepassword123"}
 		deleteBytes, _ := json.Marshal(deleteBody)
 		deleteReq := httptest.NewRequest("DELETE", "/api/v1/users/me", bytes.NewReader(deleteBytes))
@@ -1496,4 +1502,86 @@ func timeInFuture(hours int) time.Time {
 
 func timeInPast(hours int) time.Time {
 	return time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+}
+
+// =============================================================================
+// Blocked User Login Guard Tests
+// =============================================================================
+
+func TestAuthHandler_Login_BlockedUser(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	// Create a test user
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@blockedlogintest.com'")
+	registerBody := map[string]string{
+		"username": "blockedlogintest",
+		"email":    "user@blockedlogintest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
+
+	// Block the user
+	_, _ = db.ExecContext(context.Background(),
+		"UPDATE users SET is_blocked = TRUE, blocked_at = NOW(), block_reason = 'test block' WHERE id = ?",
+		registerResp.UserID)
+
+	t.Run("blocked user cannot login", func(t *testing.T) {
+		body := map[string]string{
+			"email":    "user@blockedlogintest.com",
+			"password": "securepassword123",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Login(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "account_blocked" {
+			t.Errorf("Expected error 'account_blocked', got %v", resp["error"])
+		}
+	})
+
+	t.Run("unblocked user can login again", func(t *testing.T) {
+		// Unblock the user
+		_, _ = db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = FALSE, blocked_at = NULL, block_reason = NULL, mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
+			registerResp.UserID)
+
+		body := map[string]string{
+			"email":    "user@blockedlogintest.com",
+			"password": "securepassword123",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Login(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// Cleanup
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
 }

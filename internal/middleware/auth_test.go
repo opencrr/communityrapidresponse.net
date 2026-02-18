@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,4 +487,230 @@ func TestTokenExpiration(t *testing.T) {
 	if err != ErrExpiredToken {
 		t.Errorf("Expected ErrExpiredToken, got %v", err)
 	}
+}
+
+// =============================================================================
+// Token Revocation via Status Cache Tests
+// =============================================================================
+
+func TestJWTAuth_TokenRevocation(t *testing.T) {
+	t.Run("rejects token when user is blocked", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{IsBlocked: true},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		user := &models.User{
+			ID:       "blocked-user-id",
+			Username: "blockeduser",
+			Email:    "blocked@example.com",
+		}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("Handler should not be called for blocked user")
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "token_revoked") {
+			t.Errorf("Expected token_revoked in body, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("rejects token when user is deleted", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		deletedAt := time.Now()
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{DeletedAt: &deletedAt},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		user := &models.User{ID: "deleted-user-id", Username: "deleteduser", Email: "deleted@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("Handler should not be called for deleted user")
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("rejects token issued before invalidation", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+
+		// Generate token first (issued at ~now)
+		user := &models.User{ID: "invalidated-user-id", Username: "invaliduser", Email: "invalid@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		// Invalidation time is after token was issued
+		invalidatedAt := time.Now().Add(time.Second)
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{TokenInvalidatedAt: &invalidatedAt},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("Handler should not be called for invalidated token")
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("accepts token issued after invalidation", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+
+		// Invalidation time in the past
+		invalidatedAt := time.Now().Add(-time.Hour)
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{TokenInvalidatedAt: &invalidatedAt},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		// Token issued now (after invalidation)
+		user := &models.User{ID: "reauth-user-id", Username: "reauthuser", Email: "reauth@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("accepts token when status cache is nil", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		// Don't set status cache — nil by default
+
+		user := &models.User{ID: "nocache-user-id", Username: "nocacheuser", Email: "nocache@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("fails closed on status check error", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		checker := &mockStatusChecker{
+			err: errors.New("database connection failed"),
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		user := &models.User{ID: "error-user-id", Username: "erroruser", Email: "error@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("Handler should not be called when status check fails")
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401 (fail closed), got %d", rec.Code)
+		}
+	})
+
+	t.Run("OptionalAuthenticate treats revoked user as unauthenticated", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{IsBlocked: true},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		user := &models.User{ID: "opt-blocked-id", Username: "optblocked", Email: "optblocked@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		var claimsInHandler *Claims
+		handler := auth.OptionalAuthenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claimsInHandler = GetUserFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		// Handler should still be called (it's optional auth)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+		// But claims should be nil (treated as unauthenticated)
+		if claimsInHandler != nil {
+			t.Error("Expected claims to be nil for blocked user in optional auth")
+		}
+	})
+
+	t.Run("non-blocked non-deleted user passes through", func(t *testing.T) {
+		auth := NewJWTAuth(testJWTConfig())
+		checker := &mockStatusChecker{
+			status: &models.UserStatus{IsBlocked: false},
+		}
+		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
+
+		user := &models.User{ID: "good-user-id", Username: "gooduser", Email: "good@example.com"}
+		token, _ := auth.GenerateToken(user)
+
+		handler := auth.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetUserFromContext(r.Context())
+			if claims == nil {
+				t.Error("Expected claims in context")
+				return
+			}
+			if claims.UserID != user.ID {
+				t.Errorf("Expected user ID '%s', got '%s'", user.ID, claims.UserID)
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+	})
 }

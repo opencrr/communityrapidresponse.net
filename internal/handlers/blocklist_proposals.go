@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
@@ -22,6 +23,7 @@ type BlocklistProposalHandler struct {
 	consensusConfig     *config.ConsensusConfig
 	blocklistConfig     *config.BlocklistConfig
 	notificationService NotificationServiceInterface
+	statusCache         *middleware.UserStatusCache
 }
 
 // NewBlocklistProposalHandler creates a new blocklist proposal handler
@@ -49,6 +51,12 @@ func NewBlocklistProposalHandler(
 // This is optional - if not set, notifications will not be sent.
 func (h *BlocklistProposalHandler) SetNotificationService(svc NotificationServiceInterface) {
 	h.notificationService = svc
+}
+
+// SetStatusCache sets the user status cache for immediate cache eviction
+// when blocklist consensus is reached. Optional - if not set, cache eviction is skipped.
+func (h *BlocklistProposalHandler) SetStatusCache(cache *middleware.UserStatusCache) {
+	h.statusCache = cache
 }
 
 // CreateProposal handles POST /api/v1/communities/:id/blocklist-proposals
@@ -356,6 +364,16 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 	if err != nil {
 		writeServerError(w, r, err, "Failed to record vote", "blocklist", "record_vote")
 		return
+	}
+
+	// Invalidate blocked user's tokens if consensus was reached
+	if consensusReached {
+		if err := h.userRepo.InvalidateTokens(r.Context(), proposal.TargetUserID); err != nil {
+			slog.WarnContext(r.Context(), "failed to invalidate tokens after blocklist", "user_id", proposal.TargetUserID, "error", err)
+		}
+		if h.statusCache != nil {
+			h.statusCache.Invalidate(proposal.TargetUserID)
+		}
 	}
 
 	// Side effects outside transaction
