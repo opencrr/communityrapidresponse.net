@@ -304,17 +304,21 @@ func (r *VerificationRepository) IncrementFailedVerificationAttemptsTx(ctx conte
 	return count, nil
 }
 
-// IncrementFailedVerificationAttempts increments the failed attempt counter (non-transactional)
+// IncrementFailedVerificationAttempts atomically increments the failed attempt counter
 // and returns the new count.
 func (r *VerificationRepository) IncrementFailedVerificationAttempts(ctx context.Context, id string) (int, error) {
-	updateQuery := `UPDATE verification_requests SET failed_verification_attempts = failed_verification_attempts + 1 WHERE id = ?`
-	if _, err := r.db.ExecContext(ctx, updateQuery, id); err != nil {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	count, err := r.IncrementFailedVerificationAttemptsTx(ctx, tx, id)
+	if err != nil {
 		return 0, err
 	}
 
-	var count int
-	selectQuery := `SELECT failed_verification_attempts FROM verification_requests WHERE id = ?`
-	if err := r.db.QueryRowContext(ctx, selectQuery, id).Scan(&count); err != nil {
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return count, nil
