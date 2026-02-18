@@ -62,7 +62,8 @@ func (r *VerificationRepository) CreateVerificationRequest(ctx context.Context, 
 func (r *VerificationRepository) GetByCode(ctx context.Context, code string) (*models.VerificationRequest, error) {
 	query := `
 		SELECT id, user_id, region_id, verification_code, status, postgrid_request_id,
-			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at
+			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at,
+			failed_verification_attempts
 		FROM verification_requests
 		WHERE verification_code = ?
 	`
@@ -82,6 +83,7 @@ func (r *VerificationRepository) GetByCode(ctx context.Context, code string) (*m
 		&req.CreatedAt,
 		&req.ExpiresAt,
 		&req.VerifiedAt,
+		&req.FailedVerificationAttempts,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,7 +100,8 @@ func (r *VerificationRepository) GetByCode(ctx context.Context, code string) (*m
 func (r *VerificationRepository) GetPendingByUserID(ctx context.Context, userID string) ([]models.VerificationRequest, error) {
 	query := `
 		SELECT id, user_id, region_id, verification_code, status, postgrid_request_id,
-			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at
+			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at,
+			failed_verification_attempts
 		FROM verification_requests
 		WHERE user_id = ? AND status IN ('pending', 'mailed') AND expires_at > NOW()
 	`
@@ -126,6 +129,7 @@ func (r *VerificationRepository) GetPendingByUserID(ctx context.Context, userID 
 			&req.CreatedAt,
 			&req.ExpiresAt,
 			&req.VerifiedAt,
+			&req.FailedVerificationAttempts,
 		); err != nil {
 			return nil, err
 		}
@@ -198,7 +202,8 @@ func (r *VerificationRepository) ExpireOldRequests(ctx context.Context) (int64, 
 func (r *VerificationRepository) GetByCodeForUpdate(ctx context.Context, tx *sql.Tx, code string) (*models.VerificationRequest, error) {
 	query := `
 		SELECT id, user_id, region_id, verification_code, status, postgrid_request_id,
-			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at
+			boundary_type, boundary_name, boundary_state, postcard_ref, created_at, expires_at, verified_at,
+			failed_verification_attempts
 		FROM verification_requests
 		WHERE verification_code = ?
 		FOR UPDATE
@@ -219,6 +224,7 @@ func (r *VerificationRepository) GetByCodeForUpdate(ctx context.Context, tx *sql
 		&req.CreatedAt,
 		&req.ExpiresAt,
 		&req.VerifiedAt,
+		&req.FailedVerificationAttempts,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -280,6 +286,42 @@ func (r *VerificationRepository) CreateVerificationRequestTx(ctx context.Context
 	)
 
 	return err
+}
+
+// IncrementFailedVerificationAttemptsTx increments the failed attempt counter within a transaction
+// and returns the new count.
+func (r *VerificationRepository) IncrementFailedVerificationAttemptsTx(ctx context.Context, tx *sql.Tx, id string) (int, error) {
+	updateQuery := `UPDATE verification_requests SET failed_verification_attempts = failed_verification_attempts + 1 WHERE id = ?`
+	if _, err := tx.ExecContext(ctx, updateQuery, id); err != nil {
+		return 0, err
+	}
+
+	var count int
+	selectQuery := `SELECT failed_verification_attempts FROM verification_requests WHERE id = ?`
+	if err := tx.QueryRowContext(ctx, selectQuery, id).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// IncrementFailedVerificationAttempts atomically increments the failed attempt counter
+// and returns the new count.
+func (r *VerificationRepository) IncrementFailedVerificationAttempts(ctx context.Context, id string) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	count, err := r.IncrementFailedVerificationAttemptsTx(ctx, tx, id)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // VouchRepository handles vouch database operations

@@ -1,0 +1,1 @@
+ALTER TABLE verification_requests DROP COLUMN failed_verification_attempts;

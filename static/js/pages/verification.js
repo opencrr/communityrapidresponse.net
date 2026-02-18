@@ -268,7 +268,7 @@ function renderCodeEntryForm(postcardRef) {
             </h2>
             <p style="color: var(--color-gray-600);">
                 Your verification postcard has been mailed. It should arrive within 5-7 business days.
-                Enter the 8-character code when it arrives.
+                Enter the code from your postcard when it arrives.
             </p>
             ${refMessage}
         </div>
@@ -282,9 +282,9 @@ function renderCodeEntryForm(postcardRef) {
                     name="code"
                     class="form-input"
                     required
-                    pattern="[0-9a-fA-F]{8}"
-                    maxlength="8"
-                    placeholder="abcd1234"
+                    pattern="[0-9a-fA-F]{8,16}"
+                    maxlength="16"
+                    placeholder="abcd1234efgh5678"
                     style="text-align: center; font-size: var(--font-size-2xl); letter-spacing: 0.3em;"
                     autocomplete="one-time-code"
                 >
@@ -437,7 +437,9 @@ async function handleCodeSubmit(event) {
         let errorMessage = 'Failed to verify code. Please try again.';
 
         if (error instanceof ApiError) {
-            if (error.status === 400) {
+            if (error.status === 429) {
+                errorMessage = 'Too many failed attempts. This verification code has been locked. Please request a new postcard.';
+            } else if (error.status === 400) {
                 errorMessage = 'Invalid or expired verification code.';
             } else if (error.message) {
                 errorMessage = error.message;

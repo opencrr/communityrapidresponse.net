@@ -18,4 +18,5 @@ var (
 	ErrSchoolBlocked          = errors.New("user is blocked from this school")
 	ErrSecretProposalNotFound = errors.New("secret proposal not found")
 	ErrWrappedKeyNotFound     = errors.New("wrapped key not found")
+	ErrVerificationLocked     = errors.New("verification code locked")
 )

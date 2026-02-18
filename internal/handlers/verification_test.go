@@ -3902,3 +3902,150 @@ func TestVerificationHandler_Vouch_VoucherMustBeInTargetRegion(t *testing.T) {
 	})
 }
 
+func TestVerificationHandler_VerifyCode_Lockout(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@verificationtest.com'")
+
+	userA := suite.createTestUser("lockout_user_a", models.TierUnverified)
+	userB := suite.createTestUser("lockout_user_b", models.TierUnverified)
+	region := suite.createTestRegion("Test Region Lockout", models.RegionTypeCity, nil, userA.ID)
+
+	defer suite.cleanup(userA.ID, userB.ID)
+	defer suite.cleanupRegions(region.ID)
+
+	t.Run("lockout after 5 failed attempts from wrong user", func(t *testing.T) {
+		verificationCode := "lockouttest1234"
+		verReq := suite.createVerificationRequest(userA.ID, region.ID, verificationCode, models.VerificationStatusMailed)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
+
+		claimsB := &middleware.Claims{
+			UserID:           userB.ID,
+			Email:            userB.Email,
+			VerificationTier: models.TierUnverified,
+		}
+
+		// Attempt 5 times as wrong user — should get 403 for first 4, then 429 on the 5th
+		for i := 1; i <= verificationCodeLockoutThreshold; i++ {
+			body := map[string]interface{}{"verification_code": verificationCode}
+			bodyBytes, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", "/api/v1/verification/postcard/verify", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			ctx := middleware.ContextWithUser(req.Context(), claimsB)
+			req = req.WithContext(ctx)
+
+			rec := httptest.NewRecorder()
+			suite.handler.VerifyCode(rec, req)
+
+			if i < verificationCodeLockoutThreshold {
+				if rec.Code != http.StatusForbidden {
+					t.Errorf("Attempt %d: expected 403, got %d: %s", i, rec.Code, rec.Body.String())
+				}
+			} else {
+				if rec.Code != http.StatusTooManyRequests {
+					t.Errorf("Attempt %d: expected 429, got %d: %s", i, rec.Code, rec.Body.String())
+				}
+			}
+		}
+
+		// 6th attempt — even the correct user should get 429
+		claimsA := &middleware.Claims{
+			UserID:           userA.ID,
+			Email:            userA.Email,
+			VerificationTier: models.TierUnverified,
+		}
+		body := map[string]interface{}{"verification_code": verificationCode}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), claimsA)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.VerifyCode(rec, req)
+
+		if rec.Code != http.StatusTooManyRequests {
+			t.Errorf("Post-lockout attempt by correct user: expected 429, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "verification_code_locked" {
+			t.Errorf("Expected error 'verification_code_locked', got '%v'", resp["error"])
+		}
+	})
+
+	t.Run("under threshold still succeeds for correct user", func(t *testing.T) {
+		verificationCode := "underthreshold12"
+		verReq := suite.createVerificationRequest(userA.ID, region.ID, verificationCode, models.VerificationStatusMailed)
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
+
+		claimsB := &middleware.Claims{
+			UserID:           userB.ID,
+			Email:            userB.Email,
+			VerificationTier: models.TierUnverified,
+		}
+
+		// 4 failed attempts (under threshold of 5)
+		for i := 1; i <= verificationCodeLockoutThreshold-1; i++ {
+			body := map[string]interface{}{"verification_code": verificationCode}
+			bodyBytes, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", "/api/v1/verification/postcard/verify", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			ctx := middleware.ContextWithUser(req.Context(), claimsB)
+			req = req.WithContext(ctx)
+
+			rec := httptest.NewRecorder()
+			suite.handler.VerifyCode(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("Attempt %d: expected 403, got %d: %s", i, rec.Code, rec.Body.String())
+			}
+		}
+
+		// Correct user should still succeed
+		claimsA := &middleware.Claims{
+			UserID:           userA.ID,
+			Email:            userA.Email,
+			VerificationTier: models.TierUnverified,
+		}
+		body := map[string]interface{}{"verification_code": verificationCode}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/verify", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), claimsA)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.VerifyCode(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Correct user after %d failed attempts: expected 200, got %d: %s",
+				verificationCodeLockoutThreshold-1, rec.Code, rec.Body.String())
+		}
+
+		// Reset user tier for other tests
+		_, _ = suite.db.ExecContext(context.Background(), "UPDATE users SET verification_tier = ?, postcard_verified = false WHERE id = ?", models.TierUnverified, userA.ID)
+	})
+}
+
+func TestGenerateVerificationCode_Length(t *testing.T) {
+	code, err := generateVerificationCode()
+	if err != nil {
+		t.Fatalf("generateVerificationCode() returned error: %v", err)
+	}
+	if len(code) != 16 {
+		t.Errorf("Expected 16-char hex code, got %d chars: %q", len(code), code)
+	}
+	// Verify it's valid hex
+	for _, c := range code {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("Code contains non-hex character: %c in %q", c, code)
+		}
+	}
+}
+

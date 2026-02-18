@@ -29,7 +29,8 @@ type VerificationRequest struct {
 	PostcardRef       *string            `json:"postcard_ref,omitempty" db:"postcard_ref"`
 	CreatedAt         time.Time          `json:"created_at" db:"created_at"`
 	ExpiresAt         time.Time          `json:"expires_at" db:"expires_at"`
-	VerifiedAt        *time.Time         `json:"verified_at,omitempty" db:"verified_at"`
+	VerifiedAt                 *time.Time         `json:"verified_at,omitempty" db:"verified_at"`
+	FailedVerificationAttempts int                `json:"-" db:"failed_verification_attempts"`
 }
 
 // Address represents a mailing address (NEVER stored in database)
@@ -83,7 +84,8 @@ type VerifyCodeRequest struct {
 
 // VerifyCodeResponse represents response after successful code verification
 type VerifyCodeResponse struct {
-	Success bool     `json:"success"`
+	Success bool                   `json:"success"`
+	Token   string                 `json:"token,omitempty"`
 	User    *UserVerificationResult `json:"user,omitempty"`
 }
 
