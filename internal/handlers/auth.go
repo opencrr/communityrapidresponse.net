@@ -210,16 +210,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userRepo.Create(r.Context(), user); err != nil {
-		if errors.Is(err, database.ErrUserAlreadyExists) {
-			writeError(w, http.StatusConflict, "user_exists", "Username already taken")
-			return
-		}
-		if errors.Is(err, database.ErrEmailAlreadyExists) {
-			writeError(w, http.StatusConflict, "email_exists", "Email already registered")
-			return
-		}
-		if errors.Is(err, database.ErrNormalizedEmailAlreadyExists) {
-			writeError(w, http.StatusConflict, "email_exists", "An account with this email already exists")
+		if errors.Is(err, database.ErrUserAlreadyExists) ||
+			errors.Is(err, database.ErrEmailAlreadyExists) ||
+			errors.Is(err, database.ErrNormalizedEmailAlreadyExists) {
+			writeError(w, http.StatusConflict, "account_exists", "An account with these credentials already exists")
 			return
 		}
 		writeServerError(w, r, err, "Failed to create user", "auth", "register")
