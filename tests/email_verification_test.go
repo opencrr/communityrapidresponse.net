@@ -436,8 +436,8 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 				if resp2.StatusCode != http.StatusConflict {
 					t.Errorf("Expected status 409 (conflict), got %d", resp2.StatusCode)
 				}
-				if body2["error"] != "email_exists" {
-					t.Errorf("Expected error 'email_exists', got '%s'", body2["error"])
+				if body2["error"] != "account_exists" {
+					t.Errorf("Expected error 'account_exists', got '%s'", body2["error"])
 				}
 				suite.cleanup(userID1)
 			} else {

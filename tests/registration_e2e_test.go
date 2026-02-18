@@ -345,8 +345,8 @@ func TestE2E_Registration_DuplicateUsername(t *testing.T) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(resp.Body).Decode(&body)
 
-		if body["error"] != "user_exists" {
-			t.Errorf("Expected error 'user_exists', got '%v'", body["error"])
+		if body["error"] != "account_exists" {
+			t.Errorf("Expected error 'account_exists', got '%v'", body["error"])
 		}
 	})
 }
@@ -381,8 +381,8 @@ func TestE2E_Registration_DuplicateEmail(t *testing.T) {
 		var body map[string]interface{}
 		_ = json.NewDecoder(resp.Body).Decode(&body)
 
-		if body["error"] != "email_exists" {
-			t.Errorf("Expected error 'email_exists', got '%v'", body["error"])
+		if body["error"] != "account_exists" {
+			t.Errorf("Expected error 'account_exists', got '%v'", body["error"])
 		}
 	})
 }
