@@ -20,13 +20,20 @@ const csrfHeaderName = "X-CSRF-Token"
 // Matches the JWT token expiration so the cookie persists for returning users.
 const csrfCookieMaxAge = 86400
 
-// csrfExemptPrefixes are path prefixes exempt from CSRF validation.
-// These are unauthenticated/pre-auth endpoints where no existing session can
-// be exploited. Note: /api/v1/auth/ includes change-password, which is
-// acceptable because it requires a valid JWT and the current password.
-var csrfExemptPrefixes = []string{
-	"/api/v1/auth/",
-	"/api/v1/mfa/",
+// csrfExemptPaths are exact paths exempt from CSRF validation.
+// Only unauthenticated/pre-auth endpoints are listed here. Authenticated
+// endpoints like change-password and resend-verification require CSRF
+// as defense-in-depth.
+var csrfExemptPaths = map[string]bool{
+	"/api/v1/auth/register":        true,
+	"/api/v1/auth/login":           true,
+	"/api/v1/auth/logout":          true,
+	"/api/v1/auth/forgot-password": true,
+	"/api/v1/auth/reset-password":  true,
+	"/api/v1/auth/verify-email":    true,
+	"/api/v1/mfa/setup":            true,
+	"/api/v1/mfa/setup/complete":   true,
+	"/api/v1/mfa/verify":           true,
 }
 
 // deriveCSRFSecret derives a dedicated CSRF signing key from the application
@@ -56,12 +63,10 @@ func CSRFProtection(secret string, secureCookies bool) func(http.Handler) http.H
 			}
 
 			// Unsafe methods: check exempt paths first
-			for _, prefix := range csrfExemptPrefixes {
-				if strings.HasPrefix(r.URL.Path, prefix) {
-					ensureCSRFCookie(w, r, csrfSecret, secureCookies)
-					next.ServeHTTP(w, r)
-					return
-				}
+			if csrfExemptPaths[r.URL.Path] {
+				ensureCSRFCookie(w, r, csrfSecret, secureCookies)
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			// Validate CSRF token

@@ -184,7 +184,6 @@ func TestCSRFProtection_ExemptPathsBypass(t *testing.T) {
 		"/api/v1/auth/logout",
 		"/api/v1/auth/forgot-password",
 		"/api/v1/auth/reset-password",
-		"/api/v1/auth/resend-verification",
 		"/api/v1/auth/verify-email",
 		"/api/v1/mfa/setup",
 		"/api/v1/mfa/setup/complete",
@@ -213,6 +212,8 @@ func TestCSRFProtection_NonExemptPathRequiresToken(t *testing.T) {
 		"/api/v1/signal-groups",
 		"/api/v1/verification/postcard/request",
 		"/api/v1/deletion-proposals",
+		"/api/v1/auth/change-password",
+		"/api/v1/auth/resend-verification",
 	}
 
 	for _, path := range nonExemptPaths {
