@@ -3400,8 +3400,10 @@ func TestE2E_SessionRevocation(t *testing.T) {
 			t.Fatalf("Expected 200 for password change, got %d", changeResp.StatusCode)
 		}
 
-		// Wait for cache TTL to expire
-		time.Sleep(250 * time.Millisecond)
+		// Wait for cache TTL to expire and cross the second boundary
+		// (JWT iat and token_invalidated_at have second precision, so
+		// tokens issued in the same second as invalidation are not rejected)
+		time.Sleep(1100 * time.Millisecond)
 
 		// Old token should be rejected (token_invalidated_at was set)
 		resp2 := suite.request("GET", "/api/v1/users/me", nil, token)

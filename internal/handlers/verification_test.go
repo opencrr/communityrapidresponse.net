@@ -4043,7 +4043,7 @@ func TestGenerateVerificationCode_Length(t *testing.T) {
 	}
 	// Verify it's valid hex
 	for _, c := range code {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Errorf("Code contains non-hex character: %c in %q", c, code)
 		}
 	}
