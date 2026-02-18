@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -198,7 +197,7 @@ func (s *NCESService) fetchCount(ctx context.Context, endpoint, whereClause stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxSmallResponseSize)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read count response: %w", err)
 	}
@@ -241,7 +240,7 @@ func (s *NCESService) FetchDistrictBoundary(ctx context.Context, geoid string) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read boundary response: %w", err)
 	}
@@ -288,7 +287,7 @@ func (s *NCESService) fetchPage(ctx context.Context, endpoint, whereClause, outF
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimitedBody(resp.Body, maxAPIResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
