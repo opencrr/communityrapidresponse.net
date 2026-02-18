@@ -159,6 +159,24 @@ func (r *PasswordResetRepository) CreateTx(ctx context.Context, tx *sql.Tx, user
 	return token, nil
 }
 
+// MarkUsedTx sets the used_at timestamp for a token within a transaction
+func (r *PasswordResetRepository) MarkUsedTx(ctx context.Context, tx *sql.Tx, tokenID string) error {
+	query := `UPDATE password_reset_tokens SET used_at = ? WHERE id = ?`
+	_, err := tx.ExecContext(ctx, query, time.Now().UTC(), tokenID)
+	return err
+}
+
+// InvalidateForUserTx marks all unused tokens for a user as used within a transaction
+func (r *PasswordResetRepository) InvalidateForUserTx(ctx context.Context, tx *sql.Tx, userID string) error {
+	query := `
+		UPDATE password_reset_tokens
+		SET used_at = ?
+		WHERE user_id = ? AND used_at IS NULL
+	`
+	_, err := tx.ExecContext(ctx, query, time.Now().UTC(), userID)
+	return err
+}
+
 // CleanupExpired deletes tokens that have been expired for more than 24 hours
 func (r *PasswordResetRepository) CleanupExpired(ctx context.Context) (int64, error) {
 	query := `

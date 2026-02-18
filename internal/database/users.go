@@ -936,6 +936,30 @@ func (r *UserRepository) InvalidateTokens(ctx context.Context, userID string) er
 	return err
 }
 
+// UpdatePasswordTx updates a user's password hash within a transaction
+func (r *UserRepository) UpdatePasswordTx(ctx context.Context, tx *sql.Tx, userID, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = ? WHERE id = ?`
+	result, err := tx.ExecContext(ctx, query, newPasswordHash, userID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// InvalidateTokensTx sets the token_invalidated_at timestamp within a transaction
+func (r *UserRepository) InvalidateTokensTx(ctx context.Context, tx *sql.Tx, userID string) error {
+	query := `UPDATE users SET token_invalidated_at = NOW() WHERE id = ?`
+	_, err := tx.ExecContext(ctx, query, userID)
+	return err
+}
+
 // GetVerifiedUsersInRegion returns users who are postcard OR vouch verified in a specific region.
 // Results are paginated for memory efficiency when dealing with large regions.
 func (r *UserRepository) GetVerifiedUsersInRegion(ctx context.Context, regionID string, offset, limit int) ([]*models.User, error) {
