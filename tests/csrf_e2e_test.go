@@ -377,7 +377,6 @@ func TestCSRFIntegration_ExemptAuthEndpoints(t *testing.T) {
 			"token":    "invalidtoken",
 			"password": "newpassword12345",
 		}},
-		{"/api/v1/auth/resend-verification", nil},
 	}
 
 	for _, tc := range exemptPaths {
@@ -965,7 +964,7 @@ func TestCSRF_E2E_TokenReusableAcrossMultipleRequests(t *testing.T) {
 	}
 }
 
-func TestCSRF_E2E_ChangePasswordExemptAsAuthEndpoint(t *testing.T) {
+func TestCSRF_E2E_ChangePasswordRequiresCSRF(t *testing.T) {
 	suite := SetupCSRFTest(t)
 
 	client := suite.newCookieClient()
@@ -980,20 +979,39 @@ func TestCSRF_E2E_ChangePasswordExemptAsAuthEndpoint(t *testing.T) {
 		t.Fatal("expected JWT token after login")
 	}
 
-	// Change password WITHOUT CSRF — should succeed (exempt under /api/v1/auth/ prefix)
+	// GET to acquire CSRF cookie
+	resp0 := suite.doRequest(client, "GET", "/api/v1/health", nil, "")
+	_ = resp0.Body.Close()
+
+	// Change password WITHOUT CSRF header — should be rejected (no longer exempt)
 	resp := suite.doRequest(client, "POST", "/api/v1/auth/change-password", map[string]string{
 		"current_password": password,
 		"new_password":     "newsecurepassword456",
 	}, jwtToken)
 	defer func() { _ = resp.Body.Close() }()
 
-	// /api/v1/auth/change-password is under the /api/v1/auth/ exempt prefix,
-	// so it must NOT be blocked by CSRF validation.
-	if resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("change-password without CSRF: expected 403, got %d", resp.StatusCode)
+	} else {
 		var body map[string]string
 		_ = json.NewDecoder(resp.Body).Decode(&body)
-		if body["error"] == "csrf_validation_failed" {
-			t.Error("/api/v1/auth/change-password should be exempt from CSRF (under /api/v1/auth/ prefix)")
+		if body["error"] != "csrf_validation_failed" {
+			t.Errorf("expected csrf_validation_failed error, got %q", body["error"])
+		}
+	}
+
+	// Change password WITH valid CSRF — should pass CSRF check
+	resp2 := suite.doRequestWithCSRF(client, "POST", "/api/v1/auth/change-password", map[string]string{
+		"current_password": password,
+		"new_password":     "newsecurepassword456",
+	}, jwtToken)
+	defer func() { _ = resp2.Body.Close() }()
+
+	if resp2.StatusCode == http.StatusForbidden {
+		var body2 map[string]string
+		_ = json.NewDecoder(resp2.Body).Decode(&body2)
+		if body2["error"] == "csrf_validation_failed" {
+			t.Error("change-password with valid CSRF should not be rejected")
 		}
 	}
 }
