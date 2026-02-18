@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,9 +18,10 @@ import (
 
 // AdminHandler handles admin-only endpoints
 type AdminHandler struct {
-	userRepo   *database.UserRepository
-	regionRepo *database.RegionRepository
-	auditRepo  *database.AuditRepository
+	userRepo    *database.UserRepository
+	regionRepo  *database.RegionRepository
+	auditRepo   *database.AuditRepository
+	statusCache *middleware.UserStatusCache
 }
 
 // NewAdminHandler creates a new admin handler
@@ -31,6 +33,26 @@ func NewAdminHandler(userRepo *database.UserRepository, regionRepo *database.Reg
 	}
 }
 
+// SetStatusCache sets the user status cache for immediate cache eviction
+// on privilege changes. Optional - if not set, cache eviction is skipped.
+func (h *AdminHandler) SetStatusCache(cache *middleware.UserStatusCache) {
+	h.statusCache = cache
+}
+
+// requireSuperuser re-checks superuser status from the database as a defense-in-depth
+// measure against stale JWT claims. Returns true if the user is a superuser.
+func (h *AdminHandler) requireSuperuser(w http.ResponseWriter, r *http.Request, claims *middleware.Claims) bool {
+	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
+	if err != nil || user == nil || !user.IsSuperuser {
+		if err != nil && !errors.Is(err, database.ErrUserNotFound) {
+			slog.ErrorContext(r.Context(), "failed to re-check superuser status", "user_id", claims.UserID, "error", err)
+		}
+		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+		return false
+	}
+	return true
+}
+
 // ListUsers handles GET /api/v1/admin/users
 // Supports search via ?q= parameter and pagination via ?page= and ?limit=
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
@@ -40,8 +62,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -86,8 +107,7 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -130,8 +150,7 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -156,6 +175,14 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 	if err := h.userRepo.SetVouchVerified(r.Context(), userID, true); err != nil {
 		writeServerError(w, r, err, "Failed to grant vouch verification", "admin", "grant_vouch")
 		return
+	}
+
+	// Invalidate tokens so user gets fresh claims with updated verification status
+	if err := h.userRepo.InvalidateTokens(r.Context(), userID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after grant vouch", "user_id", userID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(userID)
 	}
 
 	// Upgrade any pending user_regions to verified status
@@ -212,8 +239,7 @@ func (h *AdminHandler) RevokeVouchVerification(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -238,6 +264,14 @@ func (h *AdminHandler) RevokeVouchVerification(w http.ResponseWriter, r *http.Re
 	if err := h.userRepo.SetVouchVerified(r.Context(), userID, false); err != nil {
 		writeServerError(w, r, err, "Failed to revoke vouch verification", "admin", "revoke_vouch")
 		return
+	}
+
+	// Invalidate tokens so user's stale claims are rejected
+	if err := h.userRepo.InvalidateTokens(r.Context(), userID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after revoke vouch", "user_id", userID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(userID)
 	}
 
 	// Audit log: superuser revoke vouch
@@ -270,8 +304,7 @@ func (h *AdminHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -319,6 +352,14 @@ func (h *AdminHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate existing tokens so the blocked user is rejected immediately
+	if err := h.userRepo.InvalidateTokens(r.Context(), userID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after block", "user_id", userID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(userID)
+	}
+
 	// Audit log: user blocked
 	if h.auditRepo != nil {
 		resourceType := "user"
@@ -349,8 +390,7 @@ func (h *AdminHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -375,6 +415,14 @@ func (h *AdminHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.userRepo.Unblock(r.Context(), userID); err != nil {
 		writeServerError(w, r, err, "Failed to unblock user", "admin", "unblock_user")
 		return
+	}
+
+	// Invalidate tokens so unblocked user must re-login with fresh claims
+	if err := h.userRepo.InvalidateTokens(r.Context(), userID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after unblock", "user_id", userID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(userID)
 	}
 
 	// Audit log: user unblocked
@@ -406,8 +454,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -440,6 +487,14 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate tokens before deletion so any in-flight requests are rejected
+	if err := h.userRepo.InvalidateTokens(r.Context(), userID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens before delete", "user_id", userID, "error", err)
+	}
+	if h.statusCache != nil {
+		h.statusCache.Invalidate(userID)
+	}
+
 	// Delete the user
 	if err := h.userRepo.Delete(r.Context(), userID); err != nil {
 		writeServerError(w, r, err, "Failed to delete user", "admin", "delete_user")
@@ -470,8 +525,7 @@ func (h *AdminHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 
@@ -494,8 +548,7 @@ func (h *AdminHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Superuser access required")
+	if !h.requireSuperuser(w, r, claims) {
 		return
 	}
 

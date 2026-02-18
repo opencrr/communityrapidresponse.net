@@ -188,6 +188,10 @@ func main() {
 	// Initialize middleware
 	jwtAuth := middleware.NewJWTAuth(&cfg.JWT)
 
+	// Set up user status cache for token revocation (60s TTL)
+	statusCache := middleware.NewUserStatusCache(userRepo, 60*time.Second)
+	jwtAuth.SetStatusCache(statusCache)
+
 	// Derive base URL from login URL for password reset links
 	baseURL := loginURL
 	// Strip trailing path components like /login to get the base URL
@@ -280,6 +284,11 @@ func main() {
 		regionRepo, schoolRepo, signalGroupRepo, meshtasticChannelRepo,
 		auditRepo, &cfg.Consensus,
 	)
+
+	// Wire status cache to handlers for immediate cache eviction on privilege changes
+	adminHandler.SetStatusCache(statusCache)
+	verificationHandler.SetStatusCache(statusCache)
+	blocklistProposalHandler.SetStatusCache(statusCache)
 
 	// Wire notification service to handlers
 	verificationHandler.SetNotificationService(notificationService)

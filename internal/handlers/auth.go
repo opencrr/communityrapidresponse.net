@@ -306,6 +306,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if user is blocked
+	if user.IsBlocked {
+		appSentry.IncrementCounter("auth.login_failure", 1, "reason", "account_blocked")
+		writeError(w, http.StatusForbidden, "account_blocked", "This account has been blocked")
+		return
+	}
+
 	// Check if account is locked
 	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
 		appSentry.IncrementCounter("auth.login_failure", 1, "reason", "account_locked")
@@ -709,6 +716,14 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate existing tokens so other sessions must re-login
+	if err := h.userRepo.InvalidateTokens(r.Context(), user.ID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after password change", "user_id", user.ID, "error", err)
+	}
+	if h.jwtAuth != nil {
+		h.jwtAuth.InvalidateUserCache(user.ID)
+	}
+
 	// Invalidate any active reset tokens
 	if h.passwordResetRepo != nil {
 		_ = h.passwordResetRepo.InvalidateForUser(r.Context(), user.ID)
@@ -901,6 +916,14 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.userRepo.UpdatePassword(r.Context(), resetToken.UserID, string(hashedPassword)); err != nil {
 		writeServerError(w, r, err, "Failed to update password", "auth", "reset_password")
 		return
+	}
+
+	// Invalidate existing tokens so old sessions are rejected
+	if err := h.userRepo.InvalidateTokens(r.Context(), resetToken.UserID); err != nil {
+		slog.WarnContext(r.Context(), "failed to invalidate tokens after password reset", "user_id", resetToken.UserID, "error", err)
+	}
+	if h.jwtAuth != nil {
+		h.jwtAuth.InvalidateUserCache(resetToken.UserID)
 	}
 
 	// Mark token as used

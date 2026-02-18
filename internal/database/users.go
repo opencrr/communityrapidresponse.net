@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
 )
 
@@ -902,6 +903,36 @@ func (r *UserRepository) IncrementFailedMFAAttempts(ctx context.Context, userID 
 // ResetFailedMFAAttempts clears the failed MFA attempt counter
 func (r *UserRepository) ResetFailedMFAAttempts(ctx context.Context, userID string) error {
 	query := `UPDATE users SET failed_mfa_attempts = 0 WHERE id = ?`
+	_, err := r.db.ExecContext(ctx, query, userID)
+	return err
+}
+
+// GetUserStatus returns the minimal fields needed for token validation.
+// This is a lightweight query used by the middleware status cache.
+func (r *UserRepository) GetUserStatus(ctx context.Context, userID string) (*middleware.UserStatus, error) {
+	query := `SELECT token_invalidated_at, is_blocked, deleted_at FROM users WHERE id = ?`
+
+	status := &middleware.UserStatus{}
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(
+		&status.TokenInvalidatedAt,
+		&status.IsBlocked,
+		&status.DeletedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return status, nil
+}
+
+// InvalidateTokens sets the token_invalidated_at timestamp so existing tokens
+// issued before this time will be rejected by the auth middleware.
+func (r *UserRepository) InvalidateTokens(ctx context.Context, userID string) error {
+	query := `UPDATE users SET token_invalidated_at = NOW() WHERE id = ?`
 	_, err := r.db.ExecContext(ctx, query, userID)
 	return err
 }

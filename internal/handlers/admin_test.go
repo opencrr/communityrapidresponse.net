@@ -794,3 +794,56 @@ func TestAdminHandler_DeleteUser(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// RequireSuperuser Defense-in-Depth Tests
+// =============================================================================
+
+func TestAdminHandler_RequireSuperuser_DBRecheck(t *testing.T) {
+	suite := setupAdminTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@admintest.com'")
+
+	// Create a regular user (not superuser in DB)
+	regularUser := suite.createTestUser("recheck_regular", false, false)
+	defer suite.cleanup(regularUser.ID)
+
+	t.Run("rejects user with stale superuser claim", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/users", nil)
+		// Set claims with IsSuperuser: true (stale claim)
+		// but the user is NOT a superuser in the database
+		claims := &middleware.Claims{
+			UserID:      regularUser.ID,
+			Email:       regularUser.Email,
+			IsSuperuser: true, // Stale claim — DB says false
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ListUsers(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 (DB re-check), got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("rejects deleted superuser with stale claim", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/users", nil)
+		// Use a non-existent user ID — simulates deleted user
+		claims := &middleware.Claims{
+			UserID:      "nonexistent-superuser-id",
+			Email:       "gone@example.com",
+			IsSuperuser: true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ListUsers(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403 for deleted superuser, got %d", rec.Code)
+		}
+	})
+}

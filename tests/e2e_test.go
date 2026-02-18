@@ -89,6 +89,10 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	}
 	jwtAuth := middleware.NewJWTAuth(jwtConfig)
 
+	// Set up user status cache for token revocation (short TTL for tests)
+	statusCache := middleware.NewUserStatusCache(userRepo, 100*time.Millisecond)
+	jwtAuth.SetStatusCache(statusCache)
+
 	// Create mock services for testing
 	mockPostgrid := mocks.NewMockPostgridService()
 	mockMapbox := mocks.NewMockMapboxService()
@@ -3146,6 +3150,173 @@ func TestE2E_MFABruteForceProtection(t *testing.T) {
 		userAfter, _ := suite.userRepo.GetByID(context.Background(), userID)
 		if userAfter.FailedMFAAttempts != 0 {
 			t.Errorf("Expected FailedMFAAttempts=0 after re-login, got %d", userAfter.FailedMFAAttempts)
+		}
+	})
+}
+
+// =============================================================================
+// Session Revocation & Stale JWT Claims E2E Tests
+// =============================================================================
+
+func TestE2E_SessionRevocation(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	// Clean up test users
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@sessionrevoke.com'")
+
+	t.Run("blocked user token is rejected", func(t *testing.T) {
+		// Register and login
+		userID, token := suite.registerOrGetUser("revoke_block", "block@sessionrevoke.com", "securepassword123")
+		defer suite.cleanup(userID)
+
+		// Verify the token works before blocking
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 before block, got %d", resp.StatusCode)
+		}
+
+		// Block the user via DB (simulating admin action)
+		_, err := suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = TRUE, blocked_at = NOW(), token_invalidated_at = NOW() WHERE id = ?", userID)
+		if err != nil {
+			t.Fatalf("Failed to block user: %v", err)
+		}
+
+		// Wait for cache TTL to expire (100ms TTL + buffer)
+		time.Sleep(250 * time.Millisecond)
+
+		// Old token should now be rejected
+		resp2 := suite.request("GET", "/api/v1/users/me", nil, token)
+		_ = resp2.Body.Close()
+		if resp2.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected 401 after block, got %d", resp2.StatusCode)
+		}
+	})
+
+	t.Run("blocked user cannot login", func(t *testing.T) {
+		userID := suite.registerOrGetUserID("revoke_blockedlogin", "blockedlogin@sessionrevoke.com", "securepassword123")
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+
+		// Block the user
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = TRUE, blocked_at = NOW() WHERE id = ?", userID)
+
+		// Try to login
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "blockedlogin@sessionrevoke.com", "password": "securepassword123",
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for blocked login, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if body["error"] != "account_blocked" {
+			t.Errorf("Expected error 'account_blocked', got %v", body["error"])
+		}
+	})
+
+	t.Run("unblocked user can login again", func(t *testing.T) {
+		userID := suite.registerOrGetUserID("revoke_unblock", "unblock@sessionrevoke.com", "securepassword123")
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+
+		// Block, then unblock
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = TRUE, blocked_at = NOW() WHERE id = ?", userID)
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_blocked = FALSE, blocked_at = NULL, block_reason = NULL WHERE id = ?", userID)
+
+		// Should be able to login
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "unblock@sessionrevoke.com", "password": "securepassword123",
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 after unblock, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("password change invalidates old token", func(t *testing.T) {
+		userID, token := suite.registerOrGetUser("revoke_pwchange", "pwchange@sessionrevoke.com", "securepassword123")
+		defer suite.cleanup(userID)
+
+		// Verify token works
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 before password change, got %d", resp.StatusCode)
+		}
+
+		// Change password
+		changeResp := suite.request("POST", "/api/v1/auth/change-password", map[string]string{
+			"current_password": "securepassword123",
+			"new_password":     "newpassword12345",
+		}, token)
+		_ = changeResp.Body.Close()
+		if changeResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for password change, got %d", changeResp.StatusCode)
+		}
+
+		// Wait for cache TTL to expire
+		time.Sleep(250 * time.Millisecond)
+
+		// Old token should be rejected (token_invalidated_at was set)
+		resp2 := suite.request("GET", "/api/v1/users/me", nil, token)
+		_ = resp2.Body.Close()
+		if resp2.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected 401 after password change, got %d", resp2.StatusCode)
+		}
+
+		// Login with new password should work
+		loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "pwchange@sessionrevoke.com", "password": "newpassword12345",
+		}, "")
+		defer func() { _ = loginResp.Body.Close() }()
+		if loginResp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 for login with new password, got %d", loginResp.StatusCode)
+		}
+	})
+
+	t.Run("superuser revocation blocks admin endpoints", func(t *testing.T) {
+		userID, _ := suite.registerOrGetUser("revoke_super", "super@sessionrevoke.com", "securepassword123")
+		defer suite.cleanup(userID)
+
+		// Make superuser
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_superuser = TRUE WHERE id = ?", userID)
+
+		// Re-login to get fresh claims with IsSuperuser=true
+		loginResp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "super@sessionrevoke.com", "password": "securepassword123",
+		}, "")
+		var login models.LoginResponse
+		_ = json.NewDecoder(loginResp.Body).Decode(&login)
+		_ = loginResp.Body.Close()
+		superToken := login.Token
+
+		// Verify admin endpoint works
+		resp := suite.request("GET", "/api/v1/admin/users?q=revoke", nil, superToken)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for admin endpoint, got %d", resp.StatusCode)
+		}
+
+		// Revoke superuser in DB (defense-in-depth re-check)
+		_, _ = suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_superuser = FALSE WHERE id = ?", userID)
+
+		// Old token still has IsSuperuser=true in JWT claims,
+		// but requireSuperuser re-checks from DB
+		resp2 := suite.request("GET", "/api/v1/admin/users?q=revoke", nil, superToken)
+		_ = resp2.Body.Close()
+		if resp2.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 after superuser revocation, got %d", resp2.StatusCode)
 		}
 	})
 }

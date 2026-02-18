@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -31,19 +32,35 @@ const (
 )
 
 var (
-	ErrMissingToken  = errors.New("missing authorization token")
-	ErrInvalidToken  = errors.New("invalid authorization token")
-	ErrExpiredToken  = errors.New("token has expired")
+	ErrMissingToken   = errors.New("missing authorization token")
+	ErrInvalidToken   = errors.New("invalid authorization token")
+	ErrExpiredToken   = errors.New("token has expired")
+	ErrTokenRevoked   = errors.New("token has been revoked")
 )
 
 // JWTAuth provides JWT authentication middleware
 type JWTAuth struct {
-	config *config.JWTConfig
+	config      *config.JWTConfig
+	statusCache *UserStatusCache
 }
 
 // NewJWTAuth creates a new JWT auth middleware
 func NewJWTAuth(cfg *config.JWTConfig) *JWTAuth {
 	return &JWTAuth{config: cfg}
+}
+
+// SetStatusCache sets the user status cache for token revocation checks.
+// If nil (default), revocation checks are skipped (backward compat for tests).
+func (a *JWTAuth) SetStatusCache(cache *UserStatusCache) {
+	a.statusCache = cache
+}
+
+// InvalidateUserCache evicts a user's entry from the status cache,
+// forcing the next request to re-fetch from the database.
+func (a *JWTAuth) InvalidateUserCache(userID string) {
+	if a.statusCache != nil {
+		a.statusCache.Invalidate(userID)
+	}
 }
 
 // Claims represents JWT claims
@@ -134,9 +151,14 @@ func (a *JWTAuth) OptionalAuthenticate(next http.Handler) http.Handler {
 			claims, err := a.ValidateToken(tokenString)
 			if err == nil && claims != nil {
 				if claims.TokenType == "" || claims.TokenType == TokenTypeFull {
-					ctx := context.WithValue(r.Context(), UserContextKey, claims)
-					appSentry.SetUser(ctx, claims.UserID)
-					r = r.WithContext(ctx)
+					// Check user status — if revoked, treat as unauthenticated
+					if a.statusCache != nil && a.checkUserRevoked(r.Context(), claims) {
+						// Don't set claims; pass through as unauthenticated
+					} else {
+						ctx := context.WithValue(r.Context(), UserContextKey, claims)
+						appSentry.SetUser(ctx, claims.UserID)
+						r = r.WithContext(ctx)
+					}
 				}
 			}
 		}
@@ -202,6 +224,15 @@ func (a *JWTAuth) AuthenticateWithTypes(next http.Handler, allowedTypes ...Token
 			}
 			http.Error(w, `{"error":"`+errorCode+`","message":"`+message+`","token_type":"`+string(tokenType)+`"}`, http.StatusForbidden)
 			return
+		}
+
+		// Check user status (revocation, blocked, deleted) if cache is configured
+		if a.statusCache != nil {
+			if revoked := a.checkUserRevoked(r.Context(), claims); revoked {
+				appSentry.IncrementCounter("auth.middleware_rejection", 1, "reason", "token_revoked")
+				http.Error(w, `{"error":"token_revoked","message":"Your session has been invalidated. Please log in again."}`, http.StatusUnauthorized)
+				return
+			}
 		}
 
 		// Add claims to context
@@ -276,6 +307,31 @@ func GetUserFromContext(ctx context.Context) *Claims {
 // ContextWithUser adds user claims to a context (primarily for testing)
 func ContextWithUser(ctx context.Context, claims *Claims) context.Context {
 	return context.WithValue(ctx, UserContextKey, claims)
+}
+
+// checkUserRevoked checks whether the user's token should be rejected based on
+// their current status (blocked, deleted, or token invalidated). Fails closed
+// on DB/cache errors (returns true to reject the request).
+func (a *JWTAuth) checkUserRevoked(ctx context.Context, claims *Claims) bool {
+	status, err := a.statusCache.GetUserStatus(ctx, claims.UserID)
+	if err != nil {
+		slog.ErrorContext(ctx, "user status check failed, failing closed", "user_id", claims.UserID, "error", err)
+		return true
+	}
+
+	if status.IsBlocked {
+		return true
+	}
+	if status.DeletedAt != nil {
+		return true
+	}
+	if status.TokenInvalidatedAt != nil && claims.IssuedAt != nil {
+		if claims.IssuedAt.Time.Before(*status.TokenInvalidatedAt) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // extractToken extracts the JWT token from the Authorization header
