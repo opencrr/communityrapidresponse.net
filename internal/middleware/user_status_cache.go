@@ -4,22 +4,24 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/models"
 )
 
 type cachedStatus struct {
-	status    *UserStatus
+	status    *models.UserStatus
 	fetchedAt time.Time
 }
 
-// UserStatusCache wraps a UserStatusChecker with an in-memory TTL cache.
+// UserStatusCache wraps a models.UserStatusChecker with an in-memory TTL cache.
 type UserStatusCache struct {
-	checker UserStatusChecker
+	checker models.UserStatusChecker
 	ttl     time.Duration
 	entries sync.Map
 }
 
 // NewUserStatusCache creates a new cache wrapping the given checker.
-func NewUserStatusCache(checker UserStatusChecker, ttl time.Duration) *UserStatusCache {
+func NewUserStatusCache(checker models.UserStatusChecker, ttl time.Duration) *UserStatusCache {
 	return &UserStatusCache{
 		checker: checker,
 		ttl:     ttl,
@@ -27,7 +29,7 @@ func NewUserStatusCache(checker UserStatusChecker, ttl time.Duration) *UserStatu
 }
 
 // GetUserStatus returns the cached status if fresh, otherwise fetches from the underlying checker.
-func (c *UserStatusCache) GetUserStatus(ctx context.Context, userID string) (*UserStatus, error) {
+func (c *UserStatusCache) GetUserStatus(ctx context.Context, userID string) (*models.UserStatus, error) {
 	if entry, ok := c.entries.Load(userID); ok {
 		cached := entry.(*cachedStatus)
 		if time.Since(cached.fetchedAt) < c.ttl {

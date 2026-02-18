@@ -6,23 +6,25 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/models"
 )
 
-// mockStatusChecker is a test implementation of UserStatusChecker.
+// mockStatusChecker is a test implementation of models.UserStatusChecker.
 type mockStatusChecker struct {
-	status    *UserStatus
+	status    *models.UserStatus
 	err       error
 	callCount atomic.Int32
 }
 
-func (m *mockStatusChecker) GetUserStatus(_ context.Context, _ string) (*UserStatus, error) {
+func (m *mockStatusChecker) GetUserStatus(_ context.Context, _ string) (*models.UserStatus, error) {
 	m.callCount.Add(1)
 	return m.status, m.err
 }
 
 func TestUserStatusCache_FirstCallFetchesFromChecker(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: false},
+		status: &models.UserStatus{IsBlocked: false},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -40,7 +42,7 @@ func TestUserStatusCache_FirstCallFetchesFromChecker(t *testing.T) {
 
 func TestUserStatusCache_ReturnsCachedWithinTTL(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: false},
+		status: &models.UserStatus{IsBlocked: false},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -56,7 +58,7 @@ func TestUserStatusCache_ReturnsCachedWithinTTL(t *testing.T) {
 
 func TestUserStatusCache_RefetchesAfterTTL(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: false},
+		status: &models.UserStatus{IsBlocked: false},
 	}
 	cache := NewUserStatusCache(checker, 10*time.Millisecond)
 
@@ -76,7 +78,7 @@ func TestUserStatusCache_RefetchesAfterTTL(t *testing.T) {
 
 func TestUserStatusCache_BlockedUser(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: true},
+		status: &models.UserStatus{IsBlocked: true},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -92,7 +94,7 @@ func TestUserStatusCache_BlockedUser(t *testing.T) {
 func TestUserStatusCache_DeletedUser(t *testing.T) {
 	deletedAt := time.Now()
 	checker := &mockStatusChecker{
-		status: &UserStatus{DeletedAt: &deletedAt},
+		status: &models.UserStatus{DeletedAt: &deletedAt},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -108,7 +110,7 @@ func TestUserStatusCache_DeletedUser(t *testing.T) {
 func TestUserStatusCache_TokenInvalidated(t *testing.T) {
 	invalidatedAt := time.Now()
 	checker := &mockStatusChecker{
-		status: &UserStatus{TokenInvalidatedAt: &invalidatedAt},
+		status: &models.UserStatus{TokenInvalidatedAt: &invalidatedAt},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -123,7 +125,7 @@ func TestUserStatusCache_TokenInvalidated(t *testing.T) {
 
 func TestUserStatusCache_InvalidateClearsEntry(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: false},
+		status: &models.UserStatus{IsBlocked: false},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 
@@ -169,7 +171,7 @@ func TestUserStatusCache_ErrorNotCached(t *testing.T) {
 
 	// Fix the checker
 	checker.err = nil
-	checker.status = &UserStatus{IsBlocked: false}
+	checker.status = &models.UserStatus{IsBlocked: false}
 
 	// Second call - should retry (error wasn't cached)
 	status, err := cache.GetUserStatus(context.Background(), "user1")
@@ -186,7 +188,7 @@ func TestUserStatusCache_ErrorNotCached(t *testing.T) {
 
 func TestUserStatusCache_DifferentUsersIndependent(t *testing.T) {
 	checker := &mockStatusChecker{
-		status: &UserStatus{IsBlocked: false},
+		status: &models.UserStatus{IsBlocked: false},
 	}
 	cache := NewUserStatusCache(checker, time.Minute)
 

@@ -32,10 +32,9 @@ const (
 )
 
 var (
-	ErrMissingToken   = errors.New("missing authorization token")
-	ErrInvalidToken   = errors.New("invalid authorization token")
-	ErrExpiredToken   = errors.New("token has expired")
-	ErrTokenRevoked   = errors.New("token has been revoked")
+	ErrMissingToken = errors.New("missing authorization token")
+	ErrInvalidToken = errors.New("invalid authorization token")
+	ErrExpiredToken = errors.New("token has expired")
 )
 
 // JWTAuth provides JWT authentication middleware
@@ -326,7 +325,7 @@ func (a *JWTAuth) checkUserRevoked(ctx context.Context, claims *Claims) bool {
 		return true
 	}
 	if status.TokenInvalidatedAt != nil && claims.IssuedAt != nil {
-		if claims.IssuedAt.Time.Before(*status.TokenInvalidatedAt) {
+		if !claims.IssuedAt.Time.After(*status.TokenInvalidatedAt) {
 			return true
 		}
 	}

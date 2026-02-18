@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
 )
 
@@ -909,10 +908,10 @@ func (r *UserRepository) ResetFailedMFAAttempts(ctx context.Context, userID stri
 
 // GetUserStatus returns the minimal fields needed for token validation.
 // This is a lightweight query used by the middleware status cache.
-func (r *UserRepository) GetUserStatus(ctx context.Context, userID string) (*middleware.UserStatus, error) {
+func (r *UserRepository) GetUserStatus(ctx context.Context, userID string) (*models.UserStatus, error) {
 	query := `SELECT token_invalidated_at, is_blocked, deleted_at FROM users WHERE id = ?`
 
-	status := &middleware.UserStatus{}
+	status := &models.UserStatus{}
 	err := r.db.QueryRowContext(ctx, query, userID).Scan(
 		&status.TokenInvalidatedAt,
 		&status.IsBlocked,

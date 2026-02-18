@@ -497,7 +497,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 	t.Run("rejects token when user is blocked", func(t *testing.T) {
 		auth := NewJWTAuth(testJWTConfig())
 		checker := &mockStatusChecker{
-			status: &UserStatus{IsBlocked: true},
+			status: &models.UserStatus{IsBlocked: true},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
@@ -529,7 +529,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 		auth := NewJWTAuth(testJWTConfig())
 		deletedAt := time.Now()
 		checker := &mockStatusChecker{
-			status: &UserStatus{DeletedAt: &deletedAt},
+			status: &models.UserStatus{DeletedAt: &deletedAt},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
@@ -560,7 +560,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 		// Invalidation time is after token was issued
 		invalidatedAt := time.Now().Add(time.Second)
 		checker := &mockStatusChecker{
-			status: &UserStatus{TokenInvalidatedAt: &invalidatedAt},
+			status: &models.UserStatus{TokenInvalidatedAt: &invalidatedAt},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
@@ -584,7 +584,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 		// Invalidation time in the past
 		invalidatedAt := time.Now().Add(-time.Hour)
 		checker := &mockStatusChecker{
-			status: &UserStatus{TokenInvalidatedAt: &invalidatedAt},
+			status: &models.UserStatus{TokenInvalidatedAt: &invalidatedAt},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
@@ -654,7 +654,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 	t.Run("OptionalAuthenticate treats revoked user as unauthenticated", func(t *testing.T) {
 		auth := NewJWTAuth(testJWTConfig())
 		checker := &mockStatusChecker{
-			status: &UserStatus{IsBlocked: true},
+			status: &models.UserStatus{IsBlocked: true},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
@@ -685,7 +685,7 @@ func TestJWTAuth_TokenRevocation(t *testing.T) {
 	t.Run("non-blocked non-deleted user passes through", func(t *testing.T) {
 		auth := NewJWTAuth(testJWTConfig())
 		checker := &mockStatusChecker{
-			status: &UserStatus{IsBlocked: false},
+			status: &models.UserStatus{IsBlocked: false},
 		}
 		auth.SetStatusCache(NewUserStatusCache(checker, time.Minute))
 
