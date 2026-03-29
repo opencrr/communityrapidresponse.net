@@ -384,12 +384,12 @@ TEST_WEB_ENV := "TEST_WEB_URL=http://localhost:3001 TEST_API_URL=http://localhos
 # Run all tests inside Docker (recommended - full database access)
 test: db-start _wait-for-test-db
     @echo "🧪 Running all tests in Docker..."
-    docker compose run --rm test go test ./... -timeout 120s
+    docker compose run --rm test go test -p 1 ./... -timeout 120s
 
 # Run all tests on host (excludes handler tests due to Docker networking)
 test-host: db-start _wait-for-test-db
     @echo "🧪 Running tests on host..."
-    {{TEST_ENV}} go test ./internal/config/... ./internal/middleware/... ./internal/models/... ./internal/services/... ./internal/database/... ./tests/... -timeout 120s
+    {{TEST_ENV}} go test -p 1 ./internal/config/... ./internal/middleware/... ./internal/models/... ./internal/services/... ./internal/database/... ./tests/... -timeout 120s
 
 # Run unit tests only (no database required, uses mocks)
 test-unit:

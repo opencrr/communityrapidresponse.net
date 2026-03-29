@@ -4,7 +4,7 @@
  */
 
 import { getUser, getVerificationStatus } from '../utils/store.js';
-import { changePassword, getDeletionWarnings, deleteAccount } from '../api/auth.js';
+import { getCurrentUser, changePassword, getDeletionWarnings, deleteAccount } from '../api/auth.js';
 import { ApiError } from '../api/client.js';
 import toast from '../components/toast.js';
 import * as modal from '../components/modal.js';
@@ -16,6 +16,9 @@ import { rewrapBackup } from '../crypto/index.js';
  * @param {HTMLElement} container - Container element to render into
  */
 export async function render(container) {
+    // Fetch fresh user data from /users/me so we get created_at and last_login
+    // (the login response doesn't include these fields)
+    await getCurrentUser();
     const user = getUser();
     const verificationStatus = getVerificationStatus();
 

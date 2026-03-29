@@ -148,7 +148,7 @@ func TestAdminHandler_ListUsers(t *testing.T) {
 		suite.handler.ListUsers(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", rec.Code)
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
 		var body map[string]interface{}
@@ -174,7 +174,7 @@ func TestAdminHandler_ListUsers(t *testing.T) {
 		suite.handler.ListUsers(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", rec.Code)
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
 		var body map[string]interface{}
@@ -201,6 +201,10 @@ func TestAdminHandler_ListUsers(t *testing.T) {
 		rec := httptest.NewRecorder()
 		suite.handler.ListUsers(rec, req)
 
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
 		var body map[string]interface{}
 		_ = json.NewDecoder(rec.Body).Decode(&body)
 
@@ -221,6 +225,10 @@ func TestAdminHandler_ListUsers(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		suite.handler.ListUsers(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
 
 		var body map[string]interface{}
 		_ = json.NewDecoder(rec.Body).Decode(&body)

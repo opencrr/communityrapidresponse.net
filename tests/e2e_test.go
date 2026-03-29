@@ -296,6 +296,21 @@ func (s *E2ETestSuite) registerOrGetUserID(username, email, password string) str
 	return userID
 }
 
+// reloginUser logs in an existing user and returns a fresh token with updated claims.
+func (s *E2ETestSuite) reloginUser(email, password string) string {
+	resp := s.request("POST", "/api/v1/auth/login", map[string]string{
+		"email": email, "password": password,
+	}, "")
+	defer func() { _ = resp.Body.Close() }()
+
+	var login models.LoginResponse
+	_ = json.NewDecoder(resp.Body).Decode(&login)
+	if login.Token == "" {
+		s.t.Fatalf("reloginUser: failed to get token for %s", email)
+	}
+	return login.Token
+}
+
 // School-specific helpers
 
 func (s *E2ETestSuite) createSchool(name, state string) string {
@@ -3549,6 +3564,210 @@ func TestE2E_PasswordReset(t *testing.T) {
 
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("Expected 400 for reused token, got %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestE2E_ProfileData(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("users/me returns timestamps", func(t *testing.T) {
+		beforeLogin := time.Now().Add(-2 * time.Second)
+		userID, token := suite.registerOrGetUser("profile_ts", "profile_ts@test.com", "securepassword123")
+		defer suite.cleanup(userID)
+
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		userObj, ok := body["user"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Response missing 'user' object")
+		}
+
+		// Check created_at
+		createdAtStr, ok := userObj["created_at"].(string)
+		if !ok || createdAtStr == "" {
+			t.Fatal("created_at is missing or not a string")
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, createdAtStr)
+		if err != nil {
+			t.Fatalf("created_at not parseable as RFC3339: %v", err)
+		}
+		if createdAt.Before(beforeLogin) || createdAt.After(time.Now().Add(time.Minute)) {
+			t.Errorf("created_at %v not within expected range", createdAt)
+		}
+
+		// Check last_login
+		lastLoginStr, ok := userObj["last_login"].(string)
+		if !ok || lastLoginStr == "" {
+			t.Fatal("last_login is missing or not a string")
+		}
+		lastLogin, err := time.Parse(time.RFC3339Nano, lastLoginStr)
+		if err != nil {
+			t.Fatalf("last_login not parseable as RFC3339: %v", err)
+		}
+		if lastLogin.Before(beforeLogin) || lastLogin.After(time.Now().Add(time.Minute)) {
+			t.Errorf("last_login %v not within expected range", lastLogin)
+		}
+	})
+
+	t.Run("login response includes timestamps", func(t *testing.T) {
+		beforeLogin := time.Now().Add(-2 * time.Second)
+		userID := suite.registerOrGetUserID("profile_login", "profile_login@test.com", "securepassword123")
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+
+		resp := suite.request("POST", "/api/v1/auth/login", map[string]string{
+			"email": "profile_login@test.com", "password": "securepassword123",
+		}, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		userObj, ok := body["user"].(map[string]interface{})
+		if !ok {
+			t.Fatal("Login response missing 'user' object")
+		}
+
+		// Check created_at
+		createdAtStr, ok := userObj["created_at"].(string)
+		if !ok || createdAtStr == "" {
+			t.Fatal("Login response user missing created_at")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, createdAtStr); err != nil {
+			t.Fatalf("Login created_at not parseable as RFC3339: %v", err)
+		}
+
+		// Check last_login
+		lastLoginStr, ok := userObj["last_login"].(string)
+		if !ok || lastLoginStr == "" {
+			t.Fatal("Login response user missing last_login")
+		}
+		lastLogin, err := time.Parse(time.RFC3339Nano, lastLoginStr)
+		if err != nil {
+			t.Fatalf("Login last_login not parseable as RFC3339: %v", err)
+		}
+		if lastLogin.Before(beforeLogin) || lastLogin.After(time.Now().Add(time.Minute)) {
+			t.Errorf("Login last_login %v not within expected range", lastLogin)
+		}
+	})
+
+	t.Run("unverified user fields", func(t *testing.T) {
+		userID, token := suite.registerOrGetUser("profile_unverified", "profile_unverified@test.com", "securepassword123")
+		defer suite.cleanup(userID)
+
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		userObj := body["user"].(map[string]interface{})
+
+		checks := map[string]interface{}{
+			"postcard_verified": false,
+			"vouch_verified":    false,
+			"is_superuser":      false,
+			"is_blocked":        false,
+			// email_verified is true because the E2E suite has no email service configured
+			"email_verified": true,
+		}
+		for field, expected := range checks {
+			if userObj[field] != expected {
+				t.Errorf("%s: expected %v, got %v", field, expected, userObj[field])
+			}
+		}
+
+		// verification_tier comes back as float64 from JSON
+		tier, ok := userObj["verification_tier"].(float64)
+		if !ok || tier != 0 {
+			t.Errorf("verification_tier: expected 0, got %v", userObj["verification_tier"])
+		}
+	})
+
+	t.Run("vouch-verified user fields", func(t *testing.T) {
+		userID := suite.registerOrGetUserID("profile_vouched", "profile_vouched@test.com", "securepassword123")
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+
+		token := suite.reloginUser("profile_vouched@test.com", "securepassword123")
+
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		userObj := body["user"].(map[string]interface{})
+
+		if userObj["vouch_verified"] != true {
+			t.Errorf("vouch_verified: expected true, got %v", userObj["vouch_verified"])
+		}
+
+		tier, ok := userObj["verification_tier"].(float64)
+		if !ok || tier != 1 {
+			t.Errorf("verification_tier: expected 1, got %v", userObj["verification_tier"])
+		}
+	})
+
+	t.Run("superuser fields", func(t *testing.T) {
+		userID := suite.registerOrGetUserID("profile_super", "profile_super@test.com", "securepassword123")
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+
+		_, err := suite.db.ExecContext(context.Background(),
+			"UPDATE users SET is_superuser = TRUE WHERE id = ?", userID)
+		if err != nil {
+			t.Fatalf("Failed to set superuser: %v", err)
+		}
+
+		token := suite.reloginUser("profile_super@test.com", "securepassword123")
+
+		resp := suite.request("GET", "/api/v1/users/me", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		userObj := body["user"].(map[string]interface{})
+
+		if userObj["is_superuser"] != true {
+			t.Errorf("is_superuser: expected true, got %v", userObj["is_superuser"])
 		}
 	})
 }

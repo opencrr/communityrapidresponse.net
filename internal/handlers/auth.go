@@ -446,6 +446,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update last login only after full authentication
+	loginTime := time.Now()
 	_ = h.userRepo.UpdateLastLogin(r.Context(), user.ID)
 
 	// Audit log: successful login
@@ -475,6 +476,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			"is_superuser":        user.IsSuperuser,
 			"mfa_enabled":         user.MFAEnabled,
 			"email_verified":      user.EmailVerified,
+			"is_blocked":          user.IsBlocked,
+			"block_reason":        user.BlockReason,
+			"created_at":          user.CreatedAt,
+			"last_login":          loginTime,
 			"has_encryption_keys": hasEncryptionKeys,
 		},
 	})
