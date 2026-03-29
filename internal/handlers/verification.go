@@ -579,7 +579,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 				if h.secureCookies {
 					sameSite = http.SameSiteStrictMode
 				}
-				http.SetCookie(w, &http.Cookie{
+				http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 					Name:     "token",
 					Value:    freshToken,
 					Path:     "/",

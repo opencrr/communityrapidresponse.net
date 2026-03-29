@@ -405,7 +405,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		maxAge = 600 // 10 minutes
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 		Name:     "token",
 		Value:    token,
 		Path:     "/",
@@ -534,7 +534,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if h.secureCookies {
 		sameSite = http.SameSiteStrictMode
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 		Name:     "token",
 		Value:    "",
 		Path:     "/",
@@ -1062,7 +1062,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if h.secureCookies {
 		sameSite = http.SameSiteStrictMode
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 		Name:     "token",
 		Value:    "",
 		Path:     "/",

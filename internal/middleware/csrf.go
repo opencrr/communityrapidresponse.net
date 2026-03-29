@@ -151,7 +151,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, secret string, sec
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly=false intentional (JS reads CSRF token); Secure set conditionally
 		Name:     csrfCookieName,
 		Value:    token,
 		Path:     "/",

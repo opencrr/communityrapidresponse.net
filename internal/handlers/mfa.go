@@ -215,7 +215,7 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	if h.secureCookies {
 		sameSite = http.SameSiteStrictMode
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 		Name:     "token",
 		Value:    fullToken,
 		Path:     "/",
@@ -458,7 +458,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	if h.secureCookies {
 		sameSite = http.SameSiteStrictMode
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure and SameSite set conditionally via h.secureCookies
 		Name:     "token",
 		Value:    fullToken,
 		Path:     "/",
