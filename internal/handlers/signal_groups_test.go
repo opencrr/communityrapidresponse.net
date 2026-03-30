@@ -987,6 +987,272 @@ func TestSignalGroupHandler_List_EmptyResponse(t *testing.T) {
 }
 
 // Helper to create region with specific type
+// =============================================================================
+// Edge-Case Tests: Empty/Whitespace Group Names and Nil Payloads
+// =============================================================================
+
+func TestSignalGroupHandler_Create_EdgeCases(t *testing.T) {
+	suite := setupSignalGroupTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@signalgrouptest.com'")
+
+	adminUser := suite.createTestUser("sg_edge_admin", models.TierPostcard)
+	region := suite.createTestRegion("Edge Case Test Region")
+	suite.addUserToRegion(adminUser.ID, region.ID, true)
+
+	defer suite.cleanup([]string{adminUser.ID}, []string{region.ID}, []string{})
+
+	makeClaims := func() *middleware.Claims {
+		return &middleware.Claims{
+			UserID:           adminUser.ID,
+			Email:            adminUser.Email,
+			VerificationTier: adminUser.VerificationTier,
+			IsSuperuser:      true, // Bypass bootstrap mode
+		}
+	}
+
+	t.Run("empty name returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "test-iv",
+			"wrapped_keys":      []map[string]string{{"user_id": adminUser.ID, "wrapped_dek": "test-dek"}},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for empty name, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("whitespace-only name returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "   \t  ",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "test-iv",
+			"wrapped_keys":      []map[string]string{{"user_id": adminUser.ID, "wrapped_dek": "test-dek"}},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for whitespace name, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("empty encrypted_payload returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "Valid Name",
+			"encrypted_payload": "",
+			"encryption_iv":     "test-iv",
+			"wrapped_keys":      []map[string]string{{"user_id": adminUser.ID, "wrapped_dek": "test-dek"}},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for empty encrypted_payload, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("empty encryption_iv returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "Valid Name",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "",
+			"wrapped_keys":      []map[string]string{{"user_id": adminUser.ID, "wrapped_dek": "test-dek"}},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for empty encryption_iv, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("nil wrapped_keys returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "Valid Name",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "test-iv",
+			// wrapped_keys omitted
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for nil wrapped_keys, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("empty wrapped_keys array returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"region_id":         region.ID,
+			"name":              "Valid Name",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "test-iv",
+			"wrapped_keys":      []map[string]string{},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for empty wrapped_keys, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid JSON body returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader([]byte(`{not valid json`)))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for invalid JSON, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing region_id returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":              "Valid Name",
+			"encrypted_payload": "test-payload",
+			"encryption_iv":     "test-iv",
+			"wrapped_keys":      []map[string]string{{"user_id": adminUser.ID, "wrapped_dek": "test-dek"}},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/signal-groups", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		ctx := middleware.ContextWithUser(req.Context(), makeClaims())
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for missing region_id, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestSignalGroupHandler_Update_EdgeCases(t *testing.T) {
+	suite := setupSignalGroupTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@signalgrouptest.com'")
+
+	adminUser := suite.createTestUser("sg_edge_update_admin", models.TierPostcard)
+	region := suite.createTestRegion("Edge Update Test Region")
+	suite.addUserToRegion(adminUser.ID, region.ID, true)
+
+	group := &models.SignalGroup{
+		RegionID:  &region.ID,
+		GroupName: "Edge Case Group",
+		CreatedBy: &adminUser.ID,
+	}
+	_ = suite.groupRepo.Create(context.Background(), group)
+
+	defer suite.cleanup([]string{adminUser.ID}, []string{region.ID}, []string{group.ID})
+
+	t.Run("update with invalid JSON returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/api/v1/signal-groups/"+group.ID, bytes.NewReader([]byte(`not json`)))
+		req.Header.Set("Content-Type", "application/json")
+		q := req.URL.Query()
+		q.Set("id", group.ID)
+		req.URL.RawQuery = q.Encode()
+
+		claims := &middleware.Claims{
+			UserID:           adminUser.ID,
+			Email:            adminUser.Email,
+			VerificationTier: adminUser.VerificationTier,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Update(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("update with missing group ID returns error", func(t *testing.T) {
+		body := map[string]string{"name": "Updated"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("PUT", "/api/v1/signal-groups/", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		// Don't set "id" query param
+
+		claims := &middleware.Claims{
+			UserID:           adminUser.ID,
+			Email:            adminUser.Email,
+			VerificationTier: adminUser.VerificationTier,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Update(rec, req)
+
+		// Should be 400 (missing id) or 404, not 500
+		if rec.Code == http.StatusInternalServerError {
+			t.Errorf("Got 500 for missing group ID, expected client error: %s", rec.Body.String())
+		}
+	})
+}
+
 func (s *signalGroupTestSuite) createTestRegionWithType(name string, regionType models.RegionType, parentID *string) *models.GeographicRegion {
 	region := &models.GeographicRegion{
 		Name:           name,

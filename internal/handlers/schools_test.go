@@ -1896,3 +1896,200 @@ func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Edge-Case Tests: Search with Empty Query, Negative/Zero Limits
+// =============================================================================
+
+func TestSchoolHandler_Search_EdgeCases(t *testing.T) {
+	suite := setupSchoolTestSuite(t)
+
+	// Create a school so we have data to search
+	school := suite.createTestSchool("Edge Case School", "CA")
+	defer suite.cleanup(nil, []string{school.ID}, nil)
+
+	t.Run("empty query returns results (lists all)", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var responseBody models.SchoolSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		// Empty query should still return results (or empty array), not error
+		if responseBody.Schools == nil {
+			t.Error("Expected schools array, got nil")
+		}
+	})
+
+	t.Run("whitespace-only query returns results", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=+++", nil, nil)
+		suite.handler.Search(rec, req)
+
+		// Should not error - handler should handle gracefully
+		if rec.Code == http.StatusInternalServerError {
+			t.Errorf("Got 500 for whitespace query: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("negative limit defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=-5", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var responseBody models.SchoolSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		// Limit should default to a positive value
+		if responseBody.Limit < 1 {
+			t.Errorf("Expected positive limit, got %d", responseBody.Limit)
+		}
+	})
+
+	t.Run("zero limit defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=0", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var responseBody models.SchoolSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if responseBody.Limit < 1 {
+			t.Errorf("Expected positive limit, got %d", responseBody.Limit)
+		}
+	})
+
+	t.Run("negative page defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&page=-1", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var responseBody models.SchoolSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if responseBody.Page < 1 {
+			t.Errorf("Expected positive page, got %d", responseBody.Page)
+		}
+	})
+
+	t.Run("non-numeric limit defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=abc", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("overflow limit defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=99999999999999999999", nil, nil)
+		suite.handler.Search(rec, req)
+
+		// Should not crash or return 500
+		if rec.Code == http.StatusInternalServerError {
+			t.Errorf("Got 500 for overflow limit: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("very large page returns empty results", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&page=999999", nil, nil)
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var responseBody models.SchoolSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if len(responseBody.Schools) != 0 {
+			t.Errorf("Expected 0 schools for very large page, got %d", len(responseBody.Schools))
+		}
+	})
+
+	t.Run("SQL injection in query is safe", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query='+OR+1=1;--", nil, nil)
+		suite.handler.Search(rec, req)
+
+		// Should not error or return unexpected data
+		if rec.Code == http.StatusInternalServerError {
+			t.Errorf("Got 500 for SQL injection attempt: %s", rec.Body.String())
+		}
+	})
+}
+
+func TestSchoolHandler_Get_EdgeCases(t *testing.T) {
+	suite := setupSchoolTestSuite(t)
+
+	t.Run("missing school ID returns 400", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/?id=", nil, nil)
+		suite.handler.Get(rec, req)
+
+		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 400 or 404 for missing ID, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("non-existent UUID returns 404", func(t *testing.T) {
+		nonExistentID := "00000000-0000-0000-0000-000000000000"
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+nonExistentID+"?id="+nonExistentID, nil, nil)
+		suite.handler.Get(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestSchoolHandler_SearchDistricts_EdgeCases(t *testing.T) {
+	suite := setupSchoolTestSuite(t)
+
+	t.Run("empty query returns results", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=", nil, nil)
+		suite.handler.SearchDistricts(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("negative limit defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=test&limit=-10", nil, nil)
+		suite.handler.SearchDistricts(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("zero page defaults gracefully", func(t *testing.T) {
+		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=test&page=0", nil, nil)
+		suite.handler.SearchDistricts(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
