@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/handlers"
@@ -314,7 +315,7 @@ func (s *E2ETestSuite) reloginUser(email, password string) string {
 // School-specific helpers
 
 func (s *E2ETestSuite) createSchool(name, state string) string {
-	schoolID := fmt.Sprintf("e2e-school-%s-%d", name[:4], time.Now().UnixNano())
+	schoolID := uuid.New().String()
 	ncesID := fmt.Sprintf("%012d", time.Now().UnixNano()%1000000000000)
 	_, err := s.db.ExecContext(context.Background(),
 		"INSERT INTO schools (id, nces_id, name, state, created_at) VALUES (?, ?, ?, ?, NOW())",
@@ -326,7 +327,7 @@ func (s *E2ETestSuite) createSchool(name, state string) string {
 }
 
 func (s *E2ETestSuite) createDistrict(name, state string) string {
-	districtID := fmt.Sprintf("e2e-dist-%s-%d", name[:4], time.Now().UnixNano())
+	districtID := uuid.New().String()
 	ncesID := fmt.Sprintf("%07d", time.Now().UnixNano()%10000000)
 	_, err := s.db.ExecContext(context.Background(),
 		"INSERT INTO school_districts (id, nces_id, name, state, district_type, created_at) VALUES (?, ?, ?, ?, 'unified', NOW())",
