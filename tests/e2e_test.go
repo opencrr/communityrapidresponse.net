@@ -3775,3 +3775,478 @@ func TestE2E_ProfileData(t *testing.T) {
 		}
 	})
 }
+
+// Group-specific helpers
+
+// createGroup creates a group via the API and returns (groupID, response body).
+func (s *E2ETestSuite) createGroup(name string, regionIDs []string, token string) (string, map[string]interface{}) {
+	resp := s.request("POST", "/api/v1/groups", map[string]interface{}{
+		"name":        name,
+		"description": "Test group: " + name,
+		"visibility":  "unlisted",
+		"region_ids":  regionIDs,
+		"topic_tags":  []string{"test"},
+	}, token)
+	defer func() { _ = resp.Body.Close() }()
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		s.t.Fatalf("createGroup: failed to decode response: %v", err)
+	}
+
+	groupID, _ := body["id"].(string)
+	return groupID, body
+}
+
+// cleanupGroups deletes groups and their cascaded children (members, regions, tags).
+func (s *E2ETestSuite) cleanupGroups(groupIDs ...string) {
+	ctx := context.Background()
+	for _, groupID := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", groupID)
+	}
+}
+
+// createTestRegionForGroups creates a region and adds the user to it.
+func (s *E2ETestSuite) createTestRegionForGroups(userID string) string {
+	regionID := fmt.Sprintf("e2e-grp-rgn-%d", time.Now().UnixNano()%1000000000)
+	ctx := context.Background()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO geographic_regions (id, name, region_type, created_at)
+		VALUES (?, 'Group Test Region', 'city', NOW())
+	`, regionID)
+	if err != nil {
+		s.t.Fatalf("Failed to create test region: %v", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, TRUE, 'verified', NOW())",
+		userID, regionID)
+	if err != nil {
+		s.t.Fatalf("Failed to add user to region: %v", err)
+	}
+	return regionID
+}
+
+// cleanupRegionsForGroups cleans up regions created for group tests.
+func (s *E2ETestSuite) cleanupRegionsForGroups(regionIDs ...string) {
+	ctx := context.Background()
+	for _, regionID := range regionIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_regions WHERE region_id = ?", regionID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_regions WHERE region_id = ?", regionID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
+	}
+}
+
+func TestE2E_GroupLifecycle(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("create group requires vouch verification", func(t *testing.T) {
+		password := "testpassword123!"
+		userID, token := suite.registerOrGetUser("grp_unverif", "grp_unverif@test.com", password)
+		defer suite.cleanup(userID)
+
+		resp := suite.request("POST", "/api/v1/groups", map[string]interface{}{
+			"name":       "Should Fail",
+			"visibility": "unlisted",
+			"region_ids": []string{"fake-region"},
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("create provisional group", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_create", "grp_create@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_create@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, body := suite.createGroup("Test Provisional Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		if groupID == "" {
+			t.Fatal("Expected group ID in response")
+		}
+		if body["status"] != "provisional" {
+			t.Errorf("Expected status=provisional, got %v", body["status"])
+		}
+		if body["visibility"] != "unlisted" {
+			t.Errorf("Expected visibility=unlisted, got %v", body["visibility"])
+		}
+
+		// Verify via GET
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", getResp.StatusCode)
+		}
+		var getBody map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&getBody)
+
+		if getBody["is_user_member"] != true {
+			t.Errorf("Expected creator to be a member, got is_user_member=%v", getBody["is_user_member"])
+		}
+		if getBody["is_user_admin"] != true {
+			t.Errorf("Expected creator to be an admin, got is_user_admin=%v", getBody["is_user_admin"])
+		}
+	})
+
+	t.Run("get group details", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_detail", "grp_detail@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_detail@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Detail Test Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		resp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		memberCount := body["member_count"].(float64)
+		if memberCount != 1 {
+			t.Errorf("Expected member_count=1, got %v", memberCount)
+		}
+		adminCount := body["admin_count"].(float64)
+		if adminCount != 1 {
+			t.Errorf("Expected admin_count=1, got %v", adminCount)
+		}
+
+		regions, ok := body["regions"].([]interface{})
+		if !ok || len(regions) == 0 {
+			t.Errorf("Expected regions array with at least 1 entry, got %v", body["regions"])
+		}
+
+		tags, ok := body["topic_tags"].([]interface{})
+		if !ok || len(tags) == 0 {
+			t.Errorf("Expected topic_tags array with at least 1 entry, got %v", body["topic_tags"])
+		}
+	})
+
+	t.Run("update group as admin", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_update", "grp_update@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_update@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Before Update", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		newName := "After Update"
+		resp := suite.request("PUT", "/api/v1/groups/"+groupID, map[string]interface{}{
+			"name": newName,
+		}, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		// Verify name changed
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+
+		var getBody map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&getBody)
+
+		if getBody["name"] != newName {
+			t.Errorf("Expected name=%q, got %v", newName, getBody["name"])
+		}
+	})
+
+	t.Run("non-admin cannot update group", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// User A creates the group
+		userAID := suite.registerOrGetUserID("grp_upd_a", "grp_upd_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("grp_upd_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Admin Only Update", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B is a non-admin member
+		userBID := suite.registerOrGetUserID("grp_upd_b", "grp_upd_b@test.com", password)
+		defer suite.cleanup(userBID)
+		suite.disableMFA(userBID)
+		suite.makeUserVouchVerified(userBID)
+		tokenB := suite.reloginUser("grp_upd_b@test.com", password)
+
+		// Add user B to region and group as non-admin
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			userBID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+
+		resp := suite.request("PUT", "/api/v1/groups/"+groupID, map[string]interface{}{
+			"name": "Hacked Name",
+		}, tokenB)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("list user groups", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_list", "grp_list@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_list@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID1, _ := suite.createGroup("List Group One", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID1)
+		groupID2, _ := suite.createGroup("List Group Two", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID2)
+
+		resp := suite.request("GET", "/api/v1/groups", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, ok := body["groups"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected groups array in response")
+		}
+		if len(groups) < 2 {
+			t.Errorf("Expected at least 2 groups, got %d", len(groups))
+		}
+	})
+
+	t.Run("leave group", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		userAID := suite.registerOrGetUserID("grp_leav_a", "grp_leav_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("grp_leav_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Leave Test Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// Add second user as admin so first can leave
+		userBID := suite.registerOrGetUserID("grp_leav_b", "grp_leav_b@test.com", password)
+		defer suite.cleanup(userBID)
+		suite.disableMFA(userBID)
+		suite.makeUserVouchVerified(userBID)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			userBID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, true, false)
+
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/leave", nil, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		// Verify user A is no longer a member
+		isMember, _ := suite.communityGroupRepo.IsUserMember(ctx, groupID, userAID)
+		if isMember {
+			t.Errorf("Expected user to no longer be a member after leaving")
+		}
+	})
+
+	t.Run("last admin cannot leave", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_lastadm", "grp_lastadm@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_lastadm@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Last Admin Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/leave", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if body["error"] != "last_admin" {
+			t.Errorf("Expected error=last_admin, got %v", body["error"])
+		}
+	})
+
+	t.Run("list group members", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_mems", "grp_mems@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_mems@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Members List Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		resp := suite.request("GET", "/api/v1/groups/"+groupID+"/members", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		members, ok := body["members"].([]interface{})
+		if !ok || len(members) != 1 {
+			t.Fatalf("Expected 1 member, got %v", body["members"])
+		}
+
+		member := members[0].(map[string]interface{})
+		if member["is_admin"] != true {
+			t.Errorf("Expected creator to have is_admin=true, got %v", member["is_admin"])
+		}
+		if member["username"] != "grp_mems" {
+			t.Errorf("Expected username=grp_mems, got %v", member["username"])
+		}
+	})
+
+	t.Run("unlisted group hidden from non-members", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// User A creates unlisted group
+		userAID := suite.registerOrGetUserID("grp_hid_a", "grp_hid_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("grp_hid_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Hidden Unlisted Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B is verified in same region but not a group member
+		userBID := suite.registerOrGetUserID("grp_hid_b", "grp_hid_b@test.com", password)
+		defer suite.cleanup(userBID)
+		suite.disableMFA(userBID)
+		suite.makeUserVouchVerified(userBID)
+		tokenB := suite.reloginUser("grp_hid_b@test.com", password)
+
+		resp := suite.request("GET", "/api/v1/groups/"+groupID, nil, tokenB)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected 404 for non-member viewing unlisted group, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("delete group as superuser", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		userID := suite.registerOrGetUserID("grp_sudel", "grp_sudel@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_sudel@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Delete Me Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID) // no-op if already deleted
+
+		// Make user superuser and re-login
+		_, _ = suite.db.ExecContext(ctx,
+			"UPDATE users SET is_superuser = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
+		token = suite.reloginUser("grp_sudel@test.com", password)
+
+		resp := suite.request("DELETE", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		// Verify group is gone
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+
+		if getResp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected 404 after deletion, got %d", getResp.StatusCode)
+		}
+	})
+
+	t.Run("non-superuser cannot delete", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("grp_nodel", "grp_nodel@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("grp_nodel@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Cannot Delete Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		resp := suite.request("DELETE", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		}
+	})
+}
