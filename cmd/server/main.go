@@ -269,6 +269,10 @@ func main() {
 		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
 	)
 
+	// Initialize group repository and handler
+	groupRepo := database.NewGroupRepository(db)
+	groupHandler := handlers.NewGroupHandler(groupRepo, regionRepo, userRepo, auditRepo)
+
 	// Initialize meshtastic channel repository and handler
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 	meshtasticHandler := handlers.NewMeshtasticHandler(
@@ -340,6 +344,7 @@ func main() {
 		encryptionHandler,
 		secretUpdateHandler,
 		meshtasticHandler,
+		groupHandler,
 		jwtAuth,
 		rateLimiter,
 		rateLimitConfig,

@@ -128,7 +128,7 @@ func SetupAuthRateLimitE2ETest(t *testing.T) *AuthRateLimitTestSuite {
 	// Create router WITHOUT global rate limiting (pass nil) so only auth rate limits apply
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

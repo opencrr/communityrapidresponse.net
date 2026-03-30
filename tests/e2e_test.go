@@ -32,6 +32,7 @@ type E2ETestSuite struct {
 	verifyRepo          *database.VerificationRepository
 	vouchRepo           *database.VouchRepository
 	groupRepo           *database.SignalGroupRepository
+	communityGroupRepo  *database.GroupRepository
 	jwtAuth             *middleware.JWTAuth
 	schoolRepo          *database.SchoolRepository
 	districtRepo        *database.SchoolDistrictRepository
@@ -82,6 +83,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 
 	// Create JWT auth
 	jwtConfig := &config.JWTConfig{
@@ -147,11 +149,12 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
 	)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
+	groupHandler := handlers.NewGroupHandler(communityGroupRepo, regionRepo, userRepo, auditRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, groupHandler, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -167,6 +170,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		verifyRepo:          verifyRepo,
 		vouchRepo:           vouchRepo,
 		groupRepo:           groupRepo,
+		communityGroupRepo:  communityGroupRepo,
 		jwtAuth:             jwtAuth,
 		schoolRepo:          schoolRepo,
 		districtRepo:        districtRepo,

@@ -124,7 +124,7 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler,
-		verificationHandler, adminHandler, membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, rateLimiter, nil, nil,
+		verificationHandler, adminHandler, membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, rateLimiter, nil, nil,
 		[]string{"*"}, nil,
 	)
 

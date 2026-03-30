@@ -191,7 +191,7 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

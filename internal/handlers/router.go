@@ -29,6 +29,7 @@ type Router struct {
 	encryption          *EncryptionHandler
 	secretUpdates       *SecretUpdateHandler
 	meshtastic          *MeshtasticHandler
+	groups              *GroupHandler
 	jwtAuth            *middleware.JWTAuth
 	rateLimiter        services.RateLimiter
 	rateLimitConfig    *RateLimitOptions
@@ -67,6 +68,7 @@ func NewRouter(
 	encryption *EncryptionHandler,
 	secretUpdates *SecretUpdateHandler,
 	meshtastic *MeshtasticHandler,
+	groups *GroupHandler,
 	jwtAuth *middleware.JWTAuth,
 	rateLimiter services.RateLimiter,
 	rateLimitConfig *RateLimitOptions,
@@ -90,6 +92,7 @@ func NewRouter(
 		encryption:          encryption,
 		secretUpdates:       secretUpdates,
 		meshtastic:          meshtastic,
+		groups:              groups,
 		jwtAuth:            jwtAuth,
 		rateLimiter:        rateLimiter,
 		rateLimitConfig:    rateLimitConfig,
@@ -157,6 +160,12 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/meshtastic-channels", r.handleMeshtasticChannels)
 	r.mux.HandleFunc("/api/v1/meshtastic-channels/admin", r.authenticated(r.methodHandler(http.MethodGet, r.meshtastic.ListAdmin)))
 	r.mux.HandleFunc("/api/v1/meshtastic-channels/", r.handleMeshtasticChannelByID)
+
+	// Group routes (nil-safe for tests that don't need groups)
+	if r.groups != nil {
+		r.mux.HandleFunc("/api/v1/groups", r.handleGroups)
+		r.mux.HandleFunc("/api/v1/groups/", r.handleGroupByID)
+	}
 
 	// School routes (all authenticated)
 	r.mux.HandleFunc("/api/v1/schools", r.handleSchools)
@@ -1206,6 +1215,74 @@ func (r *Router) handleMeshtasticChannelByID(w http.ResponseWriter, req *http.Re
 	switch req.Method {
 	case http.MethodPut:
 		r.authenticated(r.meshtastic.Update)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleGroups handles /api/v1/groups
+func (r *Router) handleGroups(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		r.authenticated(r.groups.List)(w, req)
+	case http.MethodPost:
+		r.authenticated(r.groups.Create)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleGroupByID handles /api/v1/groups/:id and sub-routes
+func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/groups/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Group ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	groupID := parts[0]
+
+	// Check for members sub-route
+	if len(parts) >= 2 && parts[1] == "members" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodGet {
+			r.authenticated(r.groups.ListMembers)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for leave sub-route
+	if len(parts) >= 2 && parts[1] == "leave" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.Leave)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Default: CRUD operations on group by ID
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+
+	switch req.Method {
+	case http.MethodGet:
+		r.authenticated(r.groups.Get)(w, req)
+	case http.MethodPut:
+		r.authenticated(r.groups.Update)(w, req)
+	case http.MethodDelete:
+		r.authenticated(r.groups.Delete)(w, req)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 	}

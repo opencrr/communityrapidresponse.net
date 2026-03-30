@@ -131,7 +131,7 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	// Create router WITH rate limiting enabled
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
