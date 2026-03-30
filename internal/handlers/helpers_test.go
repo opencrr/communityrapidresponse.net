@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func makeRepeatedByte(b byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
+
 // =============================================================================
 // isValidUUID Tests
 // =============================================================================
@@ -58,8 +66,8 @@ func TestRouter_RegionByID_InvalidUUID(t *testing.T) {
 		path string
 	}{
 		{"non-UUID string", "/api/v1/communities/not-a-uuid"},
-		{"SQL injection", "/api/v1/communities/'; DROP TABLE users;--"},
-		{"very long string", "/api/v1/communities/" + string(make([]byte, 500))},
+		{"SQL injection", "/api/v1/communities/'%3BDROP+TABLE+users%3B--"},
+		{"very long string", "/api/v1/communities/" + string(makeRepeatedByte('a', 500))},
 		{"special characters", "/api/v1/communities/!@%23$%25%5E&*()"},
 		{"empty segments", "/api/v1/communities//"},
 	}
@@ -92,7 +100,7 @@ func TestRouter_SignalGroupByID_InvalidUUID(t *testing.T) {
 		path string
 	}{
 		{"non-UUID string", "/api/v1/signal-groups/not-a-uuid"},
-		{"SQL injection", "/api/v1/signal-groups/1 OR 1=1"},
+		{"SQL injection", "/api/v1/signal-groups/1+OR+1%3D1"},
 	}
 
 	for _, tt := range tests {
