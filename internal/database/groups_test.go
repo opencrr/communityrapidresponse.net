@@ -42,6 +42,7 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 	ctx := context.Background()
 
 	for _, groupID := range groupIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_topic_tags WHERE group_id = ?", groupID)
@@ -1451,4 +1452,335 @@ func TestGroupRepository_CheckAndGraduate(t *testing.T) {
 			t.Error("Expected not graduated for already-active group")
 		}
 	})
+}
+
+// =============================================================================
+// GetMember Tests
+// =============================================================================
+
+func TestGroupRepository_GetMember(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "getmember1")
+	nonMemberID := createGroupTestUser(t, db, "getmember_none")
+	regionID := createGroupTestRegion(t, db, "GetMember Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "GetMember Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID, nonMemberID}, []string{regionID})
+	})
+
+	t.Run("returns member when found", func(t *testing.T) {
+		member, err := repo.GetMember(ctx, group.ID, userID)
+		if err != nil {
+			t.Fatalf("GetMember failed: %v", err)
+		}
+		if member == nil {
+			t.Fatal("Expected member, got nil")
+		}
+		if member.UserID != userID {
+			t.Errorf("Expected user_id %s, got %s", userID, member.UserID)
+		}
+		if member.GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, member.GroupID)
+		}
+		if !member.IsAdmin {
+			t.Error("Expected creator to be admin")
+		}
+		if member.TrustLevel == "" {
+			t.Error("Expected trust_level to be set")
+		}
+	})
+
+	t.Run("returns nil for non-member", func(t *testing.T) {
+		member, err := repo.GetMember(ctx, group.ID, nonMemberID)
+		if err != nil {
+			t.Fatalf("GetMember failed: %v", err)
+		}
+		if member != nil {
+			t.Errorf("Expected nil for non-member, got %+v", member)
+		}
+	})
+
+	t.Run("returns nil for nonexistent group", func(t *testing.T) {
+		member, err := repo.GetMember(ctx, uuid.New().String(), userID)
+		if err != nil {
+			t.Fatalf("GetMember failed: %v", err)
+		}
+		if member != nil {
+			t.Errorf("Expected nil for nonexistent group, got %+v", member)
+		}
+	})
+}
+
+// =============================================================================
+// Trust Vouch Tests
+// =============================================================================
+
+func TestGroupRepository_CreateTrustVouch(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	adminID := createGroupTestUser(t, db, "vouch_admin")
+	memberID := createGroupTestUser(t, db, "vouch_member")
+	member2ID := createGroupTestUser(t, db, "vouch_member2")
+	nonMemberID := createGroupTestUser(t, db, "vouch_nonmember")
+	regionID := createGroupTestRegion(t, db, "Vouch Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Vouch Group",
+		RegionIDs: []string{regionID},
+	}, adminID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	// Add regular members
+	if err := repo.AddMember(ctx, group.ID, memberID, false, false); err != nil {
+		t.Fatalf("Setup: AddMember failed: %v", err)
+	}
+	if err := repo.AddMember(ctx, group.ID, member2ID, false, false); err != nil {
+		t.Fatalf("Setup: AddMember 2 failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, memberID, member2ID, nonMemberID}, []string{regionID})
+	})
+
+	t.Run("self-vouch rejected", func(t *testing.T) {
+		err := repo.CreateTrustVouch(ctx, group.ID, adminID, adminID)
+		if err != ErrSelfVouch {
+			t.Errorf("Expected ErrSelfVouch, got %v", err)
+		}
+	})
+
+	t.Run("non-trusted non-admin rejected", func(t *testing.T) {
+		// memberID has trust_level='member', is_admin=false
+		err := repo.CreateTrustVouch(ctx, group.ID, memberID, member2ID)
+		if err != ErrNotTrustedOrAdmin {
+			t.Errorf("Expected ErrNotTrustedOrAdmin, got %v", err)
+		}
+	})
+
+	t.Run("non-member voucher rejected", func(t *testing.T) {
+		err := repo.CreateTrustVouch(ctx, group.ID, nonMemberID, memberID)
+		if err != ErrNotTrustedOrAdmin {
+			t.Errorf("Expected ErrNotTrustedOrAdmin, got %v", err)
+		}
+	})
+
+	t.Run("admin can vouch successfully", func(t *testing.T) {
+		err := repo.CreateTrustVouch(ctx, group.ID, adminID, memberID)
+		if err != nil {
+			t.Fatalf("CreateTrustVouch failed: %v", err)
+		}
+
+		count, err := repo.GetTrustVouchCount(ctx, group.ID, memberID)
+		if err != nil {
+			t.Fatalf("GetTrustVouchCount failed: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("Expected 1 vouch, got %d", count)
+		}
+	})
+
+	t.Run("auto-promotion at threshold", func(t *testing.T) {
+		// Default trusted_vouch_threshold is 2. memberID already has 1 vouch from admin.
+		// We need a second trusted/admin voucher. Promote member2 to trusted manually.
+		_, err := db.ExecContext(ctx,
+			"UPDATE group_members SET trust_level = 'trusted' WHERE group_id = ? AND user_id = ?",
+			group.ID, member2ID)
+		if err != nil {
+			t.Fatalf("Failed to promote member2: %v", err)
+		}
+
+		err = repo.CreateTrustVouch(ctx, group.ID, member2ID, memberID)
+		if err != nil {
+			t.Fatalf("CreateTrustVouch failed: %v", err)
+		}
+
+		// Verify memberID was promoted to trusted
+		member, err := repo.GetMember(ctx, group.ID, memberID)
+		if err != nil {
+			t.Fatalf("GetMember failed: %v", err)
+		}
+		if member.TrustLevel != "trusted" {
+			t.Errorf("Expected trust_level 'trusted' after promotion, got %q", member.TrustLevel)
+		}
+
+		count, err := repo.GetTrustVouchCount(ctx, group.ID, memberID)
+		if err != nil {
+			t.Fatalf("GetTrustVouchCount failed: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("Expected 2 vouches, got %d", count)
+		}
+	})
+}
+
+func TestGroupRepository_GetTrustVouchCount(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "vouchcount1")
+	regionID := createGroupTestRegion(t, db, "VouchCount Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "VouchCount Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("returns 0 for user with no vouches", func(t *testing.T) {
+		count, err := repo.GetTrustVouchCount(ctx, group.ID, userID)
+		if err != nil {
+			t.Fatalf("GetTrustVouchCount failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0, got %d", count)
+		}
+	})
+}
+
+func TestGroupRepository_ListTrustVouchesForUser(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	adminID := createGroupTestUser(t, db, "listvouches_admin")
+	memberID := createGroupTestUser(t, db, "listvouches_member")
+	regionID := createGroupTestRegion(t, db, "ListVouches Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "ListVouches Group",
+		RegionIDs: []string{regionID},
+	}, adminID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	if err := repo.AddMember(ctx, group.ID, memberID, false, false); err != nil {
+		t.Fatalf("Setup: AddMember failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, memberID}, []string{regionID})
+	})
+
+	t.Run("returns empty for user with no vouches", func(t *testing.T) {
+		vouches, err := repo.ListTrustVouchesForUser(ctx, group.ID, memberID)
+		if err != nil {
+			t.Fatalf("ListTrustVouchesForUser failed: %v", err)
+		}
+		if len(vouches) != 0 {
+			t.Errorf("Expected 0 vouches, got %d", len(vouches))
+		}
+	})
+
+	t.Run("returns vouches after vouch created", func(t *testing.T) {
+		err := repo.CreateTrustVouch(ctx, group.ID, adminID, memberID)
+		if err != nil {
+			t.Fatalf("CreateTrustVouch failed: %v", err)
+		}
+
+		vouches, err := repo.ListTrustVouchesForUser(ctx, group.ID, memberID)
+		if err != nil {
+			t.Fatalf("ListTrustVouchesForUser failed: %v", err)
+		}
+		if len(vouches) != 1 {
+			t.Fatalf("Expected 1 vouch, got %d", len(vouches))
+		}
+		if vouches[0].VoucherUserID != adminID {
+			t.Errorf("Expected voucher %s, got %s", adminID, vouches[0].VoucherUserID)
+		}
+		if vouches[0].VouchedUserID != memberID {
+			t.Errorf("Expected vouched %s, got %s", memberID, vouches[0].VouchedUserID)
+		}
+		if vouches[0].GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, vouches[0].GroupID)
+		}
+	})
+}
+
+// =============================================================================
+// UserMeetsAccessTier Tests
+// =============================================================================
+
+func TestUserMeetsAccessTier(t *testing.T) {
+	adminMember := &models.GroupMember{
+		IsAdmin:    true,
+		TrustLevel: "trusted",
+	}
+	trustedMember := &models.GroupMember{
+		IsAdmin:    false,
+		TrustLevel: "trusted",
+	}
+	regularMember := &models.GroupMember{
+		IsAdmin:    false,
+		TrustLevel: "member",
+	}
+
+	tests := []struct {
+		name               string
+		tier               models.AccessTier
+		isAuthenticated    bool
+		isVerifiedResident bool
+		memberInfo         *models.GroupMember
+		expected           bool
+	}{
+		// Open tier
+		{"open_authenticated", models.AccessTierOpen, true, false, nil, true},
+		{"open_unauthenticated", models.AccessTierOpen, false, false, nil, false},
+
+		// Resident tier
+		{"resident_verified", models.AccessTierResident, true, true, nil, true},
+		{"resident_not_verified", models.AccessTierResident, true, false, nil, false},
+		{"resident_unauthenticated", models.AccessTierResident, false, false, nil, false},
+
+		// Member tier
+		{"member_is_member", models.AccessTierMember, true, false, regularMember, true},
+		{"member_not_member", models.AccessTierMember, true, true, nil, false},
+
+		// Trusted tier
+		{"trusted_admin", models.AccessTierTrusted, true, false, adminMember, true},
+		{"trusted_trusted_member", models.AccessTierTrusted, true, false, trustedMember, true},
+		{"trusted_regular_member", models.AccessTierTrusted, true, false, regularMember, false},
+		{"trusted_not_member", models.AccessTierTrusted, true, true, nil, false},
+
+		// Admin-only tier
+		{"admin_only_admin", models.AccessTierAdminOnly, true, false, adminMember, true},
+		{"admin_only_trusted", models.AccessTierAdminOnly, true, false, trustedMember, false},
+		{"admin_only_regular", models.AccessTierAdminOnly, true, false, regularMember, false},
+		{"admin_only_not_member", models.AccessTierAdminOnly, true, true, nil, false},
+
+		// Unknown tier
+		{"unknown_tier", models.AccessTier("unknown"), true, true, adminMember, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := UserMeetsAccessTier(tt.tier, tt.isAuthenticated, tt.isVerifiedResident, tt.memberInfo)
+			if result != tt.expected {
+				t.Errorf("UserMeetsAccessTier(%q, auth=%v, resident=%v, member=%v) = %v, want %v",
+					tt.tier, tt.isAuthenticated, tt.isVerifiedResident, tt.memberInfo != nil, result, tt.expected)
+			}
+		})
+	}
 }

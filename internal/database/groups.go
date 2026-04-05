@@ -17,14 +17,16 @@ import (
 )
 
 var (
-	ErrGroupNotFound          = errors.New("group not found")
-	ErrInviteLinkNotFound     = errors.New("invite link not found")
-	ErrInviteLinkExpired      = errors.New("invite link expired")
-	ErrInviteLinkExhausted    = errors.New("invite link max uses reached")
-	ErrInvitationNotFound     = errors.New("invitation not found")
+	ErrGroupNotFound            = errors.New("group not found")
+	ErrInviteLinkNotFound       = errors.New("invite link not found")
+	ErrInviteLinkExpired        = errors.New("invite link expired")
+	ErrInviteLinkExhausted      = errors.New("invite link max uses reached")
+	ErrInvitationNotFound       = errors.New("invitation not found")
 	ErrInvitationAlreadyPending = errors.New("invitation already pending")
-	ErrInvitationExpired      = errors.New("invitation expired")
-	ErrGroupAlreadyMember     = errors.New("user is already a member")
+	ErrInvitationExpired        = errors.New("invitation expired")
+	ErrGroupAlreadyMember       = errors.New("user is already a member")
+	ErrNotTrustedOrAdmin        = errors.New("user is not trusted or admin in this group")
+	ErrSelfVouch                = errors.New("cannot vouch for yourself")
 )
 
 // GroupRepository handles group database operations
@@ -127,7 +129,7 @@ func (r *GroupRepository) Create(ctx context.Context, req *models.CreateGroupReq
 func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group, error) {
 	query := `
 		SELECT id, name, description, status, visibility, founding_threshold,
-			created_by, created_at, updated_at, graduated_at
+			trusted_vouch_threshold, created_by, created_at, updated_at, graduated_at
 		FROM ` + "`groups`" + `
 		WHERE id = ?
 	`
@@ -136,6 +138,7 @@ func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.Name, &group.Description,
 		&group.Status, &group.Visibility, &group.FoundingThreshold,
+		&group.TrustedVouchThreshold,
 		&group.CreatedBy, &group.CreatedAt, &group.UpdatedAt, &group.GraduatedAt,
 	)
 
@@ -210,7 +213,7 @@ func (r *GroupRepository) GetByIDWithDetails(ctx context.Context, id, userID str
 func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]models.GroupWithDetails, error) {
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
-			g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.trusted_vouch_threshold, g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count,
 			gm.is_admin
@@ -232,6 +235,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 		err := rows.Scan(
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
+			&gwd.TrustedVouchThreshold,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 			&gwd.IsUserAdmin,
@@ -261,7 +265,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]models.GroupWithDetails, error) {
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
-			g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.trusted_vouch_threshold, g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count
 		FROM ` + "`groups`" + ` g
@@ -284,6 +288,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 		err := rows.Scan(
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
+			&gwd.TrustedVouchThreshold,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 		)
@@ -962,4 +967,194 @@ func (r *GroupRepository) CheckAndGraduate(ctx context.Context, groupID string) 
 	}
 
 	return true, nil
+}
+
+// =============================================================================
+// GetMember
+// =============================================================================
+
+// GetMember retrieves a single group member record.
+// Returns nil, nil if the user is not a member (not an error).
+func (r *GroupRepository) GetMember(ctx context.Context, groupID, userID string) (*models.GroupMember, error) {
+	query := `
+		SELECT id, group_id, user_id, is_admin, is_founding_member, trust_level, joined_at
+		FROM group_members
+		WHERE group_id = ? AND user_id = ?
+	`
+
+	member := &models.GroupMember{}
+	err := r.db.QueryRowContext(ctx, query, groupID, userID).Scan(
+		&member.ID, &member.GroupID, &member.UserID,
+		&member.IsAdmin, &member.IsFoundingMember,
+		&member.TrustLevel, &member.JoinedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return member, nil
+}
+
+// =============================================================================
+// Trust Vouches
+// =============================================================================
+
+// CreateTrustVouch records a trust vouch from one member to another.
+// If the vouched user reaches the group's trusted_vouch_threshold, they are
+// automatically promoted to trust_level='trusted'.
+func (r *GroupRepository) CreateTrustVouch(ctx context.Context, groupID, voucherUserID, vouchedUserID string) error {
+	if voucherUserID == vouchedUserID {
+		return ErrSelfVouch
+	}
+
+	var promoted bool
+
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// Verify both users are members and voucher is trusted or admin
+		var voucherTrustLevel string
+		var voucherIsAdmin bool
+		err := tx.QueryRowContext(ctx,
+			"SELECT trust_level, is_admin FROM group_members WHERE group_id = ? AND user_id = ?",
+			groupID, voucherUserID,
+		).Scan(&voucherTrustLevel, &voucherIsAdmin)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotTrustedOrAdmin
+		}
+		if err != nil {
+			return fmt.Errorf("check voucher membership: %w", err)
+		}
+
+		if voucherTrustLevel != "trusted" && !voucherIsAdmin {
+			return ErrNotTrustedOrAdmin
+		}
+
+		// Verify vouched user is a member
+		var vouchedExists bool
+		err = tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)",
+			groupID, vouchedUserID,
+		).Scan(&vouchedExists)
+		if err != nil {
+			return fmt.Errorf("check vouched membership: %w", err)
+		}
+		if !vouchedExists {
+			return ErrGroupNotFound
+		}
+
+		// Insert the vouch
+		vouchID := uuid.New().String()
+		_, err = tx.ExecContext(ctx,
+			"INSERT INTO group_trust_vouches (id, group_id, voucher_user_id, vouched_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
+			vouchID, groupID, voucherUserID, vouchedUserID, time.Now().UTC(),
+		)
+		if err != nil {
+			return fmt.Errorf("insert trust vouch: %w", err)
+		}
+
+		// Count vouches for the vouched user
+		var vouchCount int
+		err = tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM group_trust_vouches WHERE group_id = ? AND vouched_user_id = ?",
+			groupID, vouchedUserID,
+		).Scan(&vouchCount)
+		if err != nil {
+			return fmt.Errorf("count vouches: %w", err)
+		}
+
+		// Check threshold from the group
+		var threshold int
+		err = tx.QueryRowContext(ctx,
+			"SELECT trusted_vouch_threshold FROM `groups` WHERE id = ?",
+			groupID,
+		).Scan(&threshold)
+		if err != nil {
+			return fmt.Errorf("get threshold: %w", err)
+		}
+
+		// Promote if threshold met
+		if vouchCount >= threshold {
+			_, err = tx.ExecContext(ctx,
+				"UPDATE group_members SET trust_level = 'trusted' WHERE group_id = ? AND user_id = ?",
+				groupID, vouchedUserID,
+			)
+			if err != nil {
+				return fmt.Errorf("promote to trusted: %w", err)
+			}
+			promoted = true
+		}
+
+		return nil
+	})
+
+	_ = promoted // available for future use (e.g., returning promotion status)
+	return err
+}
+
+// GetTrustVouchCount returns the number of trust vouches a user has received in a group.
+func (r *GroupRepository) GetTrustVouchCount(ctx context.Context, groupID, userID string) (int, error) {
+	query := "SELECT COUNT(*) FROM group_trust_vouches WHERE group_id = ? AND vouched_user_id = ?"
+	var count int
+	err := r.db.QueryRowContext(ctx, query, groupID, userID).Scan(&count)
+	return count, err
+}
+
+// ListTrustVouchesForUser returns all trust vouches received by a user in a group.
+func (r *GroupRepository) ListTrustVouchesForUser(ctx context.Context, groupID, userID string) ([]models.GroupTrustVouch, error) {
+	query := `
+		SELECT id, group_id, voucher_user_id, vouched_user_id, created_at
+		FROM group_trust_vouches
+		WHERE group_id = ? AND vouched_user_id = ?
+		ORDER BY created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var vouches []models.GroupTrustVouch
+	for rows.Next() {
+		var vouch models.GroupTrustVouch
+		if err := rows.Scan(
+			&vouch.ID, &vouch.GroupID, &vouch.VoucherUserID,
+			&vouch.VouchedUserID, &vouch.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		vouches = append(vouches, vouch)
+	}
+
+	return vouches, rows.Err()
+}
+
+// =============================================================================
+// Access Tier Enforcement
+// =============================================================================
+
+// UserMeetsAccessTier checks if a user meets the access tier requirement for a signal group.
+// memberInfo should be nil if user is not a member.
+func UserMeetsAccessTier(
+	tier models.AccessTier,
+	isAuthenticated bool,
+	isVerifiedResident bool,
+	memberInfo *models.GroupMember,
+) bool {
+	switch tier {
+	case models.AccessTierOpen:
+		return isAuthenticated
+	case models.AccessTierResident:
+		return isVerifiedResident
+	case models.AccessTierMember:
+		return memberInfo != nil
+	case models.AccessTierTrusted:
+		return memberInfo != nil && (memberInfo.TrustLevel == "trusted" || memberInfo.IsAdmin)
+	case models.AccessTierAdminOnly:
+		return memberInfo != nil && memberInfo.IsAdmin
+	default:
+		return false
+	}
 }
