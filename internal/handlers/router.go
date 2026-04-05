@@ -165,6 +165,8 @@ func (r *Router) Setup() http.Handler {
 	if r.groups != nil {
 		r.mux.HandleFunc("/api/v1/groups", r.handleGroups)
 		r.mux.HandleFunc("/api/v1/groups/", r.handleGroupByID)
+		r.mux.HandleFunc("/api/v1/group-invitations", r.authenticated(r.methodHandler(http.MethodGet, r.groups.ListMyInvitations)))
+		r.mux.HandleFunc("/api/v1/group-invitations/", r.handleGroupInvitationByID)
 	}
 
 	// School routes (all authenticated)
@@ -1271,6 +1273,52 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for invite-links sub-route: /api/v1/groups/{id}/invite-links
+	if len(parts) >= 2 && parts[1] == "invite-links" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateInviteLink)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListInviteLinks)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for invitations sub-route: /api/v1/groups/{id}/invitations
+	if len(parts) >= 2 && parts[1] == "invitations" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.CreateInvitation)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for join sub-route: /api/v1/groups/join/{token}
+	// Here groupID == "join" and parts[1] is the token
+	if groupID == "join" && len(parts) >= 2 {
+		q := req.URL.Query()
+		q.Set("token", parts[1])
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.JoinViaLink)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
 	// Default: CRUD operations on group by ID
 	q := req.URL.Query()
 	q.Set("id", groupID)
@@ -1286,4 +1334,31 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 	}
+}
+
+// handleGroupInvitationByID handles /api/v1/group-invitations/:id/respond
+func (r *Router) handleGroupInvitationByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/group-invitations/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Invitation ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	invitationID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "respond" {
+		q := req.URL.Query()
+		q.Set("id", invitationID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.RespondToInvitation)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
 }
