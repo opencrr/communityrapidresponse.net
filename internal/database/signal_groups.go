@@ -36,8 +36,8 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, group_name, description, access_tier, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -45,6 +45,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 		group.RegionID,
 		group.SchoolID,
 		group.DistrictID,
+		group.OwnerGroupID,
 		group.GroupName,
 		group.Description,
 		group.AccessTier,
@@ -59,7 +60,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 // GetByID retrieves a signal group by ID
 func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models.SignalGroup, error) {
 	query := `
-		SELECT id, region_id, school_id, district_id, group_name,
+		SELECT id, region_id, school_id, district_id, owner_group_id, group_name,
 			description, access_tier, created_by, created_at, is_active
 		FROM signal_groups
 		WHERE id = ?
@@ -71,6 +72,7 @@ func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models
 		&group.RegionID,
 		&group.SchoolID,
 		&group.DistrictID,
+		&group.OwnerGroupID,
 		&group.GroupName,
 		&group.Description,
 		&group.AccessTier,
@@ -92,7 +94,7 @@ func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models
 // ListByRegion retrieves signal groups for a region
 func (r *SignalGroupRepository) ListByRegion(ctx context.Context, regionID string) ([]*models.SignalGroup, error) {
 	query := `
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion,
 			COALESCE(gr.name, '') AS region_name
@@ -116,6 +118,7 @@ func (r *SignalGroupRepository) ListByRegion(ctx context.Context, regionID strin
 			&group.RegionID,
 			&group.SchoolID,
 			&group.DistrictID,
+			&group.OwnerGroupID,
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
@@ -186,7 +189,7 @@ func (r *SignalGroupRepository) CountByRegion(ctx context.Context, regionID stri
 // ListByUser retrieves all signal groups for regions, schools, and districts the user has access to
 func (r *SignalGroupRepository) ListByUser(ctx context.Context, userID string) ([]*models.SignalGroup, error) {
 	query := `
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion,
 			COALESCE(gr.name, '') AS region_name,
@@ -199,7 +202,7 @@ func (r *SignalGroupRepository) ListByUser(ctx context.Context, userID string) (
 
 		UNION
 
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion,
 			'' AS region_name,
@@ -212,7 +215,7 @@ func (r *SignalGroupRepository) ListByUser(ctx context.Context, userID string) (
 
 		UNION
 
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion,
 			'' AS region_name,
@@ -241,6 +244,7 @@ func (r *SignalGroupRepository) ListByUser(ctx context.Context, userID string) (
 			&group.RegionID,
 			&group.SchoolID,
 			&group.DistrictID,
+			&group.OwnerGroupID,
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
@@ -282,7 +286,7 @@ func (r *SignalGroupRepository) ListByAdminUser(ctx context.Context, userID stri
 			FROM geographic_regions gr
 			INNER JOIN user_admin_regions uar ON gr.id = uar.parent_region_id
 		)
-		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id,
+		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id,
 			gr.name AS region_name, '' AS school_name, '' AS district_name,
 			sg.group_name, sg.description, sg.access_tier,
 			sg.created_by, sg.created_at, sg.is_active,
@@ -294,7 +298,7 @@ func (r *SignalGroupRepository) ListByAdminUser(ctx context.Context, userID stri
 
 		UNION
 
-		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id,
+		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id,
 			'' AS region_name, s.name AS school_name, '' AS district_name,
 			sg.group_name, sg.description, sg.access_tier,
 			sg.created_by, sg.created_at, sg.is_active,
@@ -306,7 +310,7 @@ func (r *SignalGroupRepository) ListByAdminUser(ctx context.Context, userID stri
 
 		UNION
 
-		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id,
+		SELECT DISTINCT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id,
 			'' AS region_name, '' AS school_name, sd.name AS district_name,
 			sg.group_name, sg.description, sg.access_tier,
 			sg.created_by, sg.created_at, sg.is_active,
@@ -334,6 +338,7 @@ func (r *SignalGroupRepository) ListByAdminUser(ctx context.Context, userID stri
 			&group.RegionID,
 			&group.SchoolID,
 			&group.DistrictID,
+			&group.OwnerGroupID,
 			&group.RegionName,
 			&group.SchoolName,
 			&group.DistrictName,
@@ -367,8 +372,8 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, group_name, description, access_tier, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := tx.ExecContext(ctx, query,
@@ -376,6 +381,7 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 		group.RegionID,
 		group.SchoolID,
 		group.DistrictID,
+		group.OwnerGroupID,
 		group.GroupName,
 		group.Description,
 		group.AccessTier,
@@ -398,7 +404,7 @@ func (r *SignalGroupRepository) CountByRegionForUpdate(ctx context.Context, tx *
 // ListBySchool retrieves signal groups for a school
 func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID string) ([]*models.SignalGroup, error) {
 	query := `
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
@@ -420,6 +426,7 @@ func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID strin
 			&group.RegionID,
 			&group.SchoolID,
 			&group.DistrictID,
+			&group.OwnerGroupID,
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
@@ -442,7 +449,7 @@ func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID strin
 // ListByDistrict retrieves signal groups for a district
 func (r *SignalGroupRepository) ListByDistrict(ctx context.Context, districtID string) ([]*models.SignalGroup, error) {
 	query := `
-		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.group_name,
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
 			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
@@ -464,6 +471,7 @@ func (r *SignalGroupRepository) ListByDistrict(ctx context.Context, districtID s
 			&group.RegionID,
 			&group.SchoolID,
 			&group.DistrictID,
+			&group.OwnerGroupID,
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
@@ -513,4 +521,78 @@ func (r *SignalGroupRepository) CountByDistrictForUpdate(ctx context.Context, tx
 	var count int
 	err := tx.QueryRowContext(ctx, query, districtID).Scan(&count)
 	return count, err
+}
+
+// ListByOwnerGroup retrieves active signal groups owned by the given group
+func (r *SignalGroupRepository) ListByOwnerGroup(ctx context.Context, ownerGroupID string) ([]*models.SignalGroup, error) {
+	query := `
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.group_name,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
+		FROM signal_groups sg
+		WHERE sg.owner_group_id = ? AND sg.is_active = TRUE
+		ORDER BY sg.created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, ownerGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var groups []*models.SignalGroup
+	for rows.Next() {
+		group := &models.SignalGroup{}
+		if err := rows.Scan(
+			&group.ID,
+			&group.RegionID,
+			&group.SchoolID,
+			&group.DistrictID,
+			&group.OwnerGroupID,
+			&group.GroupName,
+			&group.Description,
+			&group.AccessTier,
+			&group.CreatedBy,
+			&group.CreatedAt,
+			&group.IsActive,
+			&group.HasPendingDeletion,
+		); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return groups, nil
+}
+
+// CountByOwnerGroup counts active signal groups for an owner group
+func (r *SignalGroupRepository) CountByOwnerGroup(ctx context.Context, ownerGroupID string) (int, error) {
+	query := `SELECT COUNT(*) FROM signal_groups WHERE owner_group_id = ? AND is_active = TRUE`
+	var count int
+	err := r.db.QueryRowContext(ctx, query, ownerGroupID).Scan(&count)
+	return count, err
+}
+
+// CountByOwnerGroupForUpdate counts active signal groups for an owner group with a row lock
+func (r *SignalGroupRepository) CountByOwnerGroupForUpdate(ctx context.Context, tx *sql.Tx, ownerGroupID string) (int, error) {
+	query := `SELECT COUNT(*) FROM signal_groups WHERE owner_group_id = ? AND is_active = TRUE FOR UPDATE`
+	var count int
+	err := tx.QueryRowContext(ctx, query, ownerGroupID).Scan(&count)
+	return count, err
+}
+
+// CreateForOwnerGroup creates a signal group owned by a group (not a region/school/district)
+func (r *SignalGroupRepository) CreateForOwnerGroup(ctx context.Context, group *models.SignalGroup) error {
+	if group.OwnerGroupID == nil || *group.OwnerGroupID == "" {
+		return errors.New("owner_group_id is required")
+	}
+	// Ensure the other owner fields are nil for the 4-way XOR constraint
+	group.RegionID = nil
+	group.SchoolID = nil
+	group.DistrictID = nil
+
+	return r.Create(ctx, group)
 }

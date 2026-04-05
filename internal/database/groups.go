@@ -206,6 +206,13 @@ func (r *GroupRepository) GetByIDWithDetails(ctx context.Context, id, userID str
 		return nil, fmt.Errorf("get topic tags: %w", err)
 	}
 
+	// Get signal groups owned by this group
+	signalGroups, err := r.GetSignalGroups(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get signal groups: %w", err)
+	}
+	result.SignalGroups = signalGroups
+
 	return result, nil
 }
 
@@ -576,6 +583,41 @@ func generateInviteToken() (string, error) {
 		return "", fmt.Errorf("generate invite token: %w", err)
 	}
 	return hex.EncodeToString(tokenBytes), nil
+}
+
+// =============================================================================
+// Signal Groups
+// =============================================================================
+
+// GetSignalGroups returns public signal group data for groups owned by this group.
+func (r *GroupRepository) GetSignalGroups(ctx context.Context, groupID string) ([]models.SignalGroupPublic, error) {
+	query := `
+		SELECT id, owner_group_id, group_name, description, access_tier, created_at,
+			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
+		FROM signal_groups sg
+		WHERE sg.owner_group_id = ? AND sg.is_active = TRUE
+		ORDER BY sg.created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var signalGroups []models.SignalGroupPublic
+	for rows.Next() {
+		var sg models.SignalGroupPublic
+		if err := rows.Scan(
+			&sg.ID, &sg.OwnerGroupID, &sg.Name, &sg.Description,
+			&sg.AccessTier, &sg.CreatedAt, &sg.HasPendingDeletion,
+		); err != nil {
+			return nil, err
+		}
+		signalGroups = append(signalGroups, sg)
+	}
+
+	return signalGroups, rows.Err()
 }
 
 // =============================================================================

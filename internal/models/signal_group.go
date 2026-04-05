@@ -10,6 +10,7 @@ type SignalGroup struct {
 	RegionID            *string    `json:"region_id,omitempty" db:"region_id"`
 	SchoolID            *string    `json:"school_id,omitempty" db:"school_id"`
 	DistrictID          *string    `json:"district_id,omitempty" db:"district_id"`
+	OwnerGroupID        *string    `json:"owner_group_id,omitempty" db:"owner_group_id"`
 	RegionName          string     `json:"region_name,omitempty" db:"region_name"`     // Populated by joins
 	SchoolName          string     `json:"school_name,omitempty" db:"school_name"`     // Populated by joins
 	DistrictName        string     `json:"district_name,omitempty" db:"district_name"` // Populated by joins
@@ -28,6 +29,7 @@ type SignalGroupPublic struct {
 	RegionID            *string   `json:"region_id,omitempty"`
 	SchoolID            *string   `json:"school_id,omitempty"`
 	DistrictID          *string   `json:"district_id,omitempty"`
+	OwnerGroupID        *string   `json:"owner_group_id,omitempty"`
 	RegionName          string    `json:"region_name,omitempty"`
 	SchoolName          string    `json:"school_name,omitempty"`
 	DistrictName        string    `json:"district_name,omitempty"`

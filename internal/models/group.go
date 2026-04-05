@@ -36,12 +36,13 @@ type Group struct {
 // GroupWithDetails includes membership counts and related data.
 type GroupWithDetails struct {
 	Group
-	MemberCount  int             `json:"member_count"`
-	AdminCount   int             `json:"admin_count"`
-	Regions      []RegionSummary `json:"regions"`
-	TopicTags    []string        `json:"topic_tags"`
-	IsUserMember bool            `json:"is_user_member"`
-	IsUserAdmin  bool            `json:"is_user_admin"`
+	MemberCount  int                `json:"member_count"`
+	AdminCount   int                `json:"admin_count"`
+	Regions      []RegionSummary    `json:"regions"`
+	TopicTags    []string           `json:"topic_tags"`
+	SignalGroups []SignalGroupPublic `json:"signal_groups"`
+	IsUserMember bool               `json:"is_user_member"`
+	IsUserAdmin  bool               `json:"is_user_admin"`
 }
 
 // GroupMember represents a user's membership in a group.

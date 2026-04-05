@@ -42,6 +42,7 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 	ctx := context.Background()
 
 	for _, groupID := range groupIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", groupID)
@@ -1782,5 +1783,327 @@ func TestUserMeetsAccessTier(t *testing.T) {
 					tt.tier, tt.isAuthenticated, tt.isVerifiedResident, tt.memberInfo != nil, result, tt.expected)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Signal Group under Group Tests
+// =============================================================================
+
+func TestSignalGroupRepository_ListByOwnerGroup(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "sglist1")
+	regionID := createGroupTestRegion(t, db, "SG List Region")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionID})
+	})
+
+	// Create a group
+	req := &models.CreateGroupRequest{
+		Name:      "SG List Test Group",
+		RegionIDs: []string{regionID},
+	}
+	group, err := groupRepo.Create(ctx, req, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, group.ID)
+
+	t.Run("returns empty list when no signal groups", func(t *testing.T) {
+		signalGroups, err := sgRepo.ListByOwnerGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListByOwnerGroup failed: %v", err)
+		}
+		if len(signalGroups) != 0 {
+			t.Errorf("Expected 0 signal groups, got %d", len(signalGroups))
+		}
+	})
+
+	t.Run("returns signal groups owned by group", func(t *testing.T) {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			GroupName:    "Test Signal Chat",
+			AccessTier:   models.AccessTierMember,
+			CreatedBy:    &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		signalGroups, err := sgRepo.ListByOwnerGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListByOwnerGroup failed: %v", err)
+		}
+		if len(signalGroups) != 1 {
+			t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+		}
+		if signalGroups[0].GroupName != "Test Signal Chat" {
+			t.Errorf("Expected name 'Test Signal Chat', got %q", signalGroups[0].GroupName)
+		}
+		if signalGroups[0].OwnerGroupID == nil || *signalGroups[0].OwnerGroupID != group.ID {
+			t.Error("Expected owner_group_id to match group ID")
+		}
+		if signalGroups[0].RegionID != nil {
+			t.Error("Expected region_id to be nil")
+		}
+		if signalGroups[0].SchoolID != nil {
+			t.Error("Expected school_id to be nil")
+		}
+		if signalGroups[0].DistrictID != nil {
+			t.Error("Expected district_id to be nil")
+		}
+	})
+
+	t.Run("does not return deactivated signal groups", func(t *testing.T) {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			GroupName:    "Deactivated Chat",
+			AccessTier:   models.AccessTierOpen,
+			CreatedBy:    &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		err = sgRepo.Deactivate(ctx, sg.ID)
+		if err != nil {
+			t.Fatalf("Deactivate failed: %v", err)
+		}
+
+		signalGroups, err := sgRepo.ListByOwnerGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListByOwnerGroup failed: %v", err)
+		}
+		// Should only have the one from previous subtest
+		if len(signalGroups) != 1 {
+			t.Errorf("Expected 1 active signal group, got %d", len(signalGroups))
+		}
+	})
+}
+
+func TestSignalGroupRepository_CountByOwnerGroup(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "sgcount1")
+	regionID := createGroupTestRegion(t, db, "SG Count Region")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionID})
+	})
+
+	group, err := groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "SG Count Test Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, group.ID)
+
+	t.Run("returns zero when no signal groups", func(t *testing.T) {
+		count, err := sgRepo.CountByOwnerGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("CountByOwnerGroup failed: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected count 0, got %d", count)
+		}
+	})
+
+	t.Run("returns correct count", func(t *testing.T) {
+		for i := 0; i < 3; i++ {
+			sg := &models.SignalGroup{
+				OwnerGroupID: &group.ID,
+				GroupName:    "Chat " + string(rune('A'+i)),
+				AccessTier:   models.AccessTierMember,
+				CreatedBy:    &userID,
+			}
+			if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+				t.Fatalf("CreateForOwnerGroup failed: %v", err)
+			}
+		}
+
+		count, err := sgRepo.CountByOwnerGroup(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("CountByOwnerGroup failed: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("Expected count 3, got %d", count)
+		}
+	})
+}
+
+func TestSignalGroupRepository_CreateForOwnerGroup(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "sgcreate1")
+	regionID := createGroupTestRegion(t, db, "SG Create Region")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionID})
+	})
+
+	group, err := groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "SG Create Test Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, group.ID)
+
+	t.Run("creates signal group with owner_group_id", func(t *testing.T) {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			GroupName:    "Created Chat",
+			Description:  strPtr("A test chat"),
+			AccessTier:   models.AccessTierTrusted,
+			CreatedBy:    &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		if sg.ID == "" {
+			t.Error("Expected ID to be set")
+		}
+		if !sg.IsActive {
+			t.Error("Expected IsActive to be true")
+		}
+
+		// Verify via GetByID
+		fetched, err := sgRepo.GetByID(ctx, sg.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if fetched.OwnerGroupID == nil || *fetched.OwnerGroupID != group.ID {
+			t.Error("Expected owner_group_id to match")
+		}
+		if fetched.RegionID != nil {
+			t.Error("Expected region_id to be nil")
+		}
+		if fetched.SchoolID != nil {
+			t.Error("Expected school_id to be nil")
+		}
+		if fetched.DistrictID != nil {
+			t.Error("Expected district_id to be nil")
+		}
+		if string(fetched.AccessTier) != string(models.AccessTierTrusted) {
+			t.Errorf("Expected access_tier 'trusted', got %q", fetched.AccessTier)
+		}
+	})
+
+	t.Run("fails without owner_group_id", func(t *testing.T) {
+		sg := &models.SignalGroup{
+			GroupName:  "No Owner Chat",
+			AccessTier: models.AccessTierMember,
+			CreatedBy:  &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err == nil {
+			t.Fatal("Expected error when owner_group_id is nil")
+		}
+	})
+
+	t.Run("clears region_id/school_id/district_id", func(t *testing.T) {
+		// Even if these are set, CreateForOwnerGroup should nil them out
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			RegionID:     &regionID,
+			GroupName:    "Cleaned Chat",
+			AccessTier:   models.AccessTierMember,
+			CreatedBy:    &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		fetched, err := sgRepo.GetByID(ctx, sg.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if fetched.RegionID != nil {
+			t.Error("Expected region_id to be nil after CreateForOwnerGroup")
+		}
+	})
+}
+
+func TestGroupRepository_GetByIDWithDetails_IncludesSignalGroups(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "sgdetails1")
+	regionID := createGroupTestRegion(t, db, "SG Details Region")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionID})
+	})
+
+	group, err := groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "SG Details Test Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, group.ID)
+
+	// Create two signal groups
+	for _, name := range []string{"Chat Alpha", "Chat Beta"} {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			GroupName:    name,
+			AccessTier:   models.AccessTierMember,
+			CreatedBy:    &userID,
+		}
+		if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+	}
+
+	details, err := groupRepo.GetByIDWithDetails(ctx, group.ID, userID)
+	if err != nil {
+		t.Fatalf("GetByIDWithDetails failed: %v", err)
+	}
+
+	if len(details.SignalGroups) != 2 {
+		t.Fatalf("Expected 2 signal groups, got %d", len(details.SignalGroups))
+	}
+
+	// Verify the signal groups have the expected fields populated
+	for _, sg := range details.SignalGroups {
+		if sg.ID == "" {
+			t.Error("Expected signal group ID to be set")
+		}
+		if sg.OwnerGroupID == nil || *sg.OwnerGroupID != group.ID {
+			t.Error("Expected owner_group_id to match group ID")
+		}
+		if sg.Name == "" {
+			t.Error("Expected signal group name to be set")
+		}
+		if sg.AccessTier == "" {
+			t.Error("Expected access_tier to be set")
+		}
 	}
 }
