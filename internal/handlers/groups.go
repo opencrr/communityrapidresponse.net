@@ -392,3 +392,362 @@ func (h *GroupHandler) Leave(w http.ResponseWriter, r *http.Request) {
 		"message": "Successfully left the group",
 	})
 }
+
+// CreateInviteLink handles POST /api/v1/groups/:id/invite-links
+func (h *GroupHandler) CreateInviteLink(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invite_link")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	var req models.CreateInviteLinkRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+			return
+		}
+	}
+
+	link, err := h.groupRepo.CreateInviteLink(r.Context(), groupID, claims.UserID, &req)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to create invite link", "group", "create_invite_link")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupInviteLinkCreated, &resourceType, &groupID, map[string]interface{}{
+			"link_id": link.ID,
+		}), "group_invite_link_created")
+	}
+
+	writeJSON(w, http.StatusCreated, link)
+}
+
+// ListInviteLinks handles GET /api/v1/groups/:id/invite-links
+func (h *GroupHandler) ListInviteLinks(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "list_invite_links")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	links, err := h.groupRepo.ListInviteLinks(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list invite links", "group", "list_invite_links")
+		return
+	}
+
+	if links == nil {
+		links = []models.GroupInviteLink{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"invite_links": links,
+	})
+}
+
+// JoinViaLink handles POST /api/v1/groups/join/:token
+func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	if !claims.VouchVerified {
+		writeError(w, http.StatusForbidden, "forbidden", "Vouch verification required to join groups")
+		return
+	}
+
+	token := getPathParam(r, "token")
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Invite token required")
+		return
+	}
+
+	// Validate and consume the invite link
+	link, err := h.groupRepo.ConsumeInviteLink(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, database.ErrInviteLinkNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Invite link not found")
+			return
+		}
+		if errors.Is(err, database.ErrInviteLinkExpired) {
+			writeError(w, http.StatusGone, "expired", "Invite link has expired")
+			return
+		}
+		if errors.Is(err, database.ErrInviteLinkExhausted) {
+			writeError(w, http.StatusGone, "exhausted", "Invite link has reached its maximum uses")
+			return
+		}
+		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
+		return
+	}
+
+	// Check if user is already a member
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), link.GroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check membership", "group", "join_via_link")
+		return
+	}
+	if isMember {
+		writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
+		return
+	}
+
+	// Check user is verified in at least one of the group's regions
+	regions, err := h.groupRepo.GetRegions(r.Context(), link.GroupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group regions", "group", "join_via_link")
+		return
+	}
+
+	inRegion := false
+	for _, region := range regions {
+		isMemberOfRegion, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to check region membership", "group", "join_via_link")
+			return
+		}
+		if isMemberOfRegion {
+			inRegion = true
+			break
+		}
+	}
+
+	if !inRegion {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a verified member of at least one of the group's regions")
+		return
+	}
+
+	// Add user as regular member
+	if err := h.groupRepo.AddMember(r.Context(), link.GroupID, claims.UserID, false, false); err != nil {
+		writeServerError(w, r, err, "Failed to join group", "group", "join_via_link")
+		return
+	}
+
+	// Check if the group should graduate
+	graduated, err := h.groupRepo.CheckAndGraduate(r.Context(), link.GroupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check graduation", "group", "join_via_link")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupMemberAdded, &resourceType, &link.GroupID, map[string]interface{}{
+			"method":    "invite_link",
+			"link_id":   link.ID,
+			"graduated": graduated,
+		}), "group_member_added")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":   "Successfully joined the group",
+		"group_id":  link.GroupID,
+		"graduated": graduated,
+	})
+}
+
+// CreateInvitation handles POST /api/v1/groups/:id/invitations
+func (h *GroupHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invitation")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	var req models.CreateGroupInvitationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "User ID is required")
+		return
+	}
+
+	// Verify target user exists
+	_, err = h.userRepo.GetByID(r.Context(), req.UserID)
+	if errors.Is(err, database.ErrUserNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "User not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify user", "group", "create_invitation")
+		return
+	}
+
+	// Check if target user is already a member
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, req.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check membership", "group", "create_invitation")
+		return
+	}
+	if isMember {
+		writeError(w, http.StatusConflict, "already_member", "User is already a member of this group")
+		return
+	}
+
+	invitation, err := h.groupRepo.CreateInvitation(r.Context(), groupID, req.UserID, claims.UserID)
+	if err != nil {
+		if errors.Is(err, database.ErrInvitationAlreadyPending) {
+			writeError(w, http.StatusConflict, "invitation_pending", "An invitation is already pending for this user")
+			return
+		}
+		writeServerError(w, r, err, "Failed to create invitation", "group", "create_invitation")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupInvitationSent, &resourceType, &groupID, map[string]interface{}{
+			"invitation_id": invitation.ID,
+			"target_user":   req.UserID,
+		}), "group_invitation_sent")
+	}
+
+	writeJSON(w, http.StatusCreated, invitation)
+}
+
+// ListMyInvitations handles GET /api/v1/groups/invitations
+func (h *GroupHandler) ListMyInvitations(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	invitations, err := h.groupRepo.ListPendingInvitationsForUser(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list invitations", "group", "list_invitations")
+		return
+	}
+
+	if invitations == nil {
+		invitations = []models.GroupInvitationWithDetails{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"invitations": invitations,
+	})
+}
+
+// RespondToInvitation handles POST /api/v1/groups/invitations/:id/respond
+func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	invitationID := getPathParam(r, "id")
+	if invitationID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Invitation ID required")
+		return
+	}
+
+	var req models.RespondToGroupInvitationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	invitation, err := h.groupRepo.RespondToInvitation(r.Context(), invitationID, claims.UserID, req.Accept)
+	if err != nil {
+		if errors.Is(err, database.ErrInvitationNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
+			return
+		}
+		if errors.Is(err, database.ErrInvitationExpired) {
+			writeError(w, http.StatusGone, "expired", "Invitation has expired")
+			return
+		}
+		writeServerError(w, r, err, "Failed to respond to invitation", "group", "respond_to_invitation")
+		return
+	}
+
+	if req.Accept {
+		if err := h.groupRepo.AddMember(r.Context(), invitation.GroupID, claims.UserID, false, false); err != nil {
+			writeServerError(w, r, err, "Failed to add member", "group", "respond_to_invitation")
+			return
+		}
+
+		graduated, err := h.groupRepo.CheckAndGraduate(r.Context(), invitation.GroupID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to check graduation", "group", "respond_to_invitation")
+			return
+		}
+
+		if h.auditRepo != nil {
+			resourceType := "group"
+			logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupMemberAdded, &resourceType, &invitation.GroupID, map[string]interface{}{
+				"method":        "invitation",
+				"invitation_id": invitation.ID,
+				"graduated":     graduated,
+			}), "group_member_added")
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":   "Invitation accepted",
+			"group_id":  invitation.GroupID,
+			"graduated": graduated,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Invitation declined",
+	})
+}

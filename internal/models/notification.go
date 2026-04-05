@@ -132,10 +132,13 @@ const (
 	AuditActionMeshtasticChannelDeleted = "meshtastic_channel_deleted"
 
 	// Group actions
-	AuditActionGroupCreated       = "group_created"
-	AuditActionGroupUpdated       = "group_updated"
-	AuditActionGroupDeleted       = "group_deleted"
-	AuditActionGroupMemberRemoved = "group_member_removed"
+	AuditActionGroupCreated           = "group_created"
+	AuditActionGroupUpdated           = "group_updated"
+	AuditActionGroupDeleted           = "group_deleted"
+	AuditActionGroupMemberRemoved     = "group_member_removed"
+	AuditActionGroupInviteLinkCreated = "group_invite_link_created"
+	AuditActionGroupInvitationSent    = "group_invitation_sent"
+	AuditActionGroupMemberAdded       = "group_member_added"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

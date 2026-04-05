@@ -141,6 +141,8 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_topic_tags WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_regions WHERE group_id = ?", id)
@@ -152,6 +154,7 @@ func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", id)
 	}
 	for _, id := range userIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invitations WHERE user_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE user_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_regions WHERE user_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM audit_log WHERE user_id = ?", id)
@@ -953,5 +956,633 @@ func TestGroupHandler_List_Success(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&result)
 	if len(result["groups"]) < 1 {
 		t.Error("Expected at least 1 group in list")
+	}
+}
+
+// --- CreateInviteLink Tests ---
+
+func TestGroupHandler_CreateInviteLink_AdminSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpinvlink_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpInvLinkRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Invite Link Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/invite-links", nil)
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateInviteLink(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var link models.GroupInviteLink
+	_ = json.NewDecoder(rec.Body).Decode(&link)
+	if link.Token == "" {
+		t.Error("Expected non-empty token in response")
+	}
+	if link.GroupID != group.ID {
+		t.Errorf("Expected group_id %s, got %s", group.ID, link.GroupID)
+	}
+}
+
+func TestGroupHandler_CreateInviteLink_NonAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	creator := suite.createTestUser("grpinvlink_creator", models.TierVouched, false)
+	creator.VouchVerified = true
+	outsider := suite.createTestUser("grpinvlink_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	region := suite.createTestRegion("GrpInvLinkRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, creator.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "No Invite For You",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, creator.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{creator.ID, outsider.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(outsider)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/invite-links", nil)
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateInviteLink(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- JoinViaLink Tests ---
+
+func TestGroupHandler_JoinViaLink_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpjoin_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	joiner := suite.createTestUser("grpjoin_joiner", models.TierVouched, false)
+	joiner.VouchVerified = true
+	region := suite.createTestRegion("GrpJoinRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, joiner.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Join Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	linkReq := &models.CreateInviteLinkRequest{}
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, linkReq)
+	if err != nil {
+		t.Fatalf("Failed to create invite link: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, joiner.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(joiner)
+
+	req := httptest.NewRequest("POST", "/groups/join/"+link.Token, nil)
+	q := req.URL.Query()
+	q.Set("token", link.Token)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.JoinViaLink(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify membership
+	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, joiner.ID)
+	if !isMember {
+		t.Error("Expected joiner to be a member of the group")
+	}
+}
+
+func TestGroupHandler_JoinViaLink_UnverifiedUser(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpjoin_admin2", models.TierVouched, false)
+	admin.VouchVerified = true
+	unverified := suite.createTestUser("grpjoin_unverified", models.TierUnverified, false)
+	region := suite.createTestRegion("GrpJoinRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "No Unverified",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	linkReq := &models.CreateInviteLinkRequest{}
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, linkReq)
+	if err != nil {
+		t.Fatalf("Failed to create invite link: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, unverified.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(unverified)
+
+	req := httptest.NewRequest("POST", "/groups/join/"+link.Token, nil)
+	q := req.URL.Query()
+	q.Set("token", link.Token)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.JoinViaLink(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_JoinViaLink_AlreadyMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpjoin_admin3", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpJoinRegion3", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Already In",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	linkReq := &models.CreateInviteLinkRequest{}
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, linkReq)
+	if err != nil {
+		t.Fatalf("Failed to create invite link: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	// Admin is already a member, tries to join via link
+	claims := suite.claimsForUser(admin)
+
+	req := httptest.NewRequest("POST", "/groups/join/"+link.Token, nil)
+	q := req.URL.Query()
+	q.Set("token", link.Token)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.JoinViaLink(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("Expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_JoinViaLink_GraduationTrigger(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	// Set a low threshold so graduation triggers
+	ctx := context.Background()
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO platform_config (config_key, config_value) VALUES ('group_founding_threshold', '3') ON DUPLICATE KEY UPDATE config_value = '3'")
+
+	admin := suite.createTestUser("grpjoin_grad_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member1 := suite.createTestUser("grpjoin_grad_m1", models.TierVouched, false)
+	member1.VouchVerified = true
+	member2 := suite.createTestUser("grpjoin_grad_m2", models.TierVouched, false)
+	member2.VouchVerified = true
+	region := suite.createTestRegion("GrpJoinGradRegion", models.RegionTypeCity, nil)
+
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member1.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member2.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Graduation Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add member1 directly (now 2 members: admin + member1)
+	err = suite.groupRepo.AddMember(ctx, group.ID, member1.ID, false, true)
+	if err != nil {
+		t.Fatalf("Failed to add member1: %v", err)
+	}
+
+	linkReq := &models.CreateInviteLinkRequest{}
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, linkReq)
+	if err != nil {
+		t.Fatalf("Failed to create invite link: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member1.ID, member2.ID}, []string{region.ID}, []string{group.ID})
+
+	// member2 joins via link (3rd member = threshold)
+	claims := suite.claimsForUser(member2)
+
+	req := httptest.NewRequest("POST", "/groups/join/"+link.Token, nil)
+	q := req.URL.Query()
+	q.Set("token", link.Token)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.JoinViaLink(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	graduated, ok := result["graduated"].(bool)
+	if !ok || !graduated {
+		t.Errorf("Expected graduated=true, got %v", result["graduated"])
+	}
+
+	// Verify group is now active
+	updatedGroup, _ := suite.groupRepo.GetByID(context.Background(), group.ID)
+	if updatedGroup.Status != models.GroupStatusActive {
+		t.Errorf("Expected group status 'active', got '%s'", updatedGroup.Status)
+	}
+}
+
+// --- CreateInvitation Tests ---
+
+func TestGroupHandler_CreateInvitation_AdminSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpinv_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	target := suite.createTestUser("grpinv_target", models.TierVouched, false)
+	target.VouchVerified = true
+	region := suite.createTestRegion("GrpInvRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Invitation Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, target.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	invBody := models.CreateGroupInvitationRequest{UserID: target.ID}
+	bodyBytes, _ := json.Marshal(invBody)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/invitations", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateInvitation(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var invitation models.GroupInvitation
+	_ = json.NewDecoder(rec.Body).Decode(&invitation)
+	if invitation.UserID != target.ID {
+		t.Errorf("Expected user_id %s, got %s", target.ID, invitation.UserID)
+	}
+}
+
+func TestGroupHandler_CreateInvitation_NonAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	creator := suite.createTestUser("grpinv_creator2", models.TierVouched, false)
+	creator.VouchVerified = true
+	outsider := suite.createTestUser("grpinv_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	target := suite.createTestUser("grpinv_target2", models.TierVouched, false)
+	target.VouchVerified = true
+	region := suite.createTestRegion("GrpInvRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, creator.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "No Invite For Outsider",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, creator.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{creator.ID, outsider.ID, target.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(outsider)
+	invBody := models.CreateGroupInvitationRequest{UserID: target.ID}
+	bodyBytes, _ := json.Marshal(invBody)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/invitations", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateInvitation(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_CreateInvitation_AlreadyMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpinv_admin3", models.TierVouched, false)
+	admin.VouchVerified = true
+	existingMember := suite.createTestUser("grpinv_existing", models.TierVouched, false)
+	existingMember.VouchVerified = true
+	region := suite.createTestRegion("GrpInvRegion3", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Already Member Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add existing member
+	err = suite.groupRepo.AddMember(ctx, group.ID, existingMember.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, existingMember.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	invBody := models.CreateGroupInvitationRequest{UserID: existingMember.ID}
+	bodyBytes, _ := json.Marshal(invBody)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/invitations", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateInvitation(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("Expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- RespondToInvitation Tests ---
+
+func TestGroupHandler_RespondToInvitation_Accept(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpresp_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	invitee := suite.createTestUser("grpresp_invitee", models.TierVouched, false)
+	invitee.VouchVerified = true
+	region := suite.createTestRegion("GrpRespRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Accept Invite Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	invitation, err := suite.groupRepo.CreateInvitation(ctx, group.ID, invitee.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create invitation: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, invitee.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(invitee)
+	respondBody := models.RespondToGroupInvitationRequest{Accept: true}
+	bodyBytes, _ := json.Marshal(respondBody)
+
+	req := httptest.NewRequest("POST", "/groups/invitations/"+invitation.ID+"/respond", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", invitation.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.RespondToInvitation(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify membership
+	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, invitee.ID)
+	if !isMember {
+		t.Error("Expected invitee to be a member of the group after accepting")
+	}
+}
+
+func TestGroupHandler_RespondToInvitation_Decline(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpresp_admin2", models.TierVouched, false)
+	admin.VouchVerified = true
+	invitee := suite.createTestUser("grpresp_invitee2", models.TierVouched, false)
+	invitee.VouchVerified = true
+	region := suite.createTestRegion("GrpRespRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Decline Invite Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	invitation, err := suite.groupRepo.CreateInvitation(ctx, group.ID, invitee.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create invitation: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, invitee.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(invitee)
+	respondBody := models.RespondToGroupInvitationRequest{Accept: false}
+	bodyBytes, _ := json.Marshal(respondBody)
+
+	req := httptest.NewRequest("POST", "/groups/invitations/"+invitation.ID+"/respond", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", invitation.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.RespondToInvitation(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify NOT a member
+	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, invitee.ID)
+	if isMember {
+		t.Error("Expected invitee to NOT be a member after declining")
+	}
+}
+
+// --- ListMyInvitations Tests ---
+
+func TestGroupHandler_ListMyInvitations_ReturnsPending(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grplistinv_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	invitee := suite.createTestUser("grplistinv_invitee", models.TierVouched, false)
+	invitee.VouchVerified = true
+	region := suite.createTestRegion("GrpListInvRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "List Invitations Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	_, err = suite.groupRepo.CreateInvitation(ctx, group.ID, invitee.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create invitation: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, invitee.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(invitee)
+
+	req := httptest.NewRequest("GET", "/groups/invitations", nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListMyInvitations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string][]models.GroupInvitationWithDetails
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	if len(result["invitations"]) != 1 {
+		t.Errorf("Expected 1 invitation, got %d", len(result["invitations"]))
+	}
+	if result["invitations"][0].GroupName != "List Invitations Group" {
+		t.Errorf("Expected group name 'List Invitations Group', got '%s'", result["invitations"][0].GroupName)
 	}
 }
