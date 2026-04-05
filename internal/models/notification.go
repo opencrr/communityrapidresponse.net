@@ -138,7 +138,8 @@ const (
 	AuditActionGroupMemberRemoved     = "group_member_removed"
 	AuditActionGroupInviteLinkCreated = "group_invite_link_created"
 	AuditActionGroupInvitationSent    = "group_invitation_sent"
-	AuditActionGroupMemberAdded       = "group_member_added"
+	AuditActionGroupMemberAdded           = "group_member_added"
+	AuditActionGroupTrustVouchCreated     = "group_trust_vouch_created"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

@@ -684,6 +684,135 @@ func (h *GroupHandler) ListMyInvitations(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// VouchForMember handles POST /api/v1/groups/:id/trust-vouches
+func (h *GroupHandler) VouchForMember(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	var req models.CreateTrustVouchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "User ID is required")
+		return
+	}
+
+	err := h.groupRepo.CreateTrustVouch(r.Context(), groupID, claims.UserID, req.UserID)
+	if err != nil {
+		if errors.Is(err, database.ErrSelfVouch) {
+			writeError(w, http.StatusBadRequest, "self_vouch", "Cannot vouch for yourself")
+			return
+		}
+		if errors.Is(err, database.ErrNotTrustedOrAdmin) {
+			writeError(w, http.StatusForbidden, "forbidden", "You must be a trusted member or admin to vouch")
+			return
+		}
+		if errors.Is(err, database.ErrGroupNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Group or target member not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to create trust vouch", "group", "trust_vouch")
+		return
+	}
+
+	vouchCount, err := h.groupRepo.GetTrustVouchCount(r.Context(), groupID, req.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get vouch count", "group", "trust_vouch")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupTrustVouchCreated, &resourceType, &groupID, map[string]interface{}{
+			"vouched_user_id": req.UserID,
+			"vouch_count":     vouchCount,
+		}), "group_trust_vouch_created")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"vouch_count": vouchCount,
+	})
+}
+
+// GetTrustVouchStatus handles GET /api/v1/groups/:id/trust-vouches/:user_id
+func (h *GroupHandler) GetTrustVouchStatus(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	targetUserID := getPathParam(r, "user_id")
+	if targetUserID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "User ID required")
+		return
+	}
+
+	// Check caller is a member
+	if !claims.IsSuperuser {
+		isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to check membership", "group", "trust_vouch_status")
+			return
+		}
+		if !isMember {
+			writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
+			return
+		}
+	}
+
+	vouchCount, err := h.groupRepo.GetTrustVouchCount(r.Context(), groupID, targetUserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get vouch count", "group", "trust_vouch_status")
+		return
+	}
+
+	member, err := h.groupRepo.GetMember(r.Context(), groupID, targetUserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get member", "group", "trust_vouch_status")
+		return
+	}
+
+	trustLevel := ""
+	if member != nil {
+		trustLevel = member.TrustLevel
+	}
+
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", "trust_vouch_status")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"vouch_count":  vouchCount,
+		"trust_level":  trustLevel,
+		"threshold":    group.TrustedVouchThreshold,
+	})
+}
+
 // RespondToInvitation handles POST /api/v1/groups/invitations/:id/respond
 func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

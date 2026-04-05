@@ -141,6 +141,7 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_topic_tags WHERE group_id = ?", id)
@@ -1584,5 +1585,260 @@ func TestGroupHandler_ListMyInvitations_ReturnsPending(t *testing.T) {
 	}
 	if result["invitations"][0].GroupName != "List Invitations Group" {
 		t.Errorf("Expected group name 'List Invitations Group', got '%s'", result["invitations"][0].GroupName)
+	}
+}
+
+// --- Trust Vouch Tests ---
+
+func TestGroupHandler_VouchForMember_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouch_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpvouch_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Vouch Test Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add member to the group
+	err = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	body := models.CreateTrustVouchRequest{UserID: member.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/trust-vouches?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.VouchForMember(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	vouchCount, ok := result["vouch_count"].(float64)
+	if !ok || vouchCount != 1 {
+		t.Errorf("Expected vouch_count 1, got %v", result["vouch_count"])
+	}
+}
+
+func TestGroupHandler_VouchForMember_SelfVouch(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouch_selfadmin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Self Vouch Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	body := models.CreateTrustVouchRequest{UserID: admin.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/trust-vouches?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.VouchForMember(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_VouchForMember_NotTrustedOrAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouch_origadmin", models.TierVouched, false)
+	admin.VouchVerified = true
+	regularMember := suite.createTestUser("grpvouch_regular", models.TierVouched, false)
+	regularMember.VouchVerified = true
+	targetMember := suite.createTestUser("grpvouch_target", models.TierVouched, false)
+	targetMember.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchRegion3", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, regularMember.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, targetMember.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "NotTrusted Vouch Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add both as regular (non-admin) members
+	_ = suite.groupRepo.AddMember(ctx, group.ID, regularMember.ID, false, false)
+	_ = suite.groupRepo.AddMember(ctx, group.ID, targetMember.ID, false, false)
+
+	defer suite.cleanup([]string{admin.ID, regularMember.ID, targetMember.ID}, []string{region.ID}, []string{group.ID})
+
+	// Regular (untrusted) member tries to vouch — should be 403
+	claims := suite.claimsForUser(regularMember)
+	body := models.CreateTrustVouchRequest{UserID: targetMember.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/trust-vouches?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.VouchForMember(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_GetTrustVouchStatus_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouchst_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpvouchst_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchStRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Vouch Status Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	_ = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+
+	// Admin vouches for member
+	err = suite.groupRepo.CreateTrustVouch(ctx, group.ID, admin.ID, member.ID)
+	if err != nil {
+		t.Fatalf("Failed to create trust vouch: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// Admin queries vouch status for member
+	claims := suite.claimsForUser(admin)
+
+	req := httptest.NewRequest("GET", "/groups/"+group.ID+"/trust-vouches/"+member.ID+"?id="+group.ID+"&user_id="+member.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetTrustVouchStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+
+	vouchCount, ok := result["vouch_count"].(float64)
+	if !ok || vouchCount != 1 {
+		t.Errorf("Expected vouch_count 1, got %v", result["vouch_count"])
+	}
+
+	trustLevel, ok := result["trust_level"].(string)
+	if !ok {
+		t.Errorf("Expected trust_level string, got %v", result["trust_level"])
+	}
+	// With default threshold of 2 and only 1 vouch, trust_level should still be "member"
+	if trustLevel != "member" {
+		t.Errorf("Expected trust_level 'member', got '%s'", trustLevel)
+	}
+
+	threshold, ok := result["threshold"].(float64)
+	if !ok || threshold < 1 {
+		t.Errorf("Expected threshold >= 1, got %v", result["threshold"])
+	}
+}
+
+func TestGroupHandler_GetTrustVouchStatus_NonMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouchst_admin2", models.TierVouched, false)
+	admin.VouchVerified = true
+	nonMember := suite.createTestUser("grpvouchst_nonmem", models.TierVouched, false)
+	nonMember.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchStRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Vouch Status NonMember Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, nonMember.ID}, []string{region.ID}, []string{group.ID})
+
+	// Non-member tries to get vouch status — should be 403
+	claims := suite.claimsForUser(nonMember)
+
+	req := httptest.NewRequest("GET", "/groups/"+group.ID+"/trust-vouches/"+admin.ID+"?id="+group.ID+"&user_id="+admin.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetTrustVouchStatus(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
