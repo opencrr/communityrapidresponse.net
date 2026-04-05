@@ -42,6 +42,8 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 	ctx := context.Background()
 
 	for _, groupID := range groupIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", groupID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_topic_tags WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_regions WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", groupID)
@@ -849,6 +851,604 @@ func TestGroupRepository_FoundingThreshold(t *testing.T) {
 		_, err := repo.GetFoundingThreshold(ctx, uuid.New().String())
 		if err != ErrGroupNotFound {
 			t.Errorf("Expected ErrGroupNotFound, got %v", err)
+		}
+	})
+}
+
+// =============================================================================
+// Invite Link Tests
+// =============================================================================
+
+func TestGroupRepository_CreateInviteLink(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "invlink_create1")
+	regionID := createGroupTestRegion(t, db, "InvLink Create Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Invite Link Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("creates link with defaults", func(t *testing.T) {
+		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+		if err != nil {
+			t.Fatalf("CreateInviteLink failed: %v", err)
+		}
+
+		if link.ID == "" {
+			t.Error("Expected link ID to be set")
+		}
+		if len(link.Token) != 64 {
+			t.Errorf("Expected 64-char hex token, got %d chars", len(link.Token))
+		}
+		if link.GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, link.GroupID)
+		}
+		if link.CreatedBy == nil || *link.CreatedBy != userID {
+			t.Error("Expected created_by to match user")
+		}
+		if link.ExpiresAt != nil {
+			t.Error("Expected nil expires_at for default request")
+		}
+		if link.MaxUses != nil {
+			t.Error("Expected nil max_uses for default request")
+		}
+		if link.UseCount != 0 {
+			t.Errorf("Expected use_count 0, got %d", link.UseCount)
+		}
+	})
+
+	t.Run("creates link with expiry and max uses", func(t *testing.T) {
+		expiresInHours := 48
+		maxUses := 10
+		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{
+			ExpiresInHours: &expiresInHours,
+			MaxUses:        &maxUses,
+		})
+		if err != nil {
+			t.Fatalf("CreateInviteLink failed: %v", err)
+		}
+
+		if link.ExpiresAt == nil {
+			t.Fatal("Expected expires_at to be set")
+		}
+		if link.MaxUses == nil || *link.MaxUses != 10 {
+			t.Errorf("Expected max_uses 10, got %v", link.MaxUses)
+		}
+	})
+}
+
+func TestGroupRepository_GetInviteLinkByToken(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "invlink_get1")
+	regionID := createGroupTestRegion(t, db, "InvLink Get Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Get Link Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("Setup: CreateInviteLink failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("returns link by token", func(t *testing.T) {
+		found, err := repo.GetInviteLinkByToken(ctx, link.Token)
+		if err != nil {
+			t.Fatalf("GetInviteLinkByToken failed: %v", err)
+		}
+		if found.ID != link.ID {
+			t.Errorf("Expected ID %s, got %s", link.ID, found.ID)
+		}
+		if found.GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, found.GroupID)
+		}
+	})
+
+	t.Run("returns ErrInviteLinkNotFound for bad token", func(t *testing.T) {
+		_, err := repo.GetInviteLinkByToken(ctx, "nonexistent_token_value")
+		if err != ErrInviteLinkNotFound {
+			t.Errorf("Expected ErrInviteLinkNotFound, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_ConsumeInviteLink(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "invlink_consume1")
+	regionID := createGroupTestRegion(t, db, "InvLink Consume Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Consume Link Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("increments use count", func(t *testing.T) {
+		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+		if err != nil {
+			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
+		}
+
+		consumed, err := repo.ConsumeInviteLink(ctx, link.Token)
+		if err != nil {
+			t.Fatalf("ConsumeInviteLink failed: %v", err)
+		}
+		if consumed.UseCount != 1 {
+			t.Errorf("Expected use_count 1, got %d", consumed.UseCount)
+		}
+		if consumed.GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, consumed.GroupID)
+		}
+
+		// Consume again
+		consumed2, err := repo.ConsumeInviteLink(ctx, link.Token)
+		if err != nil {
+			t.Fatalf("Second ConsumeInviteLink failed: %v", err)
+		}
+		if consumed2.UseCount != 2 {
+			t.Errorf("Expected use_count 2, got %d", consumed2.UseCount)
+		}
+	})
+
+	t.Run("returns ErrInviteLinkExpired for expired link", func(t *testing.T) {
+		expiresInHours := 1
+		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{
+			ExpiresInHours: &expiresInHours,
+		})
+		if err != nil {
+			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
+		}
+
+		// Force expiration in the past
+		_, err = db.ExecContext(ctx, "UPDATE group_invite_links SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", link.ID)
+		if err != nil {
+			t.Fatalf("Failed to backdate link: %v", err)
+		}
+
+		_, err = repo.ConsumeInviteLink(ctx, link.Token)
+		if err != ErrInviteLinkExpired {
+			t.Errorf("Expected ErrInviteLinkExpired, got %v", err)
+		}
+	})
+
+	t.Run("returns ErrInviteLinkExhausted when max uses reached", func(t *testing.T) {
+		maxUses := 1
+		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{
+			MaxUses: &maxUses,
+		})
+		if err != nil {
+			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
+		}
+
+		// First consume should succeed
+		_, err = repo.ConsumeInviteLink(ctx, link.Token)
+		if err != nil {
+			t.Fatalf("First consume failed: %v", err)
+		}
+
+		// Second consume should fail
+		_, err = repo.ConsumeInviteLink(ctx, link.Token)
+		if err != ErrInviteLinkExhausted {
+			t.Errorf("Expected ErrInviteLinkExhausted, got %v", err)
+		}
+	})
+
+	t.Run("returns ErrInviteLinkNotFound for bad token", func(t *testing.T) {
+		_, err := repo.ConsumeInviteLink(ctx, "nonexistent_token_value")
+		if err != ErrInviteLinkNotFound {
+			t.Errorf("Expected ErrInviteLinkNotFound, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_ListInviteLinks(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "invlink_list1")
+	regionID := createGroupTestRegion(t, db, "InvLink List Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "List Links Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	// Create a second group to verify isolation
+	group2, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Other Links Group",
+		RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create group2 failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID, group2.ID}, []string{userID}, []string{regionID})
+	})
+
+	// Create links for both groups
+	_, err = repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("Setup: CreateInviteLink 1 failed: %v", err)
+	}
+	_, err = repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("Setup: CreateInviteLink 2 failed: %v", err)
+	}
+	_, err = repo.CreateInviteLink(ctx, group2.ID, userID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("Setup: CreateInviteLink for group2 failed: %v", err)
+	}
+
+	t.Run("returns links for specific group only", func(t *testing.T) {
+		links, err := repo.ListInviteLinks(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("ListInviteLinks failed: %v", err)
+		}
+		if len(links) != 2 {
+			t.Fatalf("Expected 2 links, got %d", len(links))
+		}
+		for _, link := range links {
+			if link.GroupID != group.ID {
+				t.Errorf("Expected group_id %s, got %s", group.ID, link.GroupID)
+			}
+		}
+	})
+}
+
+// =============================================================================
+// Invitation Tests
+// =============================================================================
+
+func TestGroupRepository_CreateInvitation(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	adminID := createGroupTestUser(t, db, "inv_admin1")
+	inviteeID := createGroupTestUser(t, db, "inv_invitee1")
+	regionID := createGroupTestRegion(t, db, "Invitation Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Invitation Group",
+		RegionIDs: []string{regionID},
+	}, adminID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, inviteeID}, []string{regionID})
+	})
+
+	t.Run("creates invitation", func(t *testing.T) {
+		invitation, err := repo.CreateInvitation(ctx, group.ID, inviteeID, adminID)
+		if err != nil {
+			t.Fatalf("CreateInvitation failed: %v", err)
+		}
+
+		if invitation.ID == "" {
+			t.Error("Expected invitation ID to be set")
+		}
+		if invitation.GroupID != group.ID {
+			t.Errorf("Expected group_id %s, got %s", group.ID, invitation.GroupID)
+		}
+		if invitation.UserID != inviteeID {
+			t.Errorf("Expected user_id %s, got %s", inviteeID, invitation.UserID)
+		}
+		if invitation.Status != models.InvitationStatusPending {
+			t.Errorf("Expected status 'pending', got %q", invitation.Status)
+		}
+		if invitation.ExpiresAt == nil {
+			t.Error("Expected expires_at to be set")
+		}
+		if invitation.InvitedBy == nil || *invitation.InvitedBy != adminID {
+			t.Error("Expected invited_by to match admin")
+		}
+	})
+
+	t.Run("rejects duplicate pending invitation", func(t *testing.T) {
+		_, err := repo.CreateInvitation(ctx, group.ID, inviteeID, adminID)
+		if err != ErrInvitationAlreadyPending {
+			t.Errorf("Expected ErrInvitationAlreadyPending, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_ListPendingInvitationsForUser(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	adminID := createGroupTestUser(t, db, "inv_listuser_admin")
+	inviteeID := createGroupTestUser(t, db, "inv_listuser_invitee")
+	otherUserID := createGroupTestUser(t, db, "inv_listuser_other")
+	regionID := createGroupTestRegion(t, db, "ListInv Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "ListInv Group",
+		RegionIDs: []string{regionID},
+	}, adminID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	// Create invitation for invitee
+	_, err = repo.CreateInvitation(ctx, group.ID, inviteeID, adminID)
+	if err != nil {
+		t.Fatalf("Setup: CreateInvitation failed: %v", err)
+	}
+
+	// Create invitation for other user (should not appear)
+	_, err = repo.CreateInvitation(ctx, group.ID, otherUserID, adminID)
+	if err != nil {
+		t.Fatalf("Setup: CreateInvitation for other failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, inviteeID, otherUserID}, []string{regionID})
+	})
+
+	t.Run("returns pending invitations with details", func(t *testing.T) {
+		invitations, err := repo.ListPendingInvitationsForUser(ctx, inviteeID)
+		if err != nil {
+			t.Fatalf("ListPendingInvitationsForUser failed: %v", err)
+		}
+		if len(invitations) != 1 {
+			t.Fatalf("Expected 1 invitation, got %d", len(invitations))
+		}
+
+		inv := invitations[0]
+		if inv.GroupName != "ListInv Group" {
+			t.Errorf("Expected group_name 'ListInv Group', got %q", inv.GroupName)
+		}
+		if inv.InviterName == nil || *inv.InviterName != "groupuser_inv_listuser_admin" {
+			t.Errorf("Expected inviter_name to be set, got %v", inv.InviterName)
+		}
+		if inv.UserID != inviteeID {
+			t.Errorf("Expected user_id %s, got %s", inviteeID, inv.UserID)
+		}
+	})
+
+	t.Run("excludes expired invitations", func(t *testing.T) {
+		// Backdate the invitation to expire
+		_, err := db.ExecContext(ctx,
+			"UPDATE group_invitations SET expires_at = '2020-01-01 00:00:00' WHERE user_id = ? AND group_id = ?",
+			inviteeID, group.ID)
+		if err != nil {
+			t.Fatalf("Failed to backdate invitation: %v", err)
+		}
+
+		invitations, err := repo.ListPendingInvitationsForUser(ctx, inviteeID)
+		if err != nil {
+			t.Fatalf("ListPendingInvitationsForUser failed: %v", err)
+		}
+		if len(invitations) != 0 {
+			t.Errorf("Expected 0 invitations for expired, got %d", len(invitations))
+		}
+	})
+}
+
+func TestGroupRepository_RespondToInvitation(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	adminID := createGroupTestUser(t, db, "inv_respond_admin")
+	inviteeID := createGroupTestUser(t, db, "inv_respond_invitee")
+	invitee2ID := createGroupTestUser(t, db, "inv_respond_invitee2")
+	regionID := createGroupTestRegion(t, db, "Respond Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Respond Group",
+		RegionIDs: []string{regionID},
+	}, adminID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, inviteeID, invitee2ID}, []string{regionID})
+	})
+
+	t.Run("accept invitation", func(t *testing.T) {
+		invitation, err := repo.CreateInvitation(ctx, group.ID, inviteeID, adminID)
+		if err != nil {
+			t.Fatalf("Setup: CreateInvitation failed: %v", err)
+		}
+
+		result, err := repo.RespondToInvitation(ctx, invitation.ID, inviteeID, true)
+		if err != nil {
+			t.Fatalf("RespondToInvitation (accept) failed: %v", err)
+		}
+		if result.Status != models.InvitationStatusAccepted {
+			t.Errorf("Expected status 'accepted', got %q", result.Status)
+		}
+		if result.RespondedAt == nil {
+			t.Error("Expected responded_at to be set")
+		}
+	})
+
+	t.Run("decline invitation", func(t *testing.T) {
+		invitation, err := repo.CreateInvitation(ctx, group.ID, invitee2ID, adminID)
+		if err != nil {
+			t.Fatalf("Setup: CreateInvitation failed: %v", err)
+		}
+
+		result, err := repo.RespondToInvitation(ctx, invitation.ID, invitee2ID, false)
+		if err != nil {
+			t.Fatalf("RespondToInvitation (decline) failed: %v", err)
+		}
+		if result.Status != models.InvitationStatusDeclined {
+			t.Errorf("Expected status 'declined', got %q", result.Status)
+		}
+	})
+
+	t.Run("returns ErrInvitationNotFound for wrong user", func(t *testing.T) {
+		// invitee's invitation was already accepted, create fresh one for invitee2 to test wrong user
+		// Actually invitee2's invitation was declined. Let's just use a random ID.
+		wrongUserID := uuid.New().String()
+		// Use the invitee2's invitation ID but wrong user
+		_, err := repo.RespondToInvitation(ctx, uuid.New().String(), wrongUserID, true)
+		if err != ErrInvitationNotFound {
+			t.Errorf("Expected ErrInvitationNotFound, got %v", err)
+		}
+	})
+
+	t.Run("returns ErrInvitationExpired for expired invitation", func(t *testing.T) {
+		invitee3ID := createGroupTestUser(t, db, "inv_respond_invitee3")
+		defer func() {
+			_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", invitee3ID)
+		}()
+
+		invitation, err := repo.CreateInvitation(ctx, group.ID, invitee3ID, adminID)
+		if err != nil {
+			t.Fatalf("Setup: CreateInvitation failed: %v", err)
+		}
+
+		// Backdate to expire
+		_, err = db.ExecContext(ctx, "UPDATE group_invitations SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", invitation.ID)
+		if err != nil {
+			t.Fatalf("Failed to backdate: %v", err)
+		}
+
+		_, err = repo.RespondToInvitation(ctx, invitation.ID, invitee3ID, true)
+		if err != ErrInvitationExpired {
+			t.Errorf("Expected ErrInvitationExpired, got %v", err)
+		}
+	})
+}
+
+// =============================================================================
+// Graduation Tests
+// =============================================================================
+
+func TestGroupRepository_CheckAndGraduate(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	creatorID := createGroupTestUser(t, db, "grad_creator")
+	member2ID := createGroupTestUser(t, db, "grad_member2")
+	member3ID := createGroupTestUser(t, db, "grad_member3")
+	regionID := createGroupTestRegion(t, db, "Graduation Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Graduation Group",
+		RegionIDs: []string{regionID},
+	}, creatorID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{creatorID, member2ID, member3ID}, []string{regionID})
+	})
+
+	t.Run("does not graduate below threshold", func(t *testing.T) {
+		// Group has 1 member (creator), threshold is 3
+		graduated, err := repo.CheckAndGraduate(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("CheckAndGraduate failed: %v", err)
+		}
+		if graduated {
+			t.Error("Expected not graduated with 1 member")
+		}
+
+		// Verify still provisional
+		g, err := repo.GetByID(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if g.Status != models.GroupStatusProvisional {
+			t.Errorf("Expected status provisional, got %q", g.Status)
+		}
+	})
+
+	t.Run("graduates at threshold and promotes founding members", func(t *testing.T) {
+		// Add two more founding members (non-admin initially)
+		if err := repo.AddMember(ctx, group.ID, member2ID, false, true); err != nil {
+			t.Fatalf("AddMember 2 failed: %v", err)
+		}
+		if err := repo.AddMember(ctx, group.ID, member3ID, false, true); err != nil {
+			t.Fatalf("AddMember 3 failed: %v", err)
+		}
+
+		// Now at 3 members, threshold is 3
+		graduated, err := repo.CheckAndGraduate(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("CheckAndGraduate failed: %v", err)
+		}
+		if !graduated {
+			t.Error("Expected graduated with 3 members")
+		}
+
+		// Verify group is now active
+		g, err := repo.GetByID(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if g.Status != models.GroupStatusActive {
+			t.Errorf("Expected status active, got %q", g.Status)
+		}
+		if g.GraduatedAt == nil {
+			t.Error("Expected graduated_at to be set")
+		}
+
+		// Verify founding members are now admins
+		members, err := repo.GetMembers(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("GetMembers failed: %v", err)
+		}
+		for _, m := range members {
+			if m.IsFoundingMember && !m.IsAdmin {
+				t.Errorf("Founding member %s should be admin after graduation", m.UserID)
+			}
+		}
+	})
+
+	t.Run("no-op when already active", func(t *testing.T) {
+		graduated, err := repo.CheckAndGraduate(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("CheckAndGraduate failed: %v", err)
+		}
+		if graduated {
+			t.Error("Expected not graduated for already-active group")
 		}
 	})
 }

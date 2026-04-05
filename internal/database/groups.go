@@ -2,7 +2,9 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,7 +16,16 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
 )
 
-var ErrGroupNotFound = errors.New("group not found")
+var (
+	ErrGroupNotFound          = errors.New("group not found")
+	ErrInviteLinkNotFound     = errors.New("invite link not found")
+	ErrInviteLinkExpired      = errors.New("invite link expired")
+	ErrInviteLinkExhausted    = errors.New("invite link max uses reached")
+	ErrInvitationNotFound     = errors.New("invitation not found")
+	ErrInvitationAlreadyPending = errors.New("invitation already pending")
+	ErrInvitationExpired      = errors.New("invitation expired")
+	ErrGroupAlreadyMember     = errors.New("user is already a member")
+)
 
 // GroupRepository handles group database operations
 type GroupRepository struct {
@@ -551,4 +562,404 @@ func (r *GroupRepository) GetFoundingThreshold(ctx context.Context, groupID stri
 	}
 
 	return threshold, nil
+}
+
+// generateInviteToken creates a cryptographically random 64-character hex token.
+func generateInviteToken() (string, error) {
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", fmt.Errorf("generate invite token: %w", err)
+	}
+	return hex.EncodeToString(tokenBytes), nil
+}
+
+// =============================================================================
+// Invite Links
+// =============================================================================
+
+// CreateInviteLink creates a shareable invite link for a group.
+func (r *GroupRepository) CreateInviteLink(ctx context.Context, groupID, createdBy string, req *models.CreateInviteLinkRequest) (*models.GroupInviteLink, error) {
+	token, err := generateInviteToken()
+	if err != nil {
+		return nil, err
+	}
+
+	linkID := uuid.New().String()
+	now := time.Now().UTC()
+
+	link := &models.GroupInviteLink{
+		ID:        linkID,
+		GroupID:   groupID,
+		Token:     token,
+		CreatedBy: &createdBy,
+		MaxUses:   req.MaxUses,
+		UseCount:  0,
+		CreatedAt: now,
+	}
+
+	if req.ExpiresInHours != nil {
+		expiresAt := now.Add(time.Duration(*req.ExpiresInHours) * time.Hour)
+		link.ExpiresAt = &expiresAt
+	}
+
+	query := `
+		INSERT INTO group_invite_links (id, group_id, token, created_by, expires_at, max_uses, use_count, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+	`
+	_, err = r.db.ExecContext(ctx, query,
+		link.ID, link.GroupID, link.Token, link.CreatedBy,
+		link.ExpiresAt, link.MaxUses, link.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert invite link: %w", err)
+	}
+
+	return link, nil
+}
+
+// GetInviteLinkByToken retrieves an invite link by its token.
+func (r *GroupRepository) GetInviteLinkByToken(ctx context.Context, token string) (*models.GroupInviteLink, error) {
+	query := `
+		SELECT id, group_id, token, created_by, expires_at, max_uses, use_count, created_at
+		FROM group_invite_links
+		WHERE token = ?
+	`
+
+	link := &models.GroupInviteLink{}
+	err := r.db.QueryRowContext(ctx, query, token).Scan(
+		&link.ID, &link.GroupID, &link.Token, &link.CreatedBy,
+		&link.ExpiresAt, &link.MaxUses, &link.UseCount, &link.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInviteLinkNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get invite link by token: %w", err)
+	}
+
+	return link, nil
+}
+
+// ConsumeInviteLink atomically validates and increments the use count of an invite link.
+// Returns the link (with group_id) so the caller can add the member.
+func (r *GroupRepository) ConsumeInviteLink(ctx context.Context, token string) (*models.GroupInviteLink, error) {
+	var link models.GroupInviteLink
+
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		query := `
+			SELECT id, group_id, token, created_by, expires_at, max_uses, use_count, created_at
+			FROM group_invite_links
+			WHERE token = ?
+			FOR UPDATE
+		`
+		err := tx.QueryRowContext(ctx, query, token).Scan(
+			&link.ID, &link.GroupID, &link.Token, &link.CreatedBy,
+			&link.ExpiresAt, &link.MaxUses, &link.UseCount, &link.CreatedAt,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInviteLinkNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("select invite link for update: %w", err)
+		}
+
+		// Check expiration
+		if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now().UTC()) {
+			return ErrInviteLinkExpired
+		}
+
+		// Check max uses
+		if link.MaxUses != nil && link.UseCount >= *link.MaxUses {
+			return ErrInviteLinkExhausted
+		}
+
+		// Increment use count
+		_, err = tx.ExecContext(ctx, "UPDATE group_invite_links SET use_count = use_count + 1 WHERE id = ?", link.ID)
+		if err != nil {
+			return fmt.Errorf("increment use count: %w", err)
+		}
+
+		link.UseCount++
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &link, nil
+}
+
+// ListInviteLinks returns all invite links for a group, ordered by creation time descending.
+func (r *GroupRepository) ListInviteLinks(ctx context.Context, groupID string) ([]models.GroupInviteLink, error) {
+	query := `
+		SELECT id, group_id, token, created_by, expires_at, max_uses, use_count, created_at
+		FROM group_invite_links
+		WHERE group_id = ?
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list invite links: %w", err)
+	}
+	defer rows.Close()
+
+	var links []models.GroupInviteLink
+	for rows.Next() {
+		var link models.GroupInviteLink
+		if err := rows.Scan(
+			&link.ID, &link.GroupID, &link.Token, &link.CreatedBy,
+			&link.ExpiresAt, &link.MaxUses, &link.UseCount, &link.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan invite link: %w", err)
+		}
+		links = append(links, link)
+	}
+
+	return links, rows.Err()
+}
+
+// =============================================================================
+// Invitations
+// =============================================================================
+
+// CreateInvitation creates a direct invitation from an admin to a specific user.
+func (r *GroupRepository) CreateInvitation(ctx context.Context, groupID, userID, invitedBy string) (*models.GroupInvitation, error) {
+	// Check for existing pending invitation
+	checkQuery := `
+		SELECT EXISTS(
+			SELECT 1 FROM group_invitations
+			WHERE group_id = ? AND user_id = ? AND status = 'pending'
+			AND (expires_at IS NULL OR expires_at > NOW())
+		)
+	`
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, checkQuery, groupID, userID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("check existing invitation: %w", err)
+	}
+	if exists {
+		return nil, ErrInvitationAlreadyPending
+	}
+
+	invitationID := uuid.New().String()
+	now := time.Now().UTC()
+	expiresAt := now.Add(7 * 24 * time.Hour)
+
+	invitation := &models.GroupInvitation{
+		ID:        invitationID,
+		GroupID:   groupID,
+		UserID:    userID,
+		InvitedBy: &invitedBy,
+		Status:    models.InvitationStatusPending,
+		CreatedAt: now,
+		ExpiresAt: &expiresAt,
+	}
+
+	query := `
+		INSERT INTO group_invitations (id, group_id, user_id, invited_by, status, created_at, expires_at)
+		VALUES (?, ?, ?, ?, 'pending', ?, ?)
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		invitation.ID, invitation.GroupID, invitation.UserID,
+		invitation.InvitedBy, invitation.CreatedAt, invitation.ExpiresAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert invitation: %w", err)
+	}
+
+	return invitation, nil
+}
+
+// ListPendingInvitationsForUser returns pending, non-expired invitations for a user with group and inviter details.
+func (r *GroupRepository) ListPendingInvitationsForUser(ctx context.Context, userID string) ([]models.GroupInvitationWithDetails, error) {
+	query := `
+		SELECT gi.id, gi.group_id, gi.user_id, gi.invited_by, gi.status,
+			gi.created_at, gi.expires_at, gi.responded_at,
+			g.name AS group_name,
+			u.username AS inviter_name
+		FROM group_invitations gi
+		JOIN ` + "`groups`" + ` g ON gi.group_id = g.id
+		LEFT JOIN users u ON gi.invited_by = u.id
+		WHERE gi.user_id = ? AND gi.status = 'pending'
+			AND (gi.expires_at IS NULL OR gi.expires_at > NOW())
+		ORDER BY gi.created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending invitations: %w", err)
+	}
+	defer rows.Close()
+
+	var invitations []models.GroupInvitationWithDetails
+	for rows.Next() {
+		var inv models.GroupInvitationWithDetails
+		if err := rows.Scan(
+			&inv.ID, &inv.GroupID, &inv.UserID, &inv.InvitedBy, &inv.Status,
+			&inv.CreatedAt, &inv.ExpiresAt, &inv.RespondedAt,
+			&inv.GroupName, &inv.InviterName,
+		); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		invitations = append(invitations, inv)
+	}
+
+	return invitations, rows.Err()
+}
+
+// ListPendingInvitationsForGroup returns pending invitations for a group.
+func (r *GroupRepository) ListPendingInvitationsForGroup(ctx context.Context, groupID string) ([]models.GroupInvitation, error) {
+	query := `
+		SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at
+		FROM group_invitations
+		WHERE group_id = ? AND status = 'pending'
+			AND (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending invitations for group: %w", err)
+	}
+	defer rows.Close()
+
+	var invitations []models.GroupInvitation
+	for rows.Next() {
+		var inv models.GroupInvitation
+		if err := rows.Scan(
+			&inv.ID, &inv.GroupID, &inv.UserID, &inv.InvitedBy, &inv.Status,
+			&inv.CreatedAt, &inv.ExpiresAt, &inv.RespondedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		invitations = append(invitations, inv)
+	}
+
+	return invitations, rows.Err()
+}
+
+// RespondToInvitation accepts or declines an invitation. Does NOT add the user to the group.
+func (r *GroupRepository) RespondToInvitation(ctx context.Context, invitationID, userID string, accept bool) (*models.GroupInvitation, error) {
+	query := `
+		SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at
+		FROM group_invitations
+		WHERE id = ?
+	`
+
+	var invitation models.GroupInvitation
+	err := r.db.QueryRowContext(ctx, query, invitationID).Scan(
+		&invitation.ID, &invitation.GroupID, &invitation.UserID, &invitation.InvitedBy,
+		&invitation.Status, &invitation.CreatedAt, &invitation.ExpiresAt, &invitation.RespondedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInvitationNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get invitation: %w", err)
+	}
+
+	// Verify ownership
+	if invitation.UserID != userID {
+		return nil, ErrInvitationNotFound
+	}
+
+	// Verify pending status
+	if invitation.Status != models.InvitationStatusPending {
+		return nil, ErrInvitationNotFound
+	}
+
+	// Check expiration
+	if invitation.ExpiresAt != nil && invitation.ExpiresAt.Before(time.Now().UTC()) {
+		return nil, ErrInvitationExpired
+	}
+
+	newStatus := models.InvitationStatusDeclined
+	if accept {
+		newStatus = models.InvitationStatusAccepted
+	}
+
+	now := time.Now().UTC()
+	updateQuery := `
+		UPDATE group_invitations SET status = ?, responded_at = ?
+		WHERE id = ?
+	`
+	_, err = r.db.ExecContext(ctx, updateQuery, string(newStatus), now, invitationID)
+	if err != nil {
+		return nil, fmt.Errorf("update invitation: %w", err)
+	}
+
+	invitation.Status = newStatus
+	invitation.RespondedAt = &now
+
+	return &invitation, nil
+}
+
+// =============================================================================
+// Graduation
+// =============================================================================
+
+// CheckAndGraduate checks if a provisional group has met its founding threshold
+// and graduates it to active status, promoting founding members to admin.
+// Returns true if the group was graduated, false if no action was taken.
+func (r *GroupRepository) CheckAndGraduate(ctx context.Context, groupID string) (bool, error) {
+	group, err := r.GetByID(ctx, groupID)
+	if err != nil {
+		return false, err
+	}
+
+	if group.Status != models.GroupStatusProvisional {
+		return false, nil
+	}
+
+	threshold, err := r.GetFoundingThreshold(ctx, groupID)
+	if err != nil {
+		return false, fmt.Errorf("get founding threshold: %w", err)
+	}
+
+	memberCount, err := r.GetMemberCount(ctx, groupID)
+	if err != nil {
+		return false, fmt.Errorf("get member count: %w", err)
+	}
+
+	if memberCount < threshold {
+		return false, nil
+	}
+
+	err = r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// Graduate the group
+		result, err := tx.ExecContext(ctx,
+			"UPDATE `groups` SET status = 'active', graduated_at = NOW() WHERE id = ? AND status = 'provisional'",
+			groupID,
+		)
+		if err != nil {
+			return fmt.Errorf("graduate group: %w", err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("check rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			// Another goroutine already graduated this group
+			return nil
+		}
+
+		// Promote founding members to admin
+		_, err = tx.ExecContext(ctx,
+			"UPDATE group_members SET is_admin = TRUE WHERE group_id = ? AND is_founding_member = TRUE",
+			groupID,
+		)
+		if err != nil {
+			return fmt.Errorf("promote founding members: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
