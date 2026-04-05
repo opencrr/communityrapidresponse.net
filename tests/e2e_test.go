@@ -5109,3 +5109,399 @@ func TestE2E_AccessTiers(t *testing.T) {
 		}
 	})
 }
+
+// graduateGroup creates an invite link and adds 2 new members via it so the group
+// reaches the default founding threshold of 3 and graduates to active status.
+// Returns the user IDs of the 2 new members (caller should defer cleanup).
+func (s *E2ETestSuite) graduateGroup(groupID, adminToken, regionID, prefix string) (string, string) {
+	linkBody := s.createInviteLink(groupID, nil, adminToken)
+	inviteToken := linkBody["token"].(string)
+
+	password := "testpassword123!"
+	userBID, tokenB := s.createVerifiedUserInRegion(prefix+"_gb", prefix+"_gb@test.com", password, regionID)
+	joinB := s.request("POST", "/api/v1/groups/join/"+inviteToken, nil, tokenB)
+	defer func() { _ = joinB.Body.Close() }()
+	if joinB.StatusCode != http.StatusOK {
+		s.t.Fatalf("graduateGroup: user B join failed: %d", joinB.StatusCode)
+	}
+
+	userCID, tokenC := s.createVerifiedUserInRegion(prefix+"_gc", prefix+"_gc@test.com", password, regionID)
+	joinC := s.request("POST", "/api/v1/groups/join/"+inviteToken, nil, tokenC)
+	defer func() { _ = joinC.Body.Close() }()
+	if joinC.StatusCode != http.StatusOK {
+		s.t.Fatalf("graduateGroup: user C join failed: %d", joinC.StatusCode)
+	}
+
+	return userBID, userCID
+}
+
+func TestE2E_GroupSignalGroups(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("create signal group under active group", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gsg_cr_a", "gsg_cr_a@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gsg_cr_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("SG Create Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		// Graduate the group
+		gradUserB, gradUserC := suite.graduateGroup(groupID, token, regionID, "gsg_cr")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// Verify it graduated
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+		var getBody map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&getBody)
+		if getBody["status"] != "active" {
+			t.Fatalf("Expected group to be active, got %v", getBody["status"])
+		}
+
+		// Admin creates signal group
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":  "General Chat",
+			"description": "Main chat channel",
+			"access_tier": "member",
+		}, token)
+		defer func() { _ = sgResp.Body.Close() }()
+
+		if sgResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(sgResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201, got %d: %v", sgResp.StatusCode, errBody)
+		}
+
+		var sgBody map[string]interface{}
+		_ = json.NewDecoder(sgResp.Body).Decode(&sgBody)
+
+		if sgBody["owner_group_id"] != groupID {
+			t.Errorf("Expected owner_group_id=%s, got %v", groupID, sgBody["owner_group_id"])
+		}
+		if sgBody["access_tier"] != "member" {
+			t.Errorf("Expected access_tier=member, got %v", sgBody["access_tier"])
+		}
+		if sgBody["group_name"] != "General Chat" {
+			t.Errorf("Expected group_name=General Chat, got %v", sgBody["group_name"])
+		}
+		if sgBody["id"] == nil || sgBody["id"] == "" {
+			t.Error("Expected non-empty signal group ID")
+		}
+	})
+
+	t.Run("cannot create signal group in provisional group", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gsg_prov", "gsg_prov@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gsg_prov@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, body := suite.createGroup("SG Provisional Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		if body["status"] != "provisional" {
+			t.Fatalf("Expected provisional group, got %v", body["status"])
+		}
+
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":  "Should Fail",
+			"description": "Nope",
+			"access_tier": "member",
+		}, token)
+		defer func() { _ = sgResp.Body.Close() }()
+
+		if sgResp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for provisional group, got %d", sgResp.StatusCode)
+		}
+
+		var errBody map[string]interface{}
+		_ = json.NewDecoder(sgResp.Body).Decode(&errBody)
+		if errBody["error"] != "group_provisional" {
+			t.Errorf("Expected error=group_provisional, got %v", errBody["error"])
+		}
+	})
+
+	t.Run("non-admin cannot create signal group", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		adminID := suite.registerOrGetUserID("gsg_na_a", "gsg_na_a@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gsg_na_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("SG Non-Admin Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		// Graduate the group
+		gradUserB, gradUserC := suite.graduateGroup(groupID, adminToken, regionID, "gsg_na")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// Add a non-admin member
+		memberID := suite.registerOrGetUserID("gsg_na_m", "gsg_na_m@test.com", password)
+		defer suite.cleanup(memberID)
+		suite.disableMFA(memberID)
+		suite.makeUserVouchVerified(memberID)
+		memberToken := suite.reloginUser("gsg_na_m@test.com", password)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			memberID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, memberID, false, false)
+
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":  "Should Fail",
+			"description": "Nope",
+			"access_tier": "member",
+		}, memberToken)
+		defer func() { _ = sgResp.Body.Close() }()
+
+		if sgResp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", sgResp.StatusCode)
+		}
+	})
+
+	t.Run("list signal groups filtered by access tier", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Admin creates group and graduates it
+		adminID := suite.registerOrGetUserID("gsg_ls_a", "gsg_ls_a@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gsg_ls_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("SG List Filter Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		gradUserB, gradUserC := suite.graduateGroup(groupID, adminToken, regionID, "gsg_ls")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// Create 3 signal groups with different tiers
+		for _, sg := range []struct {
+			name string
+			tier string
+		}{
+			{"Open Chat", "open"},
+			{"Members Only", "member"},
+			{"Admin Only", "admin_only"},
+		} {
+			resp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+				"group_name":  sg.name,
+				"access_tier": sg.tier,
+			}, adminToken)
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusCreated {
+				var errBody map[string]interface{}
+				_ = json.NewDecoder(resp.Body).Decode(&errBody)
+				t.Fatalf("Failed to create signal group %q: %d %v", sg.name, resp.StatusCode, errBody)
+			}
+		}
+
+		// As admin: should see all 3
+		adminListResp := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil, adminToken)
+		defer func() { _ = adminListResp.Body.Close() }()
+
+		if adminListResp.StatusCode != http.StatusOK {
+			t.Fatalf("Admin list: expected 200, got %d", adminListResp.StatusCode)
+		}
+		var adminListBody map[string]interface{}
+		_ = json.NewDecoder(adminListResp.Body).Decode(&adminListBody)
+		adminGroups := adminListBody["signal_groups"].([]interface{})
+		if len(adminGroups) != 3 {
+			t.Errorf("Admin should see 3 signal groups, got %d", len(adminGroups))
+		}
+
+		// Create a regular member (non-admin, in the group)
+		memberID := suite.registerOrGetUserID("gsg_ls_m", "gsg_ls_m@test.com", password)
+		defer suite.cleanup(memberID)
+		suite.disableMFA(memberID)
+		suite.makeUserVouchVerified(memberID)
+		memberToken := suite.reloginUser("gsg_ls_m@test.com", password)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			memberID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, memberID, false, false)
+
+		// As regular member: should see open + member, NOT admin_only
+		memberListResp := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil, memberToken)
+		defer func() { _ = memberListResp.Body.Close() }()
+
+		if memberListResp.StatusCode != http.StatusOK {
+			t.Fatalf("Member list: expected 200, got %d", memberListResp.StatusCode)
+		}
+		var memberListBody map[string]interface{}
+		_ = json.NewDecoder(memberListResp.Body).Decode(&memberListBody)
+		memberGroups := memberListBody["signal_groups"].([]interface{})
+		if len(memberGroups) != 2 {
+			t.Errorf("Regular member should see 2 signal groups (open + member), got %d", len(memberGroups))
+		}
+		// Verify admin_only is not in the list
+		for _, sg := range memberGroups {
+			sgMap := sg.(map[string]interface{})
+			if sgMap["access_tier"] == "admin_only" {
+				t.Error("Regular member should NOT see admin_only signal group")
+			}
+		}
+
+		// As non-member (but authenticated and in the region): should see only open
+		nonMemberID := suite.registerOrGetUserID("gsg_ls_nm", "gsg_ls_nm@test.com", password)
+		defer suite.cleanup(nonMemberID)
+		suite.disableMFA(nonMemberID)
+		suite.makeUserVouchVerified(nonMemberID)
+		nonMemberToken := suite.reloginUser("gsg_ls_nm@test.com", password)
+
+		// Add to region but NOT to the group
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			nonMemberID, regionID)
+
+		nonMemberListResp := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil, nonMemberToken)
+		defer func() { _ = nonMemberListResp.Body.Close() }()
+
+		if nonMemberListResp.StatusCode != http.StatusOK {
+			t.Fatalf("Non-member list: expected 200, got %d", nonMemberListResp.StatusCode)
+		}
+		var nonMemberListBody map[string]interface{}
+		_ = json.NewDecoder(nonMemberListResp.Body).Decode(&nonMemberListBody)
+		nonMemberGroups := nonMemberListBody["signal_groups"].([]interface{})
+
+		// Non-member but verified resident: should see open + resident tiers.
+		// We only created "open" and "member" and "admin_only"; so non-member sees only "open".
+		if len(nonMemberGroups) != 1 {
+			t.Errorf("Non-member should see 1 signal group (open only), got %d", len(nonMemberGroups))
+		}
+		if len(nonMemberGroups) > 0 {
+			sgMap := nonMemberGroups[0].(map[string]interface{})
+			if sgMap["access_tier"] != "open" {
+				t.Errorf("Non-member should only see open tier, got %v", sgMap["access_tier"])
+			}
+		}
+	})
+
+	t.Run("signal group limit enforcement", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gsg_lim", "gsg_lim@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gsg_lim@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("SG Limit Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		gradUserB, gradUserC := suite.graduateGroup(groupID, token, regionID, "gsg_lim")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// Create 5 signal groups (max)
+		for i := 0; i < 5; i++ {
+			resp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+				"group_name":  fmt.Sprintf("Chat %d", i+1),
+				"access_tier": "member",
+			}, token)
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusCreated {
+				var errBody map[string]interface{}
+				_ = json.NewDecoder(resp.Body).Decode(&errBody)
+				t.Fatalf("Failed to create signal group %d: %d %v", i+1, resp.StatusCode, errBody)
+			}
+		}
+
+		// 6th should fail
+		sixthResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":  "Chat 6",
+			"access_tier": "member",
+		}, token)
+		defer func() { _ = sixthResp.Body.Close() }()
+
+		if sixthResp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for 6th signal group, got %d", sixthResp.StatusCode)
+		}
+
+		var errBody map[string]interface{}
+		_ = json.NewDecoder(sixthResp.Body).Decode(&errBody)
+		if errBody["error"] != "limit_reached" {
+			t.Errorf("Expected error=limit_reached, got %v", errBody["error"])
+		}
+	})
+
+	t.Run("group detail includes signal groups", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gsg_det", "gsg_det@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gsg_det@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("SG Detail Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		gradUserB, gradUserC := suite.graduateGroup(groupID, token, regionID, "gsg_det")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// Create a signal group
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":  "Detail Test Chat",
+			"access_tier": "open",
+		}, token)
+		defer func() { _ = sgResp.Body.Close() }()
+		if sgResp.StatusCode != http.StatusCreated {
+			t.Fatalf("Failed to create signal group: %d", sgResp.StatusCode)
+		}
+
+		// GET group detail should include signal_groups
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, token)
+		defer func() { _ = getResp.Body.Close() }()
+
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", getResp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&body)
+
+		signalGroups, ok := body["signal_groups"].([]interface{})
+		if !ok {
+			t.Fatal("Expected signal_groups array in group detail response")
+		}
+		if len(signalGroups) != 1 {
+			t.Errorf("Expected 1 signal group in detail, got %d", len(signalGroups))
+		}
+
+		if len(signalGroups) > 0 {
+			sgMap := signalGroups[0].(map[string]interface{})
+			if sgMap["name"] != "Detail Test Chat" {
+				t.Errorf("Expected signal group name=Detail Test Chat, got %v", sgMap["name"])
+			}
+			if sgMap["access_tier"] != "open" {
+				t.Errorf("Expected access_tier=open, got %v", sgMap["access_tier"])
+			}
+		}
+	})
+}
