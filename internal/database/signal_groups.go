@@ -30,11 +30,14 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 	group.ID = uuid.New().String()
 	group.CreatedAt = time.Now().UTC()
 	group.IsActive = true
+	if group.AccessTier == "" {
+		group.AccessTier = models.AccessTierMember
+	}
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, group_name, description, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, group_name, description, access_tier, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -44,6 +47,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 		group.DistrictID,
 		group.GroupName,
 		group.Description,
+		group.AccessTier,
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,
@@ -357,11 +361,14 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 	group.ID = uuid.New().String()
 	group.CreatedAt = time.Now().UTC()
 	group.IsActive = true
+	if group.AccessTier == "" {
+		group.AccessTier = models.AccessTierMember
+	}
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, group_name, description, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, group_name, description, access_tier, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := tx.ExecContext(ctx, query,
@@ -371,6 +378,7 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 		group.DistrictID,
 		group.GroupName,
 		group.Description,
+		group.AccessTier,
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,

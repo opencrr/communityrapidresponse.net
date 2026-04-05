@@ -286,8 +286,8 @@ func TestSecretUpdateHandler_CreateProposal_Region_NotAdmin(t *testing.T) {
 	regionID := "region-1"
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// verifyRegionAdmin: IsUserAdmin returns false
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -328,8 +328,8 @@ func TestSecretUpdateHandler_CreateProposal_InsufficientAdmins(t *testing.T) {
 	// resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// IsUserAdmin returns true
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -380,8 +380,8 @@ func TestSecretUpdateHandler_CreateProposal_PendingProposalExists(t *testing.T) 
 	// resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// IsUserAdmin
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -453,8 +453,8 @@ func TestSecretUpdateHandler_CreateProposal_Region_Success(t *testing.T) {
 	// resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// IsUserAdmin
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -574,8 +574,8 @@ func TestSecretUpdateHandler_CreateProposal_Superuser_Success(t *testing.T) {
 	// resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// Superuser skips IsUserAdmin — goes directly to GetAdminCount
 	suite.mock.ExpectQuery("COUNT").
@@ -699,8 +699,8 @@ func TestSecretUpdateHandler_CreateProposal_NoAuditRepo(t *testing.T) {
 	// resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// Superuser skips admin check
 	suite.mock.ExpectQuery("COUNT").
@@ -1272,8 +1272,8 @@ func TestSecretUpdateHandler_Finalize_Success(t *testing.T) {
 	// 2. resolveGroupScope: GetByID on signal_groups
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, &regionID, nil, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// IsUserAdmin
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -1933,8 +1933,8 @@ func TestSecretUpdateHandler_CreateProposal_SchoolScope_NotAdmin(t *testing.T) {
 	// resolveGroupScope — school-scoped group
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, nil, &schoolID, nil, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, nil, &schoolID, nil, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// verifySchoolAdmin: GetUserSchool — not a member
 	suite.mock.ExpectQuery("SELECT.*FROM user_schools.*WHERE user_id").
@@ -1975,8 +1975,8 @@ func TestSecretUpdateHandler_CreateProposal_DistrictScope_NotAdmin(t *testing.T)
 	// resolveGroupScope — district-scoped group
 	suite.mock.ExpectQuery("SELECT id, region_id, school_id, district_id, group_name.*FROM signal_groups").
 		WithArgs(groupID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "created_by", "created_at", "is_active"}).
-			AddRow(groupID, nil, nil, &districtID, "Test Group", nil, "user-1", createdAt, true))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "region_id", "school_id", "district_id", "group_name", "description", "access_tier", "created_by", "created_at", "is_active"}).
+			AddRow(groupID, nil, nil, &districtID, "Test Group", nil, "open", "user-1", createdAt, true))
 
 	// verifyDistrictAdmin: ListByDistrict returns one school
 	suite.mock.ExpectQuery("SELECT.*FROM schools.*WHERE.*district_id").
