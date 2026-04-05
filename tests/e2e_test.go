@@ -4831,3 +4831,281 @@ func TestE2E_GroupFormation(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_AccessTiers(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("trust vouch flow", func(t *testing.T) {
+		ctx := context.Background()
+		password := "testpassword123!"
+
+		// User A creates group (admin)
+		userAID := suite.registerOrGetUserID("at_tv_a", "at_tv_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("at_tv_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Trust Vouch Flow Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B joins as member
+		userBID, _ := suite.createVerifiedUserInRegion("at_tv_b", "at_tv_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+
+		// User A (admin) vouches for user B
+		vouchResp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userBID,
+		}, tokenA)
+		defer func() { _ = vouchResp.Body.Close() }()
+
+		if vouchResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(vouchResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for vouch, got %d: %v", vouchResp.StatusCode, errBody)
+		}
+
+		// Check vouch status: vouch_count=1, trust_level=member
+		statusResp := suite.request("GET", "/api/v1/groups/"+groupID+"/trust-vouches/"+userBID, nil, tokenA)
+		defer func() { _ = statusResp.Body.Close() }()
+
+		if statusResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for vouch status, got %d", statusResp.StatusCode)
+		}
+
+		var statusBody map[string]interface{}
+		_ = json.NewDecoder(statusResp.Body).Decode(&statusBody)
+
+		vouchCount := int(statusBody["vouch_count"].(float64))
+		if vouchCount != 1 {
+			t.Errorf("Expected vouch_count=1, got %d", vouchCount)
+		}
+		trustLevel := statusBody["trust_level"].(string)
+		if trustLevel != "member" {
+			t.Errorf("Expected trust_level=member, got %q", trustLevel)
+		}
+
+		// User C joins, make C admin
+		userCID, _ := suite.createVerifiedUserInRegion("at_tv_c", "at_tv_c@test.com", password, regionID)
+		defer suite.cleanup(userCID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userCID, true, false)
+		tokenC := suite.reloginUser("at_tv_c@test.com", password)
+
+		// User C vouches for user B (now 2 vouches = default threshold)
+		vouch2Resp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userBID,
+		}, tokenC)
+		defer func() { _ = vouch2Resp.Body.Close() }()
+
+		if vouch2Resp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(vouch2Resp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for second vouch, got %d: %v", vouch2Resp.StatusCode, errBody)
+		}
+
+		// Check vouch status: vouch_count=2, trust_level=trusted
+		status2Resp := suite.request("GET", "/api/v1/groups/"+groupID+"/trust-vouches/"+userBID, nil, tokenA)
+		defer func() { _ = status2Resp.Body.Close() }()
+
+		var status2Body map[string]interface{}
+		_ = json.NewDecoder(status2Resp.Body).Decode(&status2Body)
+
+		vouchCount2 := int(status2Body["vouch_count"].(float64))
+		if vouchCount2 != 2 {
+			t.Errorf("Expected vouch_count=2, got %d", vouchCount2)
+		}
+		trustLevel2 := status2Body["trust_level"].(string)
+		if trustLevel2 != "trusted" {
+			t.Errorf("Expected trust_level=trusted, got %q", trustLevel2)
+		}
+	})
+
+	t.Run("self vouch rejected", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userAID := suite.registerOrGetUserID("at_sv_a", "at_sv_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("at_sv_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Self Vouch Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User A tries to vouch for self
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userAID,
+		}, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for self-vouch, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("non-admin non-trusted cannot vouch", func(t *testing.T) {
+		ctx := context.Background()
+		password := "testpassword123!"
+
+		// Admin creates group
+		adminID := suite.registerOrGetUserID("at_na_adm", "at_na_adm@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		tokenAdmin := suite.reloginUser("at_na_adm@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("No Vouch Group", []string{regionID}, tokenAdmin)
+		defer suite.cleanupGroups(groupID)
+
+		// User B: regular member
+		userBID, _ := suite.createVerifiedUserInRegion("at_na_b", "at_na_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+		tokenB := suite.reloginUser("at_na_b@test.com", password)
+
+		// User C: another regular member (target)
+		userCID, _ := suite.createVerifiedUserInRegion("at_na_c", "at_na_c@test.com", password, regionID)
+		defer suite.cleanup(userCID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userCID, false, false)
+
+		// User B (regular member) tries to vouch for user C
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userCID,
+		}, tokenB)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin vouch, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("vouch status requires membership", func(t *testing.T) {
+		ctx := context.Background()
+		password := "testpassword123!"
+
+		// Admin creates group
+		adminID := suite.registerOrGetUserID("at_vs_adm", "at_vs_adm@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		tokenAdmin := suite.reloginUser("at_vs_adm@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Vouch Status Membership Group", []string{regionID}, tokenAdmin)
+		defer suite.cleanupGroups(groupID)
+
+		// User B: member (target for vouch status check)
+		userBID, _ := suite.createVerifiedUserInRegion("at_vs_b", "at_vs_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+
+		// User C: NOT a member of the group
+		userCID := suite.registerOrGetUserID("at_vs_c", "at_vs_c@test.com", password)
+		defer suite.cleanup(userCID)
+		suite.disableMFA(userCID)
+		suite.makeUserVouchVerified(userCID)
+		tokenC := suite.reloginUser("at_vs_c@test.com", password)
+
+		// User C (not a member) tries to get vouch status
+		resp := suite.request("GET", "/api/v1/groups/"+groupID+"/trust-vouches/"+userBID, nil, tokenC)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-member vouch status, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("trusted member can vouch", func(t *testing.T) {
+		ctx := context.Background()
+		password := "testpassword123!"
+
+		// User A creates group (admin)
+		userAID := suite.registerOrGetUserID("at_tm_a", "at_tm_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("at_tm_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Trusted Voucher Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B joins as member
+		userBID, _ := suite.createVerifiedUserInRegion("at_tm_b", "at_tm_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+
+		// Promote B to trusted via 2 admin vouches: A vouches, then add another admin D who also vouches
+		// First vouch from A
+		v1Resp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userBID,
+		}, tokenA)
+		defer func() { _ = v1Resp.Body.Close() }()
+		if v1Resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for first vouch, got %d", v1Resp.StatusCode)
+		}
+
+		// Add admin D
+		userDID, _ := suite.createVerifiedUserInRegion("at_tm_d", "at_tm_d@test.com", password, regionID)
+		defer suite.cleanup(userDID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userDID, true, false)
+		tokenD := suite.reloginUser("at_tm_d@test.com", password)
+
+		// Second vouch from D (promotes B to trusted at threshold=2)
+		v2Resp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userBID,
+		}, tokenD)
+		defer func() { _ = v2Resp.Body.Close() }()
+		if v2Resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for second vouch, got %d", v2Resp.StatusCode)
+		}
+
+		// Verify B is now trusted
+		statusResp := suite.request("GET", "/api/v1/groups/"+groupID+"/trust-vouches/"+userBID, nil, tokenA)
+		defer func() { _ = statusResp.Body.Close() }()
+		var statusBody map[string]interface{}
+		_ = json.NewDecoder(statusResp.Body).Decode(&statusBody)
+		if statusBody["trust_level"].(string) != "trusted" {
+			t.Fatalf("Expected B to be trusted, got %q", statusBody["trust_level"])
+		}
+
+		// User C joins as member
+		userCID, _ := suite.createVerifiedUserInRegion("at_tm_c", "at_tm_c@test.com", password, regionID)
+		defer suite.cleanup(userCID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userCID, false, false)
+
+		// User B (now trusted) vouches for user C
+		tokenB := suite.reloginUser("at_tm_b@test.com", password)
+		vouchCResp := suite.request("POST", "/api/v1/groups/"+groupID+"/trust-vouches", map[string]string{
+			"user_id": userCID,
+		}, tokenB)
+		defer func() { _ = vouchCResp.Body.Close() }()
+
+		if vouchCResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(vouchCResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for trusted member vouch, got %d: %v", vouchCResp.StatusCode, errBody)
+		}
+
+		var vouchCBody map[string]interface{}
+		_ = json.NewDecoder(vouchCResp.Body).Decode(&vouchCBody)
+		vouchCount := int(vouchCBody["vouch_count"].(float64))
+		if vouchCount != 1 {
+			t.Errorf("Expected vouch_count=1 for user C, got %d", vouchCount)
+		}
+	})
+}
