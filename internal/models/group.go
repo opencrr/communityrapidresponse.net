@@ -77,3 +77,60 @@ type UpdateGroupRequest struct {
 	Visibility  *string   `json:"visibility" validate:"omitempty,oneof=listed unlisted"`
 	TopicTags   *[]string `json:"topic_tags" validate:"omitempty,max=10,dive,max=100"`
 }
+
+// Invitation status
+type InvitationStatus string
+
+const (
+	InvitationStatusPending  InvitationStatus = "pending"
+	InvitationStatusAccepted InvitationStatus = "accepted"
+	InvitationStatusDeclined InvitationStatus = "declined"
+	InvitationStatusExpired  InvitationStatus = "expired"
+)
+
+// GroupInviteLink is a shareable link for joining a group.
+type GroupInviteLink struct {
+	ID        string     `json:"id" db:"id"`
+	GroupID   string     `json:"group_id" db:"group_id"`
+	Token     string     `json:"token" db:"token"`
+	CreatedBy *string    `json:"created_by" db:"created_by"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+	MaxUses   *int       `json:"max_uses,omitempty" db:"max_uses"`
+	UseCount  int        `json:"use_count" db:"use_count"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
+}
+
+// CreateInviteLinkRequest is the request body for creating an invite link.
+type CreateInviteLinkRequest struct {
+	ExpiresInHours *int `json:"expires_in_hours" validate:"omitempty,min=1,max=720"`
+	MaxUses        *int `json:"max_uses" validate:"omitempty,min=1,max=1000"`
+}
+
+// GroupInvitation is a direct invitation from an admin to a specific user.
+type GroupInvitation struct {
+	ID          string           `json:"id" db:"id"`
+	GroupID     string           `json:"group_id" db:"group_id"`
+	UserID      string           `json:"user_id" db:"user_id"`
+	InvitedBy   *string          `json:"invited_by" db:"invited_by"`
+	Status      InvitationStatus `json:"status" db:"status"`
+	CreatedAt   time.Time        `json:"created_at" db:"created_at"`
+	ExpiresAt   *time.Time       `json:"expires_at,omitempty" db:"expires_at"`
+	RespondedAt *time.Time       `json:"responded_at,omitempty" db:"responded_at"`
+}
+
+// GroupInvitationWithDetails includes group and user info for display.
+type GroupInvitationWithDetails struct {
+	GroupInvitation
+	GroupName   string  `json:"group_name" db:"group_name"`
+	InviterName *string `json:"inviter_name,omitempty" db:"inviter_name"`
+}
+
+// CreateGroupInvitationRequest is the request body for inviting a user to a group.
+type CreateGroupInvitationRequest struct {
+	UserID string `json:"user_id" validate:"required"`
+}
+
+// RespondToGroupInvitationRequest is the request body for accepting/declining a group invitation.
+type RespondToGroupInvitationRequest struct {
+	Accept bool `json:"accept"`
+}
