@@ -18,6 +18,7 @@ type SignalGroup struct {
 	CreatedBy           *string    `json:"created_by,omitempty" db:"created_by"`
 	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
 	IsActive            bool       `json:"is_active" db:"is_active"`
+	AccessTier          AccessTier `json:"access_tier" db:"access_tier"`
 	HasPendingDeletion  bool       `json:"-" db:"has_pending_deletion"`
 }
 
@@ -34,6 +35,7 @@ type SignalGroupPublic struct {
 	Description         *string   `json:"description,omitempty"`
 	MemberCountEstimate string    `json:"member_count_estimate,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+	AccessTier          string    `json:"access_tier"`
 	HasPendingDeletion  bool      `json:"has_pending_deletion"`
 }
 

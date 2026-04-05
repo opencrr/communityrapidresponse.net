@@ -25,7 +25,8 @@ type Group struct {
 	Description       *string         `json:"description" db:"description"`
 	Status            GroupStatus     `json:"status" db:"status"`
 	Visibility        GroupVisibility `json:"visibility" db:"visibility"`
-	FoundingThreshold *int            `json:"founding_threshold,omitempty" db:"founding_threshold"`
+	FoundingThreshold     *int            `json:"founding_threshold,omitempty" db:"founding_threshold"`
+	TrustedVouchThreshold int             `json:"trusted_vouch_threshold" db:"trusted_vouch_threshold"`
 	CreatedBy         *string         `json:"created_by" db:"created_by"`
 	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
@@ -76,6 +77,31 @@ type UpdateGroupRequest struct {
 	Description *string   `json:"description" validate:"omitempty,max=2000"`
 	Visibility  *string   `json:"visibility" validate:"omitempty,oneof=listed unlisted"`
 	TopicTags   *[]string `json:"topic_tags" validate:"omitempty,max=10,dive,max=100"`
+}
+
+// AccessTier defines the access level required to see a signal chat's invite link.
+type AccessTier string
+
+const (
+	AccessTierOpen      AccessTier = "open"
+	AccessTierResident  AccessTier = "resident"
+	AccessTierMember    AccessTier = "member"
+	AccessTierTrusted   AccessTier = "trusted"
+	AccessTierAdminOnly AccessTier = "admin_only"
+)
+
+// GroupTrustVouch represents a trust vouch from one member to another within a group.
+type GroupTrustVouch struct {
+	ID            string    `json:"id" db:"id"`
+	GroupID       string    `json:"group_id" db:"group_id"`
+	VoucherUserID string    `json:"voucher_user_id" db:"voucher_user_id"`
+	VouchedUserID string    `json:"vouched_user_id" db:"vouched_user_id"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+}
+
+// CreateTrustVouchRequest is the request body for vouching for a group member.
+type CreateTrustVouchRequest struct {
+	UserID string `json:"user_id" validate:"required"`
 }
 
 // Invitation status
