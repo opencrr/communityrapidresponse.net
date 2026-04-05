@@ -12,24 +12,27 @@ import (
 
 // GroupHandler handles group endpoints.
 type GroupHandler struct {
-	groupRepo  *database.GroupRepository
-	regionRepo *database.RegionRepository
-	userRepo   *database.UserRepository
-	auditRepo  *database.AuditRepository
+	groupRepo       *database.GroupRepository
+	signalGroupRepo *database.SignalGroupRepository
+	regionRepo      *database.RegionRepository
+	userRepo        *database.UserRepository
+	auditRepo       *database.AuditRepository
 }
 
 // NewGroupHandler creates a new group handler.
 func NewGroupHandler(
 	groupRepo *database.GroupRepository,
+	signalGroupRepo *database.SignalGroupRepository,
 	regionRepo *database.RegionRepository,
 	userRepo *database.UserRepository,
 	auditRepo *database.AuditRepository,
 ) *GroupHandler {
 	return &GroupHandler{
-		groupRepo:  groupRepo,
-		regionRepo: regionRepo,
-		userRepo:   userRepo,
-		auditRepo:  auditRepo,
+		groupRepo:       groupRepo,
+		signalGroupRepo: signalGroupRepo,
+		regionRepo:      regionRepo,
+		userRepo:        userRepo,
+		auditRepo:       auditRepo,
 	}
 }
 
@@ -878,5 +881,189 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Invitation declined",
+	})
+}
+
+const maxSignalGroupsPerOwnerGroup = 5
+
+// CreateSignalGroup handles POST /api/v1/groups/:id/signal-groups
+func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check group exists and is active
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", "create_signal_group")
+		return
+	}
+	if group.Status == models.GroupStatusProvisional {
+		writeError(w, http.StatusBadRequest, "group_provisional", "Cannot create signal groups for a provisional group")
+		return
+	}
+
+	// Check user is admin of this group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_signal_group")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	// Check signal group limit
+	count, err := h.signalGroupRepo.CountByOwnerGroup(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to count signal groups", "group", "create_signal_group")
+		return
+	}
+	if count >= maxSignalGroupsPerOwnerGroup {
+		writeError(w, http.StatusBadRequest, "limit_reached", "Maximum number of signal groups reached for this group")
+		return
+	}
+
+	var req models.CreateGroupSignalGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate group_name
+	if req.GroupName == "" || len(req.GroupName) > 255 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Group name must be between 1 and 255 characters")
+		return
+	}
+
+	// Validate access_tier
+	accessTier := models.AccessTier(req.AccessTier)
+	switch accessTier {
+	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
+		return
+	}
+
+	var description *string
+	if req.Description != "" {
+		description = &req.Description
+	}
+
+	signalGroup := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    req.GroupName,
+		Description:  description,
+		AccessTier:   accessTier,
+		CreatedBy:    &claims.UserID,
+	}
+
+	if err := h.signalGroupRepo.CreateForOwnerGroup(r.Context(), signalGroup); err != nil {
+		writeServerError(w, r, err, "Failed to create signal group", "group", "create_signal_group")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupSignalGroupCreated, &resourceType, &groupID, map[string]interface{}{
+			"signal_group_id":   signalGroup.ID,
+			"signal_group_name": signalGroup.GroupName,
+			"access_tier":       string(signalGroup.AccessTier),
+		}), "group_signal_group_created")
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":           signalGroup.ID,
+		"group_name":   signalGroup.GroupName,
+		"access_tier":  string(signalGroup.AccessTier),
+		"owner_group_id": groupID,
+		"created_at":   signalGroup.CreatedAt,
+	})
+}
+
+// ListSignalGroups handles GET /api/v1/groups/:id/signal-groups
+func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Get all signal groups for this owner group
+	signalGroups, err := h.signalGroupRepo.ListByOwnerGroup(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list signal groups", "group", "list_signal_groups")
+		return
+	}
+
+	// Get user's membership info for access tier filtering
+	memberInfo, err := h.groupRepo.GetMember(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get membership info", "group", "list_signal_groups")
+		return
+	}
+
+	// Determine if user is a verified resident in any of the group's regions
+	isVerifiedResident := false
+	regions, err := h.groupRepo.GetRegions(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group regions", "group", "list_signal_groups")
+		return
+	}
+	for _, region := range regions {
+		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		if regionErr != nil {
+			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_signal_groups")
+			return
+		}
+		if inRegion {
+			isVerifiedResident = true
+			break
+		}
+	}
+
+	// Filter signal groups by access tier
+	var filteredGroups []models.SignalGroupPublic
+	for _, sg := range signalGroups {
+		if claims.IsSuperuser || database.UserMeetsAccessTier(sg.AccessTier, true, isVerifiedResident, memberInfo) {
+			filteredGroups = append(filteredGroups, models.SignalGroupPublic{
+				ID:                 sg.ID,
+				OwnerGroupID:      sg.OwnerGroupID,
+				Name:               sg.GroupName,
+				Description:        sg.Description,
+				AccessTier:         string(sg.AccessTier),
+				CreatedAt:          sg.CreatedAt,
+				HasPendingDeletion: sg.HasPendingDeletion,
+			})
+		}
+	}
+
+	if filteredGroups == nil {
+		filteredGroups = []models.SignalGroupPublic{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"signal_groups": filteredGroups,
 	})
 }

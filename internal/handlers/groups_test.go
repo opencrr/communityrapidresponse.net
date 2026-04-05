@@ -17,14 +17,15 @@ import (
 )
 
 type GroupTestSuite struct {
-	t          *testing.T
-	db         *database.DB
-	groupRepo  *database.GroupRepository
-	regionRepo *database.RegionRepository
-	userRepo   *database.UserRepository
-	auditRepo  *database.AuditRepository
-	handler    *GroupHandler
-	jwtAuth    *middleware.JWTAuth
+	t               *testing.T
+	db              *database.DB
+	groupRepo       *database.GroupRepository
+	signalGroupRepo *database.SignalGroupRepository
+	regionRepo      *database.RegionRepository
+	userRepo        *database.UserRepository
+	auditRepo       *database.AuditRepository
+	handler         *GroupHandler
+	jwtAuth         *middleware.JWTAuth
 }
 
 func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
@@ -65,10 +66,11 @@ func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
 	}
 
 	groupRepo := database.NewGroupRepository(db)
+	signalGroupRepo := database.NewSignalGroupRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
-	handler := NewGroupHandler(groupRepo, regionRepo, userRepo, auditRepo)
+	handler := NewGroupHandler(groupRepo, signalGroupRepo, regionRepo, userRepo, auditRepo)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
@@ -78,14 +80,15 @@ func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
 	jwtAuth := middleware.NewJWTAuth(jwtConfig)
 
 	suite := &GroupTestSuite{
-		t:          t,
-		db:         db,
-		groupRepo:  groupRepo,
-		regionRepo: regionRepo,
-		userRepo:   userRepo,
-		auditRepo:  auditRepo,
-		handler:    handler,
-		jwtAuth:    jwtAuth,
+		t:               t,
+		db:              db,
+		groupRepo:       groupRepo,
+		signalGroupRepo: signalGroupRepo,
+		regionRepo:      regionRepo,
+		userRepo:        userRepo,
+		auditRepo:       auditRepo,
+		handler:         handler,
+		jwtAuth:         jwtAuth,
 	}
 
 	t.Cleanup(func() {
@@ -141,6 +144,7 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invitations WHERE group_id = ?", id)
@@ -1840,5 +1844,383 @@ func TestGroupHandler_GetTrustVouchStatus_NonMember(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- Signal Group Tests ---
+
+// createActiveGroupForSignalTests creates a group, makes it active, and adds the user as admin.
+func (s *GroupTestSuite) createActiveGroupForSignalTests(user *models.User, region *models.GeographicRegion) string {
+	ctx := context.Background()
+
+	req := &models.CreateGroupRequest{
+		Name:       "SG Test Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := s.groupRepo.Create(ctx, req, user.ID)
+	if err != nil {
+		s.t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Force-graduate the group to active status
+	_, err = s.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', graduated_at = NOW() WHERE id = ?", group.ID)
+	if err != nil {
+		s.t.Fatalf("Failed to activate group: %v", err)
+	}
+
+	return group.ID
+}
+
+func TestGroupHandler_CreateSignalGroup_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_create_ok", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Test Signal Chat",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	if result["id"] == nil || result["id"] == "" {
+		t.Error("Expected signal group ID in response")
+	}
+	if result["group_name"] != "Test Signal Chat" {
+		t.Errorf("Expected group_name 'Test Signal Chat', got '%v'", result["group_name"])
+	}
+	if result["access_tier"] != "member" {
+		t.Errorf("Expected access_tier 'member', got '%v'", result["access_tier"])
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_ProvisionalGroup(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_provisional", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	// Create a group but do NOT graduate it (stays provisional)
+	req := &models.CreateGroupRequest{
+		Name:       "Provisional SG Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, req, user.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Should Fail",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	httpReq := httptest.NewRequest("POST", "/api/v1/groups/"+group.ID+"/signal-groups", bytes.NewReader(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	q := httpReq.URL.Query()
+	q.Set("id", group.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, httpReq)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for provisional group, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_NonAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	nonAdmin := suite.createTestUser("grpsg_nonadmin", models.TierVouched, false)
+	nonAdmin.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion3", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, nonAdmin.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+
+	// Add non-admin as regular member
+	_ = suite.groupRepo.AddMember(ctx, groupID, nonAdmin.ID, false, false)
+	defer suite.cleanup([]string{admin.ID, nonAdmin.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(nonAdmin)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Should Fail",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	httpReq := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	q := httpReq.URL.Query()
+	q.Set("id", groupID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, httpReq)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for non-admin, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_LimitReached(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_limit", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion4", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	// Create 5 signal groups to reach the limit
+	for i := 0; i < 5; i++ {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &groupID,
+			GroupName:    "SG " + strconv.Itoa(i),
+			AccessTier:   models.AccessTierMember,
+			CreatedBy:    &user.ID,
+		}
+		if err := suite.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+			t.Fatalf("Failed to create signal group %d: %v", i, err)
+		}
+	}
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "One Too Many",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	httpReq := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	q := httpReq.URL.Query()
+	q.Set("id", groupID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, httpReq)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for limit reached, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_ListSignalGroups_FilteredByAccessTier(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_list_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpsg_list_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion5", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+
+	// Add member to group
+	_ = suite.groupRepo.AddMember(ctx, groupID, member.ID, false, false)
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{groupID})
+
+	// Create signal groups at different tiers
+	tiers := []models.AccessTier{models.AccessTierOpen, models.AccessTierMember, models.AccessTierAdminOnly}
+	for i, tier := range tiers {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &groupID,
+			GroupName:    "SG Tier " + strconv.Itoa(i),
+			AccessTier:   tier,
+			CreatedBy:    &admin.ID,
+		}
+		if err := suite.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+			t.Fatalf("Failed to create signal group: %v", err)
+		}
+	}
+
+	// Member should see open + member tiers (2 of 3), but NOT admin_only
+	claims := suite.claimsForUser(member)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", groupID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListSignalGroups(rec, httpReq)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	signalGroups, ok := result["signal_groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected signal_groups array in response")
+	}
+	if len(signalGroups) != 2 {
+		t.Errorf("Expected member to see 2 signal groups (open + member), got %d", len(signalGroups))
+	}
+}
+
+func TestGroupHandler_ListSignalGroups_AdminSeesAll(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_list_alladmin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion6", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupID})
+
+	// Create signal groups at every tier
+	tiers := []models.AccessTier{models.AccessTierOpen, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly}
+	for i, tier := range tiers {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &groupID,
+			GroupName:    "SG All " + strconv.Itoa(i),
+			AccessTier:   tier,
+			CreatedBy:    &admin.ID,
+		}
+		if err := suite.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+			t.Fatalf("Failed to create signal group: %v", err)
+		}
+	}
+
+	claims := suite.claimsForUser(admin)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", groupID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListSignalGroups(rec, httpReq)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	signalGroups, ok := result["signal_groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected signal_groups array in response")
+	}
+	if len(signalGroups) != 4 {
+		t.Errorf("Expected admin to see all 4 signal groups, got %d", len(signalGroups))
+	}
+}
+
+func TestGroupHandler_ListSignalGroups_NonMemberSeesOnlyOpen(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_list_nmmadmin", models.TierVouched, false)
+	admin.VouchVerified = true
+	outsider := suite.createTestUser("grpsg_list_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRegion7", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	defer suite.cleanup([]string{admin.ID, outsider.ID}, []string{region.ID}, []string{groupID})
+
+	// Create signal groups at different tiers
+	tiers := []models.AccessTier{models.AccessTierOpen, models.AccessTierMember, models.AccessTierAdminOnly}
+	for i, tier := range tiers {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &groupID,
+			GroupName:    "SG NM " + strconv.Itoa(i),
+			AccessTier:   tier,
+			CreatedBy:    &admin.ID,
+		}
+		if err := suite.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+			t.Fatalf("Failed to create signal group: %v", err)
+		}
+	}
+
+	// Outsider (not a member of the group) should only see open tier
+	claims := suite.claimsForUser(outsider)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", groupID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListSignalGroups(rec, httpReq)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	signalGroups, ok := result["signal_groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected signal_groups array in response")
+	}
+	if len(signalGroups) != 1 {
+		t.Errorf("Expected non-member to see only 1 signal group (open), got %d", len(signalGroups))
 	}
 }

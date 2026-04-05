@@ -271,7 +271,7 @@ func main() {
 
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
-	groupHandler := handlers.NewGroupHandler(groupRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, regionRepo, userRepo, auditRepo)
 
 	// Initialize meshtastic channel repository and handler
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)

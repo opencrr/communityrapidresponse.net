@@ -161,3 +161,10 @@ type CreateGroupInvitationRequest struct {
 type RespondToGroupInvitationRequest struct {
 	Accept bool `json:"accept"`
 }
+
+// CreateGroupSignalGroupRequest is the request body for creating a signal group under a group.
+type CreateGroupSignalGroupRequest struct {
+	GroupName   string `json:"group_name" validate:"required,min=1,max=255"`
+	Description string `json:"description" validate:"max=1000"`
+	AccessTier  string `json:"access_tier" validate:"required,oneof=open resident member trusted admin_only"`
+}

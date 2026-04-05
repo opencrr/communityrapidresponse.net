@@ -1273,6 +1273,23 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for signal-groups sub-route: /api/v1/groups/{id}/signal-groups
+	if len(parts) >= 2 && parts[1] == "signal-groups" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateSignalGroup)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListSignalGroups)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
 	// Check for invite-links sub-route: /api/v1/groups/{id}/invite-links
 	if len(parts) >= 2 && parts[1] == "invite-links" {
 		q := req.URL.Query()
