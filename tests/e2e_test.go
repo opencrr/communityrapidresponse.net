@@ -4250,3 +4250,584 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		}
 	})
 }
+
+// addUserToRegionForGroups adds a user to a region directly via SQL (non-admin, verified).
+func (s *E2ETestSuite) addUserToRegionForGroups(userID, regionID string) {
+	_, err := s.db.ExecContext(context.Background(),
+		"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+		userID, regionID)
+	if err != nil {
+		s.t.Fatalf("Failed to add user to region: %v", err)
+	}
+}
+
+// createInviteLink creates an invite link for a group via the API and returns the parsed response body.
+func (s *E2ETestSuite) createInviteLink(groupID string, body interface{}, token string) map[string]interface{} {
+	resp := s.request("POST", "/api/v1/groups/"+groupID+"/invite-links", body, token)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		s.t.Fatalf("createInviteLink: expected 201, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		s.t.Fatalf("createInviteLink: failed to decode response: %v", err)
+	}
+	return result
+}
+
+// createVerifiedUserInRegion registers a user, makes them vouch-verified, adds them to a region, and returns (userID, token).
+func (s *E2ETestSuite) createVerifiedUserInRegion(username, email, password, regionID string) (string, string) {
+	userID := s.registerOrGetUserID(username, email, password)
+	s.disableMFA(userID)
+	s.makeUserVouchVerified(userID)
+	s.addUserToRegionForGroups(userID, regionID)
+	token := s.reloginUser(email, password)
+	return userID, token
+}
+
+func TestE2E_GroupFormation(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("create invite link", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gf_invlnk", "gf_invlnk@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gf_invlnk@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Invite Link Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, token)
+
+		linkToken, _ := linkBody["token"].(string)
+		if linkToken == "" {
+			t.Fatal("Expected non-empty token in invite link response")
+		}
+		useCount, _ := linkBody["use_count"].(float64)
+		if useCount != 0 {
+			t.Errorf("Expected use_count=0, got %v", useCount)
+		}
+	})
+
+	t.Run("create invite link with options", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gf_invopt", "gf_invopt@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gf_invopt@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Invite Link Options Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, map[string]interface{}{
+			"max_uses":         5,
+			"expires_in_hours": 24,
+		}, token)
+
+		maxUses, _ := linkBody["max_uses"].(float64)
+		if maxUses != 5 {
+			t.Errorf("Expected max_uses=5, got %v", maxUses)
+		}
+
+		expiresAt, _ := linkBody["expires_at"].(string)
+		if expiresAt == "" {
+			t.Fatal("Expected expires_at to be set")
+		}
+		parsedExpiry, err := time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			t.Fatalf("Failed to parse expires_at: %v", err)
+		}
+		expectedExpiry := time.Now().Add(24 * time.Hour)
+		diff := expectedExpiry.Sub(parsedExpiry)
+		if diff < -5*time.Minute || diff > 5*time.Minute {
+			t.Errorf("Expected expires_at ~24h from now, got %v (diff: %v)", parsedExpiry, diff)
+		}
+	})
+
+	t.Run("list invite links", func(t *testing.T) {
+		password := "testpassword123!"
+		userID := suite.registerOrGetUserID("gf_lstlnk", "gf_lstlnk@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gf_lstlnk@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("List Links Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		suite.createInviteLink(groupID, nil, token)
+		suite.createInviteLink(groupID, nil, token)
+
+		resp := suite.request("GET", "/api/v1/groups/"+groupID+"/invite-links", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		links, ok := body["invite_links"].([]interface{})
+		if !ok || len(links) != 2 {
+			t.Errorf("Expected 2 invite links, got %v", len(links))
+		}
+	})
+
+	t.Run("non-admin cannot create invite link", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		userAID := suite.registerOrGetUserID("gf_lnk_a", "gf_lnk_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_lnk_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Non-Admin Link Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B: non-admin member
+		userBID := suite.registerOrGetUserID("gf_lnk_b", "gf_lnk_b@test.com", password)
+		defer suite.cleanup(userBID)
+		suite.disableMFA(userBID)
+		suite.makeUserVouchVerified(userBID)
+		tokenB := suite.reloginUser("gf_lnk_b@test.com", password)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			userBID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, userBID, false, false)
+
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/invite-links", nil, tokenB)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("join group via invite link", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userAID := suite.registerOrGetUserID("gf_join_a", "gf_join_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_join_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Join Via Link Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, tokenA)
+		inviteToken := linkBody["token"].(string)
+
+		// User B joins via link
+		userBID, tokenB := suite.createVerifiedUserInRegion("gf_join_b", "gf_join_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+
+		joinResp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, tokenB)
+		defer func() { _ = joinResp.Body.Close() }()
+
+		if joinResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(joinResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200, got %d: %v", joinResp.StatusCode, errBody)
+		}
+
+		// Verify user B is a member
+		membersResp := suite.request("GET", "/api/v1/groups/"+groupID+"/members", nil, tokenA)
+		defer func() { _ = membersResp.Body.Close() }()
+
+		var membersBody map[string]interface{}
+		_ = json.NewDecoder(membersResp.Body).Decode(&membersBody)
+
+		members, _ := membersBody["members"].([]interface{})
+		if len(members) != 2 {
+			t.Errorf("Expected 2 members, got %d", len(members))
+		}
+	})
+
+	t.Run("join via link requires verification", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// Admin creates group + invite link
+		adminID := suite.registerOrGetUserID("gf_jnv_ad", "gf_jnv_ad@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gf_jnv_ad@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Verify Required Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, adminToken)
+		inviteToken := linkBody["token"].(string)
+
+		// Unverified user tries to join
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("gf_jnv_uv", "gf_jnv_uv@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		resp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, unverifiedToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("join via link rejects already member", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userID := suite.registerOrGetUserID("gf_jn_dup", "gf_jn_dup@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gf_jn_dup@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Dup Join Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, token)
+		inviteToken := linkBody["token"].(string)
+
+		// Creator tries to join via link (already a member)
+		resp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("Expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("graduation at threshold", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// User A creates group (member 1)
+		userAID := suite.registerOrGetUserID("gf_grad_a", "gf_grad_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_grad_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Graduation Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, tokenA)
+		inviteToken := linkBody["token"].(string)
+
+		// User B joins (member 2)
+		userBID, tokenB := suite.createVerifiedUserInRegion("gf_grad_b", "gf_grad_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+
+		joinB := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, tokenB)
+		defer func() { _ = joinB.Body.Close() }()
+
+		if joinB.StatusCode != http.StatusOK {
+			t.Fatalf("User B join failed: %d", joinB.StatusCode)
+		}
+
+		var joinBBody map[string]interface{}
+		_ = json.NewDecoder(joinB.Body).Decode(&joinBBody)
+		if joinBBody["graduated"] == true {
+			t.Error("Expected group NOT to graduate after member 2")
+		}
+
+		// User C joins (member 3 — hits default threshold of 3)
+		userCID, tokenC := suite.createVerifiedUserInRegion("gf_grad_c", "gf_grad_c@test.com", password, regionID)
+		defer suite.cleanup(userCID)
+
+		joinC := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, tokenC)
+		defer func() { _ = joinC.Body.Close() }()
+
+		if joinC.StatusCode != http.StatusOK {
+			t.Fatalf("User C join failed: %d", joinC.StatusCode)
+		}
+
+		var joinCBody map[string]interface{}
+		_ = json.NewDecoder(joinC.Body).Decode(&joinCBody)
+		if joinCBody["graduated"] != true {
+			t.Error("Expected group to graduate after member 3 (threshold=3)")
+		}
+
+		// Verify group status via GET
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, tokenA)
+		defer func() { _ = getResp.Body.Close() }()
+
+		var getBody map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&getBody)
+
+		if getBody["status"] != "active" {
+			t.Errorf("Expected status=active, got %v", getBody["status"])
+		}
+		if getBody["graduated_at"] == nil {
+			t.Error("Expected graduated_at to be set")
+		}
+	})
+
+	t.Run("direct invitation flow", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// User A creates group
+		userAID := suite.registerOrGetUserID("gf_inv_a", "gf_inv_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_inv_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Invitation Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B to be invited
+		userBID, tokenB := suite.createVerifiedUserInRegion("gf_inv_b", "gf_inv_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+
+		// User A invites user B
+		invResp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": userBID,
+		}, tokenA)
+		defer func() { _ = invResp.Body.Close() }()
+
+		if invResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(invResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201, got %d: %v", invResp.StatusCode, errBody)
+		}
+
+		var invBody map[string]interface{}
+		_ = json.NewDecoder(invResp.Body).Decode(&invBody)
+		invitationID := invBody["id"].(string)
+
+		// User B lists their invitations
+		listResp := suite.request("GET", "/api/v1/group-invitations", nil, tokenB)
+		defer func() { _ = listResp.Body.Close() }()
+
+		if listResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for list invitations, got %d", listResp.StatusCode)
+		}
+
+		var listBody map[string]interface{}
+		_ = json.NewDecoder(listResp.Body).Decode(&listBody)
+
+		invitations, _ := listBody["invitations"].([]interface{})
+		if len(invitations) != 1 {
+			t.Fatalf("Expected 1 pending invitation, got %d", len(invitations))
+		}
+
+		firstInv := invitations[0].(map[string]interface{})
+		if firstInv["group_name"] == nil || firstInv["group_name"] == "" {
+			t.Error("Expected invitation to include group_name")
+		}
+
+		// User B accepts
+		acceptResp := suite.request("POST", "/api/v1/group-invitations/"+invitationID+"/respond", map[string]interface{}{
+			"accept": true,
+		}, tokenB)
+		defer func() { _ = acceptResp.Body.Close() }()
+
+		if acceptResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(acceptResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for accept, got %d: %v", acceptResp.StatusCode, errBody)
+		}
+
+		// Verify user B is now a member
+		membersResp := suite.request("GET", "/api/v1/groups/"+groupID+"/members", nil, tokenA)
+		defer func() { _ = membersResp.Body.Close() }()
+
+		var membersBody map[string]interface{}
+		_ = json.NewDecoder(membersResp.Body).Decode(&membersBody)
+
+		members, _ := membersBody["members"].([]interface{})
+		if len(members) != 2 {
+			t.Errorf("Expected 2 members after invitation accept, got %d", len(members))
+		}
+	})
+
+	t.Run("decline invitation", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userAID := suite.registerOrGetUserID("gf_dec_a", "gf_dec_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_dec_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Decline Invite Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		userBID, tokenB := suite.createVerifiedUserInRegion("gf_dec_b", "gf_dec_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+
+		invResp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": userBID,
+		}, tokenA)
+		defer func() { _ = invResp.Body.Close() }()
+
+		var invBody map[string]interface{}
+		_ = json.NewDecoder(invResp.Body).Decode(&invBody)
+		invitationID := invBody["id"].(string)
+
+		// User B declines
+		declineResp := suite.request("POST", "/api/v1/group-invitations/"+invitationID+"/respond", map[string]interface{}{
+			"accept": false,
+		}, tokenB)
+		defer func() { _ = declineResp.Body.Close() }()
+
+		if declineResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for decline, got %d", declineResp.StatusCode)
+		}
+
+		// Verify user B is NOT a member
+		membersResp := suite.request("GET", "/api/v1/groups/"+groupID+"/members", nil, tokenA)
+		defer func() { _ = membersResp.Body.Close() }()
+
+		var membersBody map[string]interface{}
+		_ = json.NewDecoder(membersResp.Body).Decode(&membersBody)
+
+		members, _ := membersBody["members"].([]interface{})
+		if len(members) != 1 {
+			t.Errorf("Expected only 1 member (creator) after decline, got %d", len(members))
+		}
+	})
+
+	t.Run("cannot invite existing member", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userAID := suite.registerOrGetUserID("gf_dup_a", "gf_dup_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_dup_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Dup Invite Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// Try to invite user A (the creator, already a member)
+		resp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": userAID,
+		}, tokenA)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("Expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("graduation via invitation accept", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// User A creates group (member 1)
+		userAID := suite.registerOrGetUserID("gf_grd2_a", "gf_grd2_a@test.com", password)
+		defer suite.cleanup(userAID)
+		suite.disableMFA(userAID)
+		suite.makeUserVouchVerified(userAID)
+		tokenA := suite.reloginUser("gf_grd2_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userAID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Graduation Via Invite Group", []string{regionID}, tokenA)
+		defer suite.cleanupGroups(groupID)
+
+		// User B (member 2)
+		userBID, tokenB := suite.createVerifiedUserInRegion("gf_grd2_b", "gf_grd2_b@test.com", password, regionID)
+		defer suite.cleanup(userBID)
+
+		invBResp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": userBID,
+		}, tokenA)
+		defer func() { _ = invBResp.Body.Close() }()
+
+		var invBBody map[string]interface{}
+		_ = json.NewDecoder(invBResp.Body).Decode(&invBBody)
+		invBID := invBBody["id"].(string)
+
+		acceptB := suite.request("POST", "/api/v1/group-invitations/"+invBID+"/respond", map[string]interface{}{
+			"accept": true,
+		}, tokenB)
+		defer func() { _ = acceptB.Body.Close() }()
+
+		var acceptBBody map[string]interface{}
+		_ = json.NewDecoder(acceptB.Body).Decode(&acceptBBody)
+		if acceptBBody["graduated"] == true {
+			t.Error("Expected group NOT to graduate after member 2")
+		}
+
+		// User C (member 3 — threshold)
+		userCID, tokenC := suite.createVerifiedUserInRegion("gf_grd2_c", "gf_grd2_c@test.com", password, regionID)
+		defer suite.cleanup(userCID)
+
+		invCResp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": userCID,
+		}, tokenA)
+		defer func() { _ = invCResp.Body.Close() }()
+
+		var invCBody map[string]interface{}
+		_ = json.NewDecoder(invCResp.Body).Decode(&invCBody)
+		invCID := invCBody["id"].(string)
+
+		acceptC := suite.request("POST", "/api/v1/group-invitations/"+invCID+"/respond", map[string]interface{}{
+			"accept": true,
+		}, tokenC)
+		defer func() { _ = acceptC.Body.Close() }()
+
+		var acceptCBody map[string]interface{}
+		_ = json.NewDecoder(acceptC.Body).Decode(&acceptCBody)
+		if acceptCBody["graduated"] != true {
+			t.Error("Expected group to graduate after member 3 (threshold=3)")
+		}
+
+		// Verify group status
+		getResp := suite.request("GET", "/api/v1/groups/"+groupID, nil, tokenA)
+		defer func() { _ = getResp.Body.Close() }()
+
+		var getBody map[string]interface{}
+		_ = json.NewDecoder(getResp.Body).Decode(&getBody)
+
+		if getBody["status"] != "active" {
+			t.Errorf("Expected status=active, got %v", getBody["status"])
+		}
+		if getBody["graduated_at"] == nil {
+			t.Error("Expected graduated_at to be set")
+		}
+	})
+}
