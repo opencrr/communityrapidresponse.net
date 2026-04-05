@@ -1304,6 +1304,34 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for trust-vouches sub-route: /api/v1/groups/{id}/trust-vouches[/{user_id}]
+	if len(parts) >= 2 && parts[1] == "trust-vouches" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		// GET /api/v1/groups/{id}/trust-vouches/{user_id}
+		if len(parts) >= 3 && parts[2] != "" {
+			q.Set("user_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			if req.Method == http.MethodGet {
+				r.authenticated(r.groups.GetTrustVouchStatus)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// POST /api/v1/groups/{id}/trust-vouches
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.VouchForMember)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
 	// Check for join sub-route: /api/v1/groups/join/{token}
 	// Here groupID == "join" and parts[1] is the token
 	if groupID == "join" && len(parts) >= 2 {
