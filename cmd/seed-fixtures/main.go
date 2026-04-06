@@ -159,23 +159,24 @@ func main() {
 	slog.Info("seeding groups...")
 
 	type groupFixture struct {
-		id                       string
-		name                     string
-		description              string
-		status                   string
-		visibility               string
-		discoverableByUnverified bool
-		createdBy                string
-		regionIDs                []string
-		tags                     []string
-		graduated                bool
+		id                        string
+		name                      string
+		description               string
+		status                    string
+		visibility                string
+		discoverableByUnverified  bool
+		showAddressVerification   bool
+		createdBy                 string
+		regionIDs                 []string
+		tags                      []string
+		graduated                 bool
 	}
 
 	groups := []groupFixture{
 		{
 			groupSeattleMA, "Seattle Mutual Aid",
 			"Grassroots mutual aid network serving the Seattle area",
-			"active", "listed", true, userBob,
+			"active", "listed", true, true, userBob,
 			[]string{regionSeattle},
 			[]string{"mutual-aid", "community"},
 			true,
@@ -183,7 +184,7 @@ func main() {
 		{
 			groupSeattleTenants, "Seattle Tenants Union",
 			"Tenant organizing and rights advocacy in Seattle",
-			"active", "listed", false, userCarol,
+			"active", "listed", false, true, userCarol,
 			[]string{regionSeattle},
 			[]string{"tenant-rights", "housing"},
 			true,
@@ -191,7 +192,7 @@ func main() {
 		{
 			groupPortlandMA, "Portland Mutual Aid",
 			"Community-driven mutual aid in Portland",
-			"active", "listed", true, userFrank,
+			"active", "listed", true, true, userFrank,
 			[]string{regionPortland},
 			[]string{"mutual-aid", "community"},
 			true,
@@ -199,7 +200,7 @@ func main() {
 		{
 			groupChicagoDP, "Chicago Disaster Prep",
 			"Urban disaster preparedness for the Chicago metro area",
-			"active", "listed", false, userHeidi,
+			"active", "listed", false, true, userHeidi,
 			[]string{regionChicago},
 			[]string{"disaster-prep", "emergency"},
 			true,
@@ -207,7 +208,7 @@ func main() {
 		{
 			groupSecretSociety, "The Secret Society",
 			"An unlisted group for testing unlisted visibility",
-			"active", "unlisted", false, userKarl,
+			"active", "unlisted", false, false, userKarl,
 			[]string{regionSeattle},
 			nil,
 			true,
@@ -215,7 +216,7 @@ func main() {
 		{
 			groupProvisional, "Provisional Group",
 			"A provisional group still in founding phase",
-			"provisional", "unlisted", false, userAlice,
+			"provisional", "unlisted", false, true, userAlice,
 			[]string{regionSeattle},
 			[]string{"testing"},
 			false,
@@ -223,7 +224,7 @@ func main() {
 		{
 			groupOpenHub, "Open Community Hub",
 			"An open-access community hub for general discussion",
-			"active", "listed", true, userBob,
+			"active", "listed", true, true, userBob,
 			[]string{regionSeattle},
 			[]string{"open-access", "general"},
 			true,
@@ -238,10 +239,12 @@ func main() {
 
 		_, err := db.ExecContext(ctx, `
 			INSERT IGNORE INTO `+"`groups`"+` (id, name, description, status, visibility,
-				discoverable_by_unverified, created_by, graduated_at, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				discoverable_by_unverified, show_address_verification,
+				created_by, graduated_at, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, g.id, g.name, g.description, g.status, g.visibility,
-			g.discoverableByUnverified, g.createdBy, graduatedAt, now)
+			g.discoverableByUnverified, g.showAddressVerification,
+			g.createdBy, graduatedAt, now)
 		if err != nil {
 			log.Fatalf("failed to insert group %s: %v", g.name, err)
 		}
@@ -593,14 +596,14 @@ func printSummary() {
 	fmt.Println("  judy     (tier 0)            - unverified user")
 	fmt.Println("  karl     (tier 2)            - admin of The Secret Society")
 	fmt.Println()
-	fmt.Println("Groups:")
-	fmt.Println("  Seattle Mutual Aid       (active, listed, discoverable)")
-	fmt.Println("  Seattle Tenants Union    (active, listed)")
-	fmt.Println("  Portland Mutual Aid      (active, listed, discoverable)")
-	fmt.Println("  Chicago Disaster Prep    (active, listed)")
-	fmt.Println("  The Secret Society       (active, unlisted)")
-	fmt.Println("  Provisional Group        (provisional, unlisted)")
-	fmt.Println("  Open Community Hub       (active, listed, discoverable)")
+	fmt.Println("Groups (show_address_verification: T=address verification enabled):")
+	fmt.Println("  Seattle Mutual Aid       (active, listed, discoverable, T)")
+	fmt.Println("  Seattle Tenants Union    (active, listed, T)")
+	fmt.Println("  Portland Mutual Aid      (active, listed, discoverable, T)")
+	fmt.Println("  Chicago Disaster Prep    (active, listed, T)")
+	fmt.Println("  The Secret Society       (active, unlisted, address verification OFF)")
+	fmt.Println("  Provisional Group        (provisional, unlisted, T)")
+	fmt.Println("  Open Community Hub       (active, listed, discoverable, T)")
 	fmt.Println()
 	fmt.Println("Connection: PNW Mutual Aid Network (Seattle MA + Portland MA)")
 	fmt.Println("  Signal chat: PNW Admin Chat (admin_only)")
