@@ -199,3 +199,8 @@ type UpdateResourceRequest struct {
 	Description *string `json:"description" validate:"omitempty,max=500"`
 	AccessTier  *string `json:"access_tier" validate:"omitempty,oneof=open resident member trusted admin_only"`
 }
+
+// BlockGroupRequest is the request body for blocking a group.
+type BlockGroupRequest struct {
+	GroupID string `json:"group_id" validate:"required"`
+}

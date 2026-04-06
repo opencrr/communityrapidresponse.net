@@ -1408,6 +1408,37 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for blocks sub-route: /api/v1/groups/{id}/blocks[/{gid}]
+	if len(parts) >= 2 && parts[1] == "blocks" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/groups/{id}/blocks/{gid}
+			q.Set("gid", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.groups.UnblockGroup)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// /api/v1/groups/{id}/blocks
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.BlockGroup)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListBlockedGroups)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
 	// Default: CRUD operations on group by ID
 	q := req.URL.Query()
 	q.Set("id", groupID)

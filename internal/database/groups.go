@@ -28,6 +28,8 @@ var (
 	ErrNotTrustedOrAdmin        = errors.New("user is not trusted or admin in this group")
 	ErrSelfVouch                = errors.New("cannot vouch for yourself")
 	ErrResourceNotFound         = errors.New("resource not found")
+	ErrCannotBlockSelf          = errors.New("cannot block own group")
+	ErrGroupAlreadyBlocked      = errors.New("group already blocked")
 )
 
 // GroupRepository handles group database operations
@@ -1488,4 +1490,83 @@ func (r *GroupRepository) DeleteResource(ctx context.Context, id string) error {
 		return ErrResourceNotFound
 	}
 	return nil
+}
+
+// BlockGroup creates a block from blockerGroupID to blockedGroupID.
+func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blockedGroupID string) error {
+	if blockerGroupID == blockedGroupID {
+		return ErrCannotBlockSelf
+	}
+
+	id := uuid.New().String()
+	query := `INSERT INTO group_blocks (id, blocker_group_id, blocked_group_id) VALUES (?, ?, ?)`
+	_, err := r.db.ExecContext(ctx, query, id, blockerGroupID, blockedGroupID)
+	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			return ErrGroupAlreadyBlocked
+		}
+		return fmt.Errorf("block group: %w", err)
+	}
+	return nil
+}
+
+// UnblockGroup removes a block from blockerGroupID to blockedGroupID.
+func (r *GroupRepository) UnblockGroup(ctx context.Context, blockerGroupID, blockedGroupID string) error {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM group_blocks WHERE blocker_group_id = ? AND blocked_group_id = ?",
+		blockerGroupID, blockedGroupID,
+	)
+	if err != nil {
+		return fmt.Errorf("unblock group: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("unblock group rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrGroupNotFound
+	}
+	return nil
+}
+
+// IsGroupBlocked checks if blockerGroupID has blocked blockedGroupID.
+func (r *GroupRepository) IsGroupBlocked(ctx context.Context, blockerGroupID, blockedGroupID string) (bool, error) {
+	query := "SELECT EXISTS(SELECT 1 FROM group_blocks WHERE blocker_group_id = ? AND blocked_group_id = ?)"
+	var exists bool
+	err := r.db.QueryRowContext(ctx, query, blockerGroupID, blockedGroupID).Scan(&exists)
+	return exists, err
+}
+
+// ListBlockedGroups returns all groups blocked by the given group.
+func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string) ([]models.Group, error) {
+	query := `
+		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
+			g.trusted_vouch_threshold, g.discoverable_by_unverified,
+			g.created_by, g.created_at, g.updated_at, g.graduated_at
+		FROM group_blocks gb
+		JOIN ` + "`groups`" + ` g ON g.id = gb.blocked_group_id
+		WHERE gb.blocker_group_id = ?
+		ORDER BY gb.created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list blocked groups: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []models.Group
+	for rows.Next() {
+		var g models.Group
+		err := rows.Scan(
+			&g.ID, &g.Name, &g.Description, &g.Status, &g.Visibility, &g.FoundingThreshold,
+			&g.TrustedVouchThreshold, &g.DiscoverableByUnverified,
+			&g.CreatedBy, &g.CreatedAt, &g.UpdatedAt, &g.GraduatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan blocked group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
 }

@@ -1395,3 +1395,160 @@ func (h *GroupHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 		"message": "Resource deleted",
 	})
 }
+
+// BlockGroup handles POST /api/v1/groups/{id}/blocks
+func (h *GroupHandler) BlockGroup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "block_group")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to block other groups")
+		return
+	}
+
+	var req models.BlockGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.GroupID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "group_id is required")
+		return
+	}
+
+	err = h.groupRepo.BlockGroup(r.Context(), groupID, req.GroupID)
+	if errors.Is(err, database.ErrCannotBlockSelf) {
+		writeError(w, http.StatusBadRequest, "cannot_block_self", "Cannot block your own group")
+		return
+	}
+	if errors.Is(err, database.ErrGroupAlreadyBlocked) {
+		writeError(w, http.StatusConflict, "already_blocked", "Group is already blocked")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to block group", "group", "block_group")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupBlocked, &resourceType, &groupID, map[string]interface{}{
+			"blocked_group_id": req.GroupID,
+		}), "group_blocked")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Group blocked",
+	})
+}
+
+// UnblockGroup handles DELETE /api/v1/groups/{id}/blocks/{gid}
+func (h *GroupHandler) UnblockGroup(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	blockedGroupID := getPathParam(r, "gid")
+	if blockedGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Blocked group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "unblock_group")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to unblock groups")
+		return
+	}
+
+	err = h.groupRepo.UnblockGroup(r.Context(), groupID, blockedGroupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Block not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to unblock group", "group", "unblock_group")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupUnblocked, &resourceType, &groupID, map[string]interface{}{
+			"unblocked_group_id": blockedGroupID,
+		}), "group_unblocked")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Group unblocked",
+	})
+}
+
+// ListBlockedGroups handles GET /api/v1/groups/{id}/blocks
+func (h *GroupHandler) ListBlockedGroups(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "list_blocked_groups")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to view blocked groups")
+		return
+	}
+
+	groups, err := h.groupRepo.ListBlockedGroups(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list blocked groups", "group", "list_blocked_groups")
+		return
+	}
+
+	if groups == nil {
+		groups = []models.Group{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"blocked_groups": groups,
+	})
+}

@@ -144,6 +144,7 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_blocks WHERE blocker_group_id = ? OR blocked_group_id = ?", id, id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", id)
@@ -2793,5 +2794,282 @@ func TestGroupHandler_DeleteResource_AdminSuccess(t *testing.T) {
 	_, err = suite.groupRepo.GetResource(ctx, resource.ID)
 	if err != database.ErrResourceNotFound {
 		t.Errorf("Expected ErrResourceNotFound after delete, got %v", err)
+	}
+}
+
+// --- Group Blocking: Repository Tests ---
+
+func TestGroupRepo_BlockGroup(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("blk_repo_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("BlkRepoRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block Repo Group A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block Repo Group B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	// Block
+	err := suite.groupRepo.BlockGroup(ctx, groupA.ID, groupB.ID)
+	if err != nil {
+		t.Fatalf("BlockGroup failed: %v", err)
+	}
+
+	// IsGroupBlocked
+	blocked, err := suite.groupRepo.IsGroupBlocked(ctx, groupA.ID, groupB.ID)
+	if err != nil {
+		t.Fatalf("IsGroupBlocked failed: %v", err)
+	}
+	if !blocked {
+		t.Error("Expected group to be blocked")
+	}
+
+	// Not blocked in reverse direction
+	blockedReverse, err := suite.groupRepo.IsGroupBlocked(ctx, groupB.ID, groupA.ID)
+	if err != nil {
+		t.Fatalf("IsGroupBlocked reverse failed: %v", err)
+	}
+	if blockedReverse {
+		t.Error("Expected reverse direction to not be blocked")
+	}
+
+	// List blocked
+	blockedGroups, err := suite.groupRepo.ListBlockedGroups(ctx, groupA.ID)
+	if err != nil {
+		t.Fatalf("ListBlockedGroups failed: %v", err)
+	}
+	if len(blockedGroups) != 1 {
+		t.Fatalf("Expected 1 blocked group, got %d", len(blockedGroups))
+	}
+	if blockedGroups[0].ID != groupB.ID {
+		t.Errorf("Expected blocked group ID %s, got %s", groupB.ID, blockedGroups[0].ID)
+	}
+
+	// Duplicate block
+	err = suite.groupRepo.BlockGroup(ctx, groupA.ID, groupB.ID)
+	if err != database.ErrGroupAlreadyBlocked {
+		t.Errorf("Expected ErrGroupAlreadyBlocked, got %v", err)
+	}
+
+	// Self-block
+	err = suite.groupRepo.BlockGroup(ctx, groupA.ID, groupA.ID)
+	if err != database.ErrCannotBlockSelf {
+		t.Errorf("Expected ErrCannotBlockSelf, got %v", err)
+	}
+
+	// Unblock
+	err = suite.groupRepo.UnblockGroup(ctx, groupA.ID, groupB.ID)
+	if err != nil {
+		t.Fatalf("UnblockGroup failed: %v", err)
+	}
+
+	// Verify unblocked
+	blocked, _ = suite.groupRepo.IsGroupBlocked(ctx, groupA.ID, groupB.ID)
+	if blocked {
+		t.Error("Expected group to be unblocked")
+	}
+
+	// Unblock nonexistent
+	err = suite.groupRepo.UnblockGroup(ctx, groupA.ID, groupB.ID)
+	if err != database.ErrGroupNotFound {
+		t.Errorf("Expected ErrGroupNotFound for unblocking non-blocked, got %v", err)
+	}
+}
+
+// --- Group Blocking: Handler Tests ---
+
+func TestGroupHandler_BlockGroup_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("blk_h_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("BlkHandlerRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block Handler A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block Handler B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	claims := suite.claimsForUser(admin)
+	body, _ := json.Marshal(map[string]string{"group_id": groupB.ID})
+	req := httptest.NewRequest("POST", "/blocks?id="+groupA.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.BlockGroup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify blocked
+	blocked, _ := suite.groupRepo.IsGroupBlocked(ctx, groupA.ID, groupB.ID)
+	if !blocked {
+		t.Error("Expected group to be blocked after handler call")
+	}
+}
+
+func TestGroupHandler_UnblockGroup_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("unblk_h_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("UnblkHandlerRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Unblock Handler A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Unblock Handler B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	// Block first
+	_ = suite.groupRepo.BlockGroup(ctx, groupA.ID, groupB.ID)
+
+	claims := suite.claimsForUser(admin)
+	req := httptest.NewRequest("DELETE", "/blocks?id="+groupA.ID+"&gid="+groupB.ID, nil)
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.UnblockGroup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify unblocked
+	blocked, _ := suite.groupRepo.IsGroupBlocked(ctx, groupA.ID, groupB.ID)
+	if blocked {
+		t.Error("Expected group to be unblocked after handler call")
+	}
+}
+
+func TestGroupHandler_ListBlockedGroups_Success(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("lstblk_h_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("LstBlkHandlerRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "List Block Handler A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "List Block Handler B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	_ = suite.groupRepo.BlockGroup(ctx, groupA.ID, groupB.ID)
+
+	claims := suite.claimsForUser(admin)
+	req := httptest.NewRequest("GET", "/blocks?id="+groupA.ID, nil)
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListBlockedGroups(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	blockedGroups := body["blocked_groups"].([]interface{})
+	if len(blockedGroups) != 1 {
+		t.Fatalf("Expected 1 blocked group, got %d", len(blockedGroups))
+	}
+}
+
+func TestGroupHandler_BlockGroup_NonAdminRejected(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("blk_admin_ok", models.TierVouched, false)
+	admin.VouchVerified = true
+	nonAdmin := suite.createTestUser("blk_nonadmin", models.TierVouched, false)
+	nonAdmin.VouchVerified = true
+	region := suite.createTestRegion("BlkNonAdminRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, nonAdmin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block NonAdmin A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block NonAdmin B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	// Add nonAdmin as regular member
+	_ = suite.groupRepo.AddMember(ctx, groupA.ID, nonAdmin.ID, false, false)
+
+	defer suite.cleanup([]string{admin.ID, nonAdmin.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	claims := suite.claimsForUser(nonAdmin)
+	body, _ := json.Marshal(map[string]string{"group_id": groupB.ID})
+	req := httptest.NewRequest("POST", "/blocks?id="+groupA.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.BlockGroup(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_BlockGroup_SelfBlockRejected(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("blk_self_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("BlkSelfRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Block Self Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{groupA.ID})
+
+	claims := suite.claimsForUser(admin)
+	body, _ := json.Marshal(map[string]string{"group_id": groupA.ID})
+	req := httptest.NewRequest("POST", "/blocks?id="+groupA.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.BlockGroup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

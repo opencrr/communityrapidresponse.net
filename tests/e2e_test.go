@@ -6007,3 +6007,110 @@ func TestE2E_GroupResources(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_GroupBlocking(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("block, list, unblock, self-block rejected, non-admin rejected", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Setup admin user + two groups
+		adminID := suite.registerOrGetUserID("gblk_a", "gblk_a@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gblk_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupAID, _ := suite.createGroup("Block Test Group A", []string{regionID}, adminToken)
+		groupBID, _ := suite.createGroup("Block Test Group B", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupAID, groupBID)
+
+		// --- Block a group ---
+		blockResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/blocks", map[string]interface{}{
+			"group_id": groupBID,
+		}, adminToken)
+		defer func() { _ = blockResp.Body.Close() }()
+
+		if blockResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(blockResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for block, got %d: %v", blockResp.StatusCode, errBody)
+		}
+
+		// --- Blocked group appears in list ---
+		listResp := suite.request("GET", "/api/v1/groups/"+groupAID+"/blocks", nil, adminToken)
+		defer func() { _ = listResp.Body.Close() }()
+
+		if listResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for list blocks, got %d", listResp.StatusCode)
+		}
+
+		var listBody map[string]interface{}
+		_ = json.NewDecoder(listResp.Body).Decode(&listBody)
+		blockedGroups := listBody["blocked_groups"].([]interface{})
+		if len(blockedGroups) != 1 {
+			t.Fatalf("Expected 1 blocked group, got %d", len(blockedGroups))
+		}
+		firstBlocked := blockedGroups[0].(map[string]interface{})
+		if firstBlocked["id"] != groupBID {
+			t.Errorf("Expected blocked group ID %s, got %v", groupBID, firstBlocked["id"])
+		}
+
+		// --- Unblock a group ---
+		unblockResp := suite.request("DELETE", "/api/v1/groups/"+groupAID+"/blocks/"+groupBID, nil, adminToken)
+		defer func() { _ = unblockResp.Body.Close() }()
+
+		if unblockResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(unblockResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for unblock, got %d: %v", unblockResp.StatusCode, errBody)
+		}
+
+		// Verify empty list
+		listResp2 := suite.request("GET", "/api/v1/groups/"+groupAID+"/blocks", nil, adminToken)
+		defer func() { _ = listResp2.Body.Close() }()
+
+		var listBody2 map[string]interface{}
+		_ = json.NewDecoder(listResp2.Body).Decode(&listBody2)
+		blockedGroups2 := listBody2["blocked_groups"].([]interface{})
+		if len(blockedGroups2) != 0 {
+			t.Errorf("Expected 0 blocked groups after unblock, got %d", len(blockedGroups2))
+		}
+
+		// --- Self-block rejected ---
+		selfBlockResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/blocks", map[string]interface{}{
+			"group_id": groupAID,
+		}, adminToken)
+		defer func() { _ = selfBlockResp.Body.Close() }()
+
+		if selfBlockResp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for self-block, got %d", selfBlockResp.StatusCode)
+		}
+
+		// --- Non-admin cannot block ---
+		memberID := suite.registerOrGetUserID("gblk_m", "gblk_m@test.com", password)
+		defer suite.cleanup(memberID)
+		suite.disableMFA(memberID)
+		suite.makeUserVouchVerified(memberID)
+		memberToken := suite.reloginUser("gblk_m@test.com", password)
+
+		// Add member to region and group (non-admin)
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			memberID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupAID, memberID, false, false)
+
+		nonAdminBlockResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/blocks", map[string]interface{}{
+			"group_id": groupBID,
+		}, memberToken)
+		defer func() { _ = nonAdminBlockResp.Body.Close() }()
+
+		if nonAdminBlockResp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin block, got %d", nonAdminBlockResp.StatusCode)
+		}
+	})
+}
