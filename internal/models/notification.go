@@ -150,9 +150,12 @@ const (
 	AuditActionTopicBoardRemoved             = "topic_board_removed"
 
 	// Connection actions
-	AuditActionConnectionProposed = "connection_proposed"
-	AuditActionConnectionAccepted = "connection_accepted"
-	AuditActionConnectionLeft     = "connection_left"
+	AuditActionConnectionProposed         = "connection_proposed"
+	AuditActionConnectionAccepted         = "connection_accepted"
+	AuditActionConnectionLeft             = "connection_left"
+	AuditActionConnectionChatProposed     = "connection_chat_proposed"
+	AuditActionConnectionChatVoted        = "connection_chat_voted"
+	AuditActionConnectionChatApproved     = "connection_chat_approved"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

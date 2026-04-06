@@ -262,6 +262,49 @@ type InviteToConnectionRequest struct {
 	GroupID string `json:"group_id" validate:"required"`
 }
 
+// ConnectionAccessLevel for connection signal chats.
+type ConnectionAccessLevel string
+
+const (
+	ConnectionAccessLevelAdminOnly  ConnectionAccessLevel = "admin_only"
+	ConnectionAccessLevelAllMembers ConnectionAccessLevel = "all_members"
+)
+
+// ConnectionChatProposal tracks proposals to create connection signal chats.
+type ConnectionChatProposal struct {
+	ID              string     `json:"id" db:"id"`
+	ConnectionID    string     `json:"connection_id" db:"connection_id"`
+	ProposerGroupID string    `json:"proposer_group_id" db:"proposer_group_id"`
+	GroupName       string     `json:"group_name" db:"group_name"`
+	Description     *string    `json:"description" db:"description"`
+	AccessLevel     string     `json:"access_level" db:"access_level"`
+	Status          string     `json:"status" db:"status"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+}
+
+// ConnectionChatProposalVote tracks per-group votes on a connection chat proposal.
+type ConnectionChatProposalVote struct {
+	ID          string     `json:"id" db:"id"`
+	ProposalID  string     `json:"proposal_id" db:"proposal_id"`
+	GroupID     string     `json:"group_id" db:"group_id"`
+	Status      string     `json:"status" db:"status"`
+	RespondedAt *time.Time `json:"responded_at,omitempty" db:"responded_at"`
+}
+
+// ConnectionChatProposalWithVotes includes per-group vote statuses.
+type ConnectionChatProposalWithVotes struct {
+	ConnectionChatProposal
+	Votes []ConnectionChatProposalVote `json:"votes"`
+}
+
+// ProposeConnectionChatRequest is the request for proposing a connection signal chat.
+type ProposeConnectionChatRequest struct {
+	GroupName   string `json:"group_name" validate:"required,min=1,max=255"`
+	Description string `json:"description" validate:"max=1000"`
+	AccessLevel string `json:"access_level" validate:"required,oneof=admin_only all_members"`
+}
+
 // TopicBoardPosting represents a group's presence on the topic board.
 type TopicBoardPosting struct {
 	ID              string    `json:"id" db:"id"`
