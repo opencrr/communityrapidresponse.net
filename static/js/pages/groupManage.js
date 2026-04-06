@@ -47,7 +47,7 @@ export async function render(container, params) {
         const group = await getGroup(groupId);
         currentGroup = group;
 
-        if (!group.is_admin) {
+        if (!group.is_user_admin) {
             container.innerHTML = `
                 <div class="page page--centered">
                     <div class="empty-state">

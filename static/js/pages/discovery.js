@@ -273,7 +273,7 @@ async function loadAdminGroups() {
     try {
         const response = await listMyGroups();
         const groups = response.groups || [];
-        adminGroups = groups.filter(group => group.is_admin);
+        adminGroups = groups.filter(group => group.is_user_admin);
 
         if (adminGroups.length === 0) return;
 
