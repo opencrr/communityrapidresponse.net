@@ -6546,3 +6546,485 @@ func TestE2E_Connections(t *testing.T) {
 		// Then only B remains, so connection is dissolved
 	})
 }
+
+// =============================================================================
+// Full Discovery Flow E2E Test
+// =============================================================================
+
+func TestE2E_FullDiscoveryFlow(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("end to end discovery and connection", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Setup: Create admin A with region A and graduated group A ("Seattle Mutual Aid")
+		adminAID := suite.registerOrGetUserID("disc_a", "disc_a@test.com", password)
+		defer suite.cleanup(adminAID)
+		suite.disableMFA(adminAID)
+		suite.makeUserVouchVerified(adminAID)
+		tokenA := suite.reloginUser("disc_a@test.com", password)
+
+		regionAID := suite.createTestRegionForGroups(adminAID)
+		defer suite.cleanupRegionsForGroups(regionAID)
+
+		groupAID, _ := suite.createGroup("Seattle Mutual Aid", []string{regionAID}, tokenA)
+		defer suite.cleanupGroups(groupAID)
+
+		gradAB, gradAC := suite.graduateGroup(groupAID, tokenA, regionAID, "disc_ga")
+		defer suite.cleanup(gradAB, gradAC)
+
+		// Setup: Create admin B with region B and graduated group B ("Portland Mutual Aid")
+		adminBID := suite.registerOrGetUserID("disc_b", "disc_b@test.com", password)
+		defer suite.cleanup(adminBID)
+		suite.disableMFA(adminBID)
+		suite.makeUserVouchVerified(adminBID)
+		tokenB := suite.reloginUser("disc_b@test.com", password)
+
+		regionBID := suite.createTestRegionForGroups(adminBID)
+		defer suite.cleanupRegionsForGroups(regionBID)
+
+		groupBID, _ := suite.createGroup("Portland Mutual Aid", []string{regionBID}, tokenB)
+		defer suite.cleanupGroups(groupBID)
+
+		gradBB, gradBC := suite.graduateGroup(groupBID, tokenB, regionBID, "disc_gb")
+		defer suite.cleanup(gradBB, gradBC)
+
+		// 1. Group A posts to topic board with tag "mutual-aid"
+		postResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/topic-board", map[string]interface{}{
+			"description": "Seattle neighborhood mutual aid network",
+			"tags":        []string{"mutual-aid", "safety"},
+		}, tokenA)
+		defer func() { _ = postResp.Body.Close() }()
+
+		if postResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(postResp.Body).Decode(&errBody)
+			t.Fatalf("Step 1: Expected 200 for topic post, got %d: %v", postResp.StatusCode, errBody)
+		}
+
+		var postingA map[string]interface{}
+		_ = json.NewDecoder(postResp.Body).Decode(&postingA)
+		if postingA["id"] == nil || postingA["id"] == "" {
+			t.Fatal("Step 1: Expected posting ID in response")
+		}
+
+		// 2. Group B admin browses topic board for "mutual-aid" — sees Group A's posting
+		browseResp := suite.request("GET", "/api/v1/topic-board?tag=mutual-aid&group_id="+groupBID, nil, tokenB)
+		defer func() { _ = browseResp.Body.Close() }()
+
+		if browseResp.StatusCode != http.StatusOK {
+			t.Fatalf("Step 2: Expected 200 for browse, got %d", browseResp.StatusCode)
+		}
+
+		var browseBody map[string]interface{}
+		_ = json.NewDecoder(browseResp.Body).Decode(&browseBody)
+		postings := browseBody["postings"].([]interface{})
+		if len(postings) != 1 {
+			t.Fatalf("Step 2: Expected 1 posting from group A, got %d", len(postings))
+		}
+		firstPosting := postings[0].(map[string]interface{})
+		if firstPosting["group_id"] != groupAID {
+			t.Errorf("Step 2: Expected group A posting, got group_id=%v", firstPosting["group_id"])
+		}
+
+		// 3. Group B admin proposes connection with Group A
+		proposeResp := suite.request("POST", "/api/v1/connections?proposer_group_id="+groupBID, map[string]interface{}{
+			"name":      "Mutual Aid Alliance",
+			"group_ids": []string{groupAID},
+		}, tokenB)
+		defer func() { _ = proposeResp.Body.Close() }()
+
+		if proposeResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(proposeResp.Body).Decode(&errBody)
+			t.Fatalf("Step 3: Expected 201, got %d: %v", proposeResp.StatusCode, errBody)
+		}
+
+		var proposal map[string]interface{}
+		_ = json.NewDecoder(proposeResp.Body).Decode(&proposal)
+		proposalID := proposal["id"].(string)
+
+		// 4. Group A admin sees pending proposal
+		pendingResp := suite.request("GET", "/api/v1/connection-proposals", nil, tokenA)
+		defer func() { _ = pendingResp.Body.Close() }()
+
+		if pendingResp.StatusCode != http.StatusOK {
+			t.Fatalf("Step 4: Expected 200 for pending proposals, got %d", pendingResp.StatusCode)
+		}
+
+		var pendingBody map[string]interface{}
+		_ = json.NewDecoder(pendingResp.Body).Decode(&pendingBody)
+		pendingProposals := pendingBody["proposals"].([]interface{})
+		if len(pendingProposals) == 0 {
+			t.Fatal("Step 4: Expected at least 1 pending proposal")
+		}
+
+		// 5. Group A admin accepts
+		acceptResp := suite.request("POST", "/api/v1/connection-proposals/"+proposalID+"/respond", map[string]interface{}{
+			"accept":   true,
+			"group_id": groupAID,
+		}, tokenA)
+		defer func() { _ = acceptResp.Body.Close() }()
+
+		if acceptResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(acceptResp.Body).Decode(&errBody)
+			t.Fatalf("Step 5: Expected 200, got %d: %v", acceptResp.StatusCode, errBody)
+		}
+
+		var acceptResult map[string]interface{}
+		_ = json.NewDecoder(acceptResp.Body).Decode(&acceptResult)
+		if acceptResult["status"] != "accepted" {
+			t.Errorf("Step 5: Expected status=accepted, got %v", acceptResult["status"])
+		}
+		connectionID, _ := acceptResult["connection_id"].(string)
+		if connectionID == "" {
+			t.Fatal("Step 5: Expected connection_id to be set")
+		}
+		defer suite.cleanupConnections(connectionID)
+
+		// 6. Both groups see the connection
+		listRespA := suite.request("GET", "/api/v1/connections", nil, tokenA)
+		defer func() { _ = listRespA.Body.Close() }()
+		if listRespA.StatusCode != http.StatusOK {
+			t.Fatalf("Step 6: Expected 200 from group A, got %d", listRespA.StatusCode)
+		}
+
+		var listBodyA map[string]interface{}
+		_ = json.NewDecoder(listRespA.Body).Decode(&listBodyA)
+		connectionsA := listBodyA["connections"].([]interface{})
+		if len(connectionsA) == 0 {
+			t.Error("Step 6: Expected group A to see at least one connection")
+		}
+
+		listRespB := suite.request("GET", "/api/v1/connections", nil, tokenB)
+		defer func() { _ = listRespB.Body.Close() }()
+		if listRespB.StatusCode != http.StatusOK {
+			t.Fatalf("Step 6: Expected 200 from group B, got %d", listRespB.StatusCode)
+		}
+
+		var listBodyB map[string]interface{}
+		_ = json.NewDecoder(listRespB.Body).Decode(&listBodyB)
+		connectionsB := listBodyB["connections"].([]interface{})
+		if len(connectionsB) == 0 {
+			t.Error("Step 6: Expected group B to see at least one connection")
+		}
+
+		// 7. Group A admin proposes a signal chat for the connection
+		chatPropResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/signal-group-proposals?proposer_group_id="+groupAID, map[string]interface{}{
+			"group_name":   "Alliance Chat",
+			"description":  "Cross-group coordination",
+			"access_level": "all_members",
+		}, tokenA)
+		defer func() { _ = chatPropResp.Body.Close() }()
+
+		if chatPropResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(chatPropResp.Body).Decode(&errBody)
+			t.Fatalf("Step 7: Expected 201, got %d: %v", chatPropResp.StatusCode, errBody)
+		}
+
+		var chatProposal map[string]interface{}
+		_ = json.NewDecoder(chatPropResp.Body).Decode(&chatProposal)
+		chatProposalID := chatProposal["id"].(string)
+
+		// 8. Group B admin approves the chat proposal
+		voteResp := suite.request("POST", "/api/v1/connection-chat-proposals/"+chatProposalID+"/vote", map[string]interface{}{
+			"approve":  true,
+			"group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = voteResp.Body.Close() }()
+
+		if voteResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(voteResp.Body).Decode(&errBody)
+			t.Fatalf("Step 8: Expected 200, got %d: %v", voteResp.StatusCode, errBody)
+		}
+
+		var voteResult map[string]interface{}
+		_ = json.NewDecoder(voteResp.Body).Decode(&voteResult)
+		if voteResult["status"] != "approved" {
+			t.Errorf("Step 8: Expected status=approved, got %v", voteResult["status"])
+		}
+
+		// 9. Connection signal groups visible
+		sgListResp := suite.request("GET", "/api/v1/connections/"+connectionID+"/signal-groups", nil, tokenA)
+		defer func() { _ = sgListResp.Body.Close() }()
+
+		if sgListResp.StatusCode != http.StatusOK {
+			t.Fatalf("Step 9: Expected 200, got %d", sgListResp.StatusCode)
+		}
+
+		var sgListBody map[string]interface{}
+		_ = json.NewDecoder(sgListResp.Body).Decode(&sgListBody)
+		signalGroups := sgListBody["signal_groups"].([]interface{})
+		if len(signalGroups) != 1 {
+			t.Fatalf("Step 9: Expected 1 signal group, got %d", len(signalGroups))
+		}
+
+		// 10. Group A creates a resource and shares it into the connection
+		createResourceResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/resources", map[string]interface{}{
+			"title":       "Emergency Contacts",
+			"url":         "https://example.com/emergency",
+			"description": "Shared emergency contact sheet",
+			"access_tier": "member",
+		}, tokenA)
+		defer func() { _ = createResourceResp.Body.Close() }()
+
+		if createResourceResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(createResourceResp.Body).Decode(&errBody)
+			t.Fatalf("Step 10a: Expected 201, got %d: %v", createResourceResp.StatusCode, errBody)
+		}
+
+		var createdResource map[string]interface{}
+		_ = json.NewDecoder(createResourceResp.Body).Decode(&createdResource)
+		resourceID := createdResource["id"].(string)
+
+		shareResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/shared-resources?proposer_group_id="+groupAID, map[string]interface{}{
+			"resource_id": resourceID,
+			"visibility":  "all_members",
+		}, tokenA)
+		defer func() { _ = shareResp.Body.Close() }()
+
+		if shareResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(shareResp.Body).Decode(&errBody)
+			t.Fatalf("Step 10b: Expected 201, got %d: %v", shareResp.StatusCode, errBody)
+		}
+
+		// 11. Group B sees the shared resource
+		sharedListResp := suite.request("GET", "/api/v1/connections/"+connectionID+"/shared-resources", nil, tokenB)
+		defer func() { _ = sharedListResp.Body.Close() }()
+
+		if sharedListResp.StatusCode != http.StatusOK {
+			t.Fatalf("Step 11: Expected 200, got %d", sharedListResp.StatusCode)
+		}
+
+		var sharedListBody map[string]interface{}
+		_ = json.NewDecoder(sharedListResp.Body).Decode(&sharedListBody)
+		sharedResources := sharedListBody["shared_resources"].([]interface{})
+		if len(sharedResources) != 1 {
+			t.Fatalf("Step 11: Expected 1 shared resource, got %d", len(sharedResources))
+		}
+
+		// 12. Group A unshares the resource
+		unshareResp := suite.request("DELETE", "/api/v1/connections/"+connectionID+"/shared-resources/"+resourceID, nil, tokenA)
+		defer func() { _ = unshareResp.Body.Close() }()
+
+		if unshareResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(unshareResp.Body).Decode(&errBody)
+			t.Fatalf("Step 12a: Expected 200, got %d: %v", unshareResp.StatusCode, errBody)
+		}
+
+		// Verify unshared
+		sharedListAfter := suite.request("GET", "/api/v1/connections/"+connectionID+"/shared-resources", nil, tokenA)
+		defer func() { _ = sharedListAfter.Body.Close() }()
+
+		var sharedAfterBody map[string]interface{}
+		_ = json.NewDecoder(sharedListAfter.Body).Decode(&sharedAfterBody)
+		sharedAfter := sharedAfterBody["shared_resources"].([]interface{})
+		if len(sharedAfter) != 0 {
+			t.Errorf("Step 12b: Expected 0 shared resources after unshare, got %d", len(sharedAfter))
+		}
+
+		// 13. Group B leaves the connection
+		leaveResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/leave?group_id="+groupBID, nil, tokenB)
+		defer func() { _ = leaveResp.Body.Close() }()
+
+		if leaveResp.StatusCode != http.StatusOK {
+			t.Fatalf("Step 13: Expected 200, got %d", leaveResp.StatusCode)
+		}
+
+		// 14. Connection dissolved (only 1 group left)
+		// When B leaves, only A remains — connection auto-dissolves
+		listAfterLeave := suite.request("GET", "/api/v1/connections", nil, tokenA)
+		defer func() { _ = listAfterLeave.Body.Close() }()
+
+		var listAfterBody map[string]interface{}
+		_ = json.NewDecoder(listAfterLeave.Body).Decode(&listAfterBody)
+		connectionsAfter := listAfterBody["connections"].([]interface{})
+		if len(connectionsAfter) != 0 {
+			t.Errorf("Step 14: Expected 0 connections after leave (dissolved), got %d", len(connectionsAfter))
+		}
+
+		// Cleanup topic board postings
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM topic_board_postings WHERE group_id IN (?, ?)", groupAID, groupBID)
+	})
+
+	t.Run("blocking filters topic board", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Create admin C with group C
+		adminCID := suite.registerOrGetUserID("disc_c", "disc_c@test.com", password)
+		defer suite.cleanup(adminCID)
+		suite.disableMFA(adminCID)
+		suite.makeUserVouchVerified(adminCID)
+		tokenC := suite.reloginUser("disc_c@test.com", password)
+
+		regionCID := suite.createTestRegionForGroups(adminCID)
+		defer suite.cleanupRegionsForGroups(regionCID)
+
+		groupCID, _ := suite.createGroup("Block Test Group C", []string{regionCID}, tokenC)
+		defer suite.cleanupGroups(groupCID)
+
+		// Create admin D with group D
+		adminDID := suite.registerOrGetUserID("disc_d", "disc_d@test.com", password)
+		defer suite.cleanup(adminDID)
+		suite.disableMFA(adminDID)
+		suite.makeUserVouchVerified(adminDID)
+		tokenD := suite.reloginUser("disc_d@test.com", password)
+
+		regionDID := suite.createTestRegionForGroups(adminDID)
+		defer suite.cleanupRegionsForGroups(regionDID)
+
+		groupDID, _ := suite.createGroup("Block Test Group D", []string{regionDID}, tokenD)
+		defer suite.cleanupGroups(groupDID)
+
+		// Group C posts to topic board
+		postCResp := suite.request("POST", "/api/v1/groups/"+groupCID+"/topic-board", map[string]interface{}{
+			"description": "Group C offering mutual aid",
+			"tags":        []string{"block-test"},
+		}, tokenC)
+		defer func() { _ = postCResp.Body.Close() }()
+
+		if postCResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for post C, got %d", postCResp.StatusCode)
+		}
+
+		// Group D browses, sees Group C
+		browseResp := suite.request("GET", "/api/v1/topic-board?tag=block-test&group_id="+groupDID, nil, tokenD)
+		defer func() { _ = browseResp.Body.Close() }()
+
+		var browseBody map[string]interface{}
+		_ = json.NewDecoder(browseResp.Body).Decode(&browseBody)
+		postings := browseBody["postings"].([]interface{})
+		if len(postings) != 1 {
+			t.Fatalf("Expected 1 posting before block, got %d", len(postings))
+		}
+
+		// Group D blocks Group C
+		blockResp := suite.request("POST", "/api/v1/groups/"+groupDID+"/blocks", map[string]interface{}{
+			"group_id": groupCID,
+		}, tokenD)
+		defer func() { _ = blockResp.Body.Close() }()
+
+		if blockResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for block, got %d", blockResp.StatusCode)
+		}
+
+		// Group D browses again, Group C is filtered out
+		browseAfterBlock := suite.request("GET", "/api/v1/topic-board?tag=block-test&group_id="+groupDID, nil, tokenD)
+		defer func() { _ = browseAfterBlock.Body.Close() }()
+
+		var browseAfterBody map[string]interface{}
+		_ = json.NewDecoder(browseAfterBlock.Body).Decode(&browseAfterBody)
+		filteredPostings := browseAfterBody["postings"].([]interface{})
+		if len(filteredPostings) != 0 {
+			t.Errorf("Expected 0 postings after blocking group C, got %d", len(filteredPostings))
+		}
+
+		// Cleanup
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM group_blocks WHERE blocker_group_id = ?", groupDID)
+		_, _ = suite.db.ExecContext(ctx, "DELETE FROM topic_board_postings WHERE group_id IN (?, ?)", groupCID, groupDID)
+	})
+
+	t.Run("unverified user can browse discoverable groups", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Create admin with a discoverable group
+		adminEID := suite.registerOrGetUserID("disc_e", "disc_e@test.com", password)
+		defer suite.cleanup(adminEID)
+		suite.disableMFA(adminEID)
+		suite.makeUserVouchVerified(adminEID)
+		tokenE := suite.reloginUser("disc_e@test.com", password)
+
+		regionEID := suite.createTestRegionForGroups(adminEID)
+		defer suite.cleanupRegionsForGroups(regionEID)
+
+		groupEID, _ := suite.createGroup("Discoverable Test Group", []string{regionEID}, tokenE)
+		defer suite.cleanupGroups(groupEID)
+
+		// Graduate the group so it becomes active
+		gradEB, gradEC := suite.graduateGroup(groupEID, tokenE, regionEID, "disc_ge")
+		defer suite.cleanup(gradEB, gradEC)
+
+		// Mark group as listed and discoverable by unverified users
+		_, err := suite.db.ExecContext(ctx,
+			"UPDATE `groups` SET status = 'active', visibility = 'listed', discoverable_by_unverified = TRUE WHERE id = ?",
+			groupEID)
+		if err != nil {
+			t.Fatalf("Failed to update group visibility: %v", err)
+		}
+
+		// Create an open-tier signal group (required for BrowseAll to return the group)
+		openSgResp := suite.request("POST", "/api/v1/groups/"+groupEID+"/signal-groups", map[string]interface{}{
+			"group_name":  "Open Welcome Chat",
+			"description": "Open to everyone",
+			"access_tier": "open",
+		}, tokenE)
+		defer func() { _ = openSgResp.Body.Close() }()
+
+		if openSgResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(openSgResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201 for open signal group, got %d: %v", openSgResp.StatusCode, errBody)
+		}
+
+		// Register an unverified user (no vouch verification)
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("disc_unverif", "disc_unverif@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		// Unverified user browses: GET /api/v1/groups/browse
+		browseResp := suite.request("GET", "/api/v1/groups/browse", nil, unverifiedToken)
+		defer func() { _ = browseResp.Body.Close() }()
+
+		if browseResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for unverified browse, got %d", browseResp.StatusCode)
+		}
+
+		var browseBody map[string]interface{}
+		_ = json.NewDecoder(browseResp.Body).Decode(&browseBody)
+		groups := browseBody["groups"].([]interface{})
+
+		// Find the discoverable group in the results
+		foundDiscoverable := false
+		for _, g := range groups {
+			groupData := g.(map[string]interface{})
+			if groupData["id"] == groupEID {
+				foundDiscoverable = true
+				break
+			}
+		}
+		if !foundDiscoverable {
+			t.Error("Expected unverified user to see the discoverable group in browse results")
+		}
+
+		// Create an invite link for the group
+		linkBody := suite.createInviteLink(groupEID, nil, tokenE)
+		inviteToken := linkBody["token"].(string)
+
+		// Unverified user joins via invite link
+		joinResp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, unverifiedToken)
+		defer func() { _ = joinResp.Body.Close() }()
+
+		if joinResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(joinResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for join, got %d: %v", joinResp.StatusCode, errBody)
+		}
+
+		// Verify user is a member
+		isMember, memberErr := suite.communityGroupRepo.IsUserMember(ctx, groupEID, unverifiedID)
+		if memberErr != nil {
+			t.Fatalf("Failed to check membership: %v", memberErr)
+		}
+		if !isMember {
+			t.Error("Expected unverified user to be a member after joining via invite link")
+		}
+	})
+}
