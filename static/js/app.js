@@ -50,6 +50,7 @@ import groupBrowsePage from './pages/groupBrowse.js';
 import groupDetailPage from './pages/groupDetail.js';
 import groupCreatePage from './pages/groupCreate.js';
 import groupManagePage from './pages/groupManage.js';
+import myGroupsPage from './pages/myGroups.js';
 import discoveryPage from './pages/discovery.js';
 import connectionsListPage from './pages/connectionsList.js';
 import connectionDetailPage from './pages/connectionDetail.js';
@@ -75,7 +76,7 @@ const routes = [
     { path: '/verify-email', page: verifyEmailPage, auth: false },
     { path: '/mfa/setup', page: mfaSetupPage, auth: false, mfaFlow: true },
     { path: '/mfa/verify', page: mfaVerifyPage, auth: false, mfaFlow: true },
-    { path: '/dashboard', page: dashboardPage, auth: true },
+    { path: '/dashboard', redirect: '/groups' },
     { path: '/communities', page: regionsPage, auth: true },
     { path: '/communities/:id', page: regionDetailPage, auth: true },
     { path: '/schools', page: schoolsPage, auth: true },
@@ -83,7 +84,7 @@ const routes = [
     { path: '/school-districts/:id', page: districtDetailPage, auth: true },
     { path: '/verify', page: verificationPage, auth: true },
     { path: '/vouch', page: vouchPage, auth: true },
-    { path: '/groups', page: groupsPage, auth: true, requiresReadAccess: true },
+    { path: '/groups', page: myGroupsPage, auth: true },
     { path: '/groups/browse', page: groupBrowsePage, auth: true },
     { path: '/groups/create', page: groupCreatePage, auth: true },
     { path: '/groups/:id', page: groupDetailPage, auth: true },
@@ -92,7 +93,7 @@ const routes = [
     { path: '/connections', page: connectionsListPage, auth: true },
     { path: '/connections/:id', page: connectionDetailPage, auth: true },
     { path: '/invitations', page: groupInvitationsPage, auth: true },
-    { path: '/meshtastic', page: meshtasticPage, auth: true, requiresReadAccess: true },
+    { path: '/meshtastic', page: meshtasticPage, auth: true },
     { path: '/admin/communities', page: createRegionPage, auth: true, requiresAdmin: true },
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },
     { path: '/admin/meshtastic', page: manageMeshtasticPage, auth: true, requiresAdmin: true },
@@ -197,6 +198,12 @@ async function handleRouteChange() {
 
     const { route, params } = match;
 
+    // Handle redirects
+    if (route.redirect) {
+        navigate(route.redirect);
+        return;
+    }
+
     // Check authentication
     if (route.auth && !isAuthenticated()) {
         navigate('/login');
@@ -205,7 +212,7 @@ async function handleRouteChange() {
 
     // Check guest-only routes
     if (route.guestOnly && isAuthenticated()) {
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 
@@ -217,14 +224,13 @@ async function handleRouteChange() {
 
     // Check admin requirement (needs BOTH postcard AND vouch verification)
     if (route.requiresAdmin && !isAdmin()) {
-        // Redirect to dashboard with message about needing both verifications
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 
     // Check superuser requirement (database-created accounts only)
     if (route.requiresSuperuser && !isSuperuser()) {
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 

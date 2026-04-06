@@ -271,7 +271,7 @@ function renderBackupCodes() {
     document.getElementById('codes-saved-checkbox').addEventListener('change', handleCheckboxChange);
     document.getElementById('continue-btn').addEventListener('click', () => {
         toast.success('Two-factor authentication is now enabled!');
-        navigate('/dashboard');
+        navigate('/groups');
     });
 }
 

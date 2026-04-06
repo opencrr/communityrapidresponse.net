@@ -432,7 +432,7 @@ async function handleCodeSubmit(event) {
         await getCurrentUser();
 
         toast.success('Your address has been verified! Welcome to the community.');
-        navigate('/dashboard');
+        navigate('/groups');
     } catch (error) {
         let errorMessage = 'Failed to verify code. Please try again.';
 

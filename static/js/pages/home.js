@@ -33,8 +33,8 @@ export async function render(container) {
                             <a href="/verify" class="btn btn--primary btn--lg" data-link>Verify Your Address</a>
                             <a href="/communities" class="btn btn--secondary btn--lg" data-link>Explore Communities</a>
                         ` : `
-                            <a href="/dashboard" class="btn btn--primary btn--lg" data-link>Go to Dashboard</a>
-                            <a href="/groups" class="btn btn--secondary btn--lg" data-link>View Groups</a>
+                            <a href="/groups" class="btn btn--primary btn--lg" data-link>My Groups</a>
+                            <a href="/discover" class="btn btn--secondary btn--lg" data-link>Discover</a>
                         `}
                     ` : `
                         <a href="/register" class="btn btn--primary btn--lg" data-link>Get Started</a>
