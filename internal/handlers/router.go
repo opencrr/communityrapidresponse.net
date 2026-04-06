@@ -1349,6 +1349,16 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for browse sub-route: /api/v1/groups/browse
+	if groupID == "browse" {
+		if req.Method == http.MethodGet {
+			r.authenticated(r.groups.Browse)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
 	// Check for join sub-route: /api/v1/groups/join/{token}
 	// Here groupID == "join" and parts[1] is the token
 	if groupID == "join" && len(parts) >= 2 {

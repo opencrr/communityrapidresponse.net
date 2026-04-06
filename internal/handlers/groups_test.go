@@ -1112,7 +1112,7 @@ func TestGroupHandler_JoinViaLink_Success(t *testing.T) {
 	}
 }
 
-func TestGroupHandler_JoinViaLink_UnverifiedUser(t *testing.T) {
+func TestGroupHandler_JoinViaLink_UnverifiedUserCanJoin(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
 	admin := suite.createTestUser("grpjoin_admin2", models.TierVouched, false)
@@ -1124,7 +1124,7 @@ func TestGroupHandler_JoinViaLink_UnverifiedUser(t *testing.T) {
 	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
 
 	createReq := &models.CreateGroupRequest{
-		Name:       "No Unverified",
+		Name:       "Open To All",
 		Visibility: "unlisted",
 		RegionIDs:  []string{region.ID},
 	}
@@ -1153,8 +1153,14 @@ func TestGroupHandler_JoinViaLink_UnverifiedUser(t *testing.T) {
 	rec := httptest.NewRecorder()
 	suite.handler.JoinViaLink(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify membership
+	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, unverified.ID)
+	if !isMember {
+		t.Error("Expected unverified user to be a member after joining via invite link")
 	}
 }
 
@@ -2222,5 +2228,300 @@ func TestGroupHandler_ListSignalGroups_NonMemberSeesOnlyOpen(t *testing.T) {
 	}
 	if len(signalGroups) != 1 {
 		t.Errorf("Expected non-member to see only 1 signal group (open), got %d", len(signalGroups))
+	}
+}
+
+// --- Browse Tests ---
+
+func TestGroupHandler_Browse_ReturnsListedGroupsWithDisclaimer(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpbrowse_listed", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpBrowseRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Listed Browse Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, user.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Force active + listed
+	_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", group.ID)
+
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(user)
+
+	req := httptest.NewRequest("GET", "/api/v1/groups/browse?region_id="+region.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.Browse(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+
+	// Check disclaimer is present
+	disclaimer, ok := result["disclaimer"].([]interface{})
+	if !ok || len(disclaimer) != 2 {
+		t.Errorf("Expected disclaimer array with 2 entries, got %v", result["disclaimer"])
+	}
+
+	// Check groups are present
+	groups, ok := result["groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected groups array in response")
+	}
+
+	found := false
+	for _, g := range groups {
+		gMap := g.(map[string]interface{})
+		if gMap["name"] == "Listed Browse Group" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected 'Listed Browse Group' in browse results")
+	}
+}
+
+func TestGroupHandler_Browse_WithRegionID(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpbrowse_region", models.TierVouched, false)
+	user.VouchVerified = true
+	region1 := suite.createTestRegion("GrpBrowseRegionA", models.RegionTypeCity, nil)
+	region2 := suite.createTestRegion("GrpBrowseRegionB", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region1.ID, false)
+
+	// Create group in region1
+	createReq1 := &models.CreateGroupRequest{
+		Name:       "Region1 Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region1.ID},
+	}
+	group1, err := suite.groupRepo.Create(ctx, createReq1, user.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", group1.ID)
+
+	// Create group in region2
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region2.ID, false)
+	createReq2 := &models.CreateGroupRequest{
+		Name:       "Region2 Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region2.ID},
+	}
+	group2, err := suite.groupRepo.Create(ctx, createReq2, user.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", group2.ID)
+
+	defer suite.cleanup([]string{user.ID}, []string{region1.ID, region2.ID}, []string{group1.ID, group2.ID})
+
+	// Browse with region1 filter
+	claims := suite.claimsForUser(user)
+
+	req := httptest.NewRequest("GET", "/api/v1/groups/browse?region_id="+region1.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.Browse(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+
+	groups, ok := result["groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected groups array in response")
+	}
+
+	// Region1 group should appear; Region2 group should not (unless it's discoverable)
+	foundRegion1 := false
+	foundRegion2 := false
+	for _, g := range groups {
+		gMap := g.(map[string]interface{})
+		if gMap["name"] == "Region1 Group" {
+			foundRegion1 = true
+		}
+		if gMap["name"] == "Region2 Group" {
+			foundRegion2 = true
+		}
+	}
+	if !foundRegion1 {
+		t.Error("Expected 'Region1 Group' in browse results for region1")
+	}
+	if foundRegion2 {
+		t.Error("Expected 'Region2 Group' NOT in browse results for region1")
+	}
+}
+
+func TestGroupHandler_Browse_UnverifiedUserSeesOnlyDiscoverable(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	// Admin creates groups
+	admin := suite.createTestUser("grpbrowse_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpBrowseRegionU", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	// Create a listed active group (non-discoverable)
+	createReq := &models.CreateGroupRequest{
+		Name:       "Normal Listed Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region.ID},
+	}
+	normalGroup, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", normalGroup.ID)
+
+	// Create a discoverable group with an open signal group
+	createReq2 := &models.CreateGroupRequest{
+		Name:       "Discoverable Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region.ID},
+	}
+	discoverableGroup, err := suite.groupRepo.Create(ctx, createReq2, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+	_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed', discoverable_by_unverified = TRUE WHERE id = ?", discoverableGroup.ID)
+
+	// Add an open-tier signal group
+	sg := &models.SignalGroup{
+		OwnerGroupID: &discoverableGroup.ID,
+		GroupName:     "Open Chat",
+		AccessTier:   models.AccessTierOpen,
+		CreatedBy:    &admin.ID,
+	}
+	if err := suite.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		t.Fatalf("Failed to create signal group: %v", err)
+	}
+
+	// Unverified user browsing without region_id
+	unverified := suite.createTestUser("grpbrowse_unv", models.TierUnverified, false)
+	defer suite.cleanup([]string{admin.ID, unverified.ID}, []string{region.ID}, []string{normalGroup.ID, discoverableGroup.ID})
+
+	claims := suite.claimsForUser(unverified)
+
+	req := httptest.NewRequest("GET", "/api/v1/groups/browse", nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.Browse(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+
+	groups, ok := result["groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected groups array in response")
+	}
+
+	// Only discoverable group should appear
+	foundNormal := false
+	foundDiscoverable := false
+	for _, g := range groups {
+		gMap := g.(map[string]interface{})
+		if gMap["name"] == "Normal Listed Group" {
+			foundNormal = true
+		}
+		if gMap["name"] == "Discoverable Group" {
+			foundDiscoverable = true
+		}
+	}
+	if foundNormal {
+		t.Error("Expected non-discoverable group NOT in BrowseAll results")
+	}
+	if !foundDiscoverable {
+		t.Error("Expected discoverable group in BrowseAll results")
+	}
+}
+
+// --- RespondToInvitation: unverified user can accept ---
+
+func TestGroupHandler_RespondToInvitation_UnverifiedUserCanAccept(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpresp_admin_uv", models.TierVouched, false)
+	admin.VouchVerified = true
+	unverifiedInvitee := suite.createTestUser("grpresp_uvinvitee", models.TierUnverified, false)
+	region := suite.createTestRegion("GrpRespRegionUV", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Invite Unverified Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	invitation, err := suite.groupRepo.CreateInvitation(ctx, group.ID, unverifiedInvitee.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create invitation: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, unverifiedInvitee.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(unverifiedInvitee)
+	respondBody := models.RespondToGroupInvitationRequest{Accept: true}
+	bodyBytes, _ := json.Marshal(respondBody)
+
+	req := httptest.NewRequest("POST", "/groups/invitations/"+invitation.ID+"/respond", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", invitation.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.RespondToInvitation(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify membership
+	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, unverifiedInvitee.ID)
+	if !isMember {
+		t.Error("Expected unverified invitee to be a member after accepting invitation")
 	}
 }

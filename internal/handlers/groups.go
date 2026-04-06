@@ -36,6 +36,53 @@ func NewGroupHandler(
 	}
 }
 
+// Browse handles GET /api/v1/groups/browse
+func (h *GroupHandler) Browse(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	regionID := r.URL.Query().Get("region_id")
+
+	var groups []models.GroupWithDetails
+	var err error
+
+	if regionID != "" {
+		// Check if user is verified in this region
+		includeDiscoverable := false
+		if claims.VouchVerified {
+			inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+			if regionErr != nil {
+				writeServerError(w, r, regionErr, "Failed to check region membership", "group", "browse")
+				return
+			}
+			includeDiscoverable = inRegion
+		}
+		groups, err = h.groupRepo.BrowseByRegion(r.Context(), regionID, includeDiscoverable)
+	} else {
+		groups, err = h.groupRepo.BrowseAll(r.Context())
+	}
+
+	if err != nil {
+		writeServerError(w, r, err, "Failed to browse groups", "group", "browse")
+		return
+	}
+
+	if groups == nil {
+		groups = []models.GroupWithDetails{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"groups": groups,
+		"disclaimer": []string{
+			"This platform verifies member residency. It does not verify, endorse, or guarantee the quality, safety, or leadership of any group.",
+			"Group names, descriptions, and claims are provided by the group's organizers, not by this platform.",
+		},
+	})
+}
+
 // Create handles POST /api/v1/groups
 func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -491,11 +538,6 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.VouchVerified {
-		writeError(w, http.StatusForbidden, "forbidden", "Vouch verification required to join groups")
-		return
-	}
-
 	token := getPathParam(r, "token")
 	if token == "" {
 		writeError(w, http.StatusBadRequest, "missing_parameter", "Invite token required")
@@ -529,31 +571,6 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if isMember {
 		writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
-		return
-	}
-
-	// Check user is verified in at least one of the group's regions
-	regions, err := h.groupRepo.GetRegions(r.Context(), link.GroupID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to get group regions", "group", "join_via_link")
-		return
-	}
-
-	inRegion := false
-	for _, region := range regions {
-		isMemberOfRegion, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check region membership", "group", "join_via_link")
-			return
-		}
-		if isMemberOfRegion {
-			inRegion = true
-			break
-		}
-	}
-
-	if !inRegion {
-		writeError(w, http.StatusForbidden, "forbidden", "You must be a verified member of at least one of the group's regions")
 		return
 	}
 
