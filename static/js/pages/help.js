@@ -33,12 +33,30 @@ export async function render(container) {
                     <section class="help-section">
                         <h2>What is Community Rapid Response?</h2>
                         <p>
-                            Community Rapid Response is a platform that connects verified neighbors and
+                            Community Rapid Response is a platform that connects neighbors and
                             school communities through secure Signal group chats. We help communities
-                            organize by creating geographic-based groups where members have proven they
-                            live in the area, and school-based groups where members are verified by
-                            their peers.
+                            organize by creating geographic-based groups where members have verified
+                            addresses in the area, and school-based groups where members are vouched
+                            for by their peers.
                         </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h2>What We Verify (and What We Don't)</h2>
+                        <div class="help-highlight">
+                            <p>
+                                This platform verifies <strong>member residency</strong> (that a person can
+                                receive mail at an address in a geographic area) and <strong>community vouches</strong>
+                                (that existing members recognize a person). It does not verify, endorse, or
+                                guarantee the quality, safety, or leadership of any group.
+                            </p>
+                            <p>
+                                Groups are registered on this platform by their organizers. Group names,
+                                descriptions, and claims are provided by those organizers, not by this platform.
+                                A group appearing here means its members have verified addresses in the area
+                                &mdash; nothing more.
+                            </p>
+                        </div>
                     </section>
 
                     <section class="help-section">
@@ -105,7 +123,7 @@ export async function render(container) {
                                 <strong>For communities:</strong> First, get vouched by community members
                                 to gain read-only access. Then, request postcard verification to prove your
                                 address. Once you have both vouch and postcard verification, you automatically
-                                gain admin rights for your verified community.
+                                gain admin rights for your community.
                             </p>
                             <p>
                                 <strong>For schools:</strong> Join a school and receive enough vouches from
@@ -169,7 +187,7 @@ export async function render(container) {
                             <p>
                                 Signal group invite links are protected with end-to-end encryption. The server
                                 never sees the plaintext link &mdash; it is encrypted in your browser before being
-                                sent, and only decrypted in the browsers of verified community members. See the
+                                sent, and only decrypted in the browsers of members with verified addresses. See the
                                 <strong>Encryption</strong> tab for details.
                             </p>
                         </div>
@@ -464,7 +482,7 @@ export async function render(container) {
                                 Meshtastic channel URLs (like Signal group invite links) are stored using
                                 end-to-end encryption. The server never sees the plaintext URL &mdash;
                                 it is encrypted in your browser before being sent, and only decrypted
-                                in the browsers of verified community members.
+                                in the browsers of members with verified addresses.
                             </p>
                         </div>
                         <ul class="help-list">

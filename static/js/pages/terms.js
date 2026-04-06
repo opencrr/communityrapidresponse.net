@@ -55,7 +55,7 @@ export async function render(container) {
                     </p>
                     <ul class="help-list">
                         <li><strong>Postcard verification</strong> requires a valid residential or business street address (PO Boxes and commercial mail receiving agencies are not accepted)</li>
-                        <li><strong>Vouch verification</strong> requires endorsement from verified members of the same community</li>
+                        <li><strong>Vouch verification</strong> requires vouches from members with verified addresses in the same community</li>
                         <li><strong>Admin status</strong> requires completion of both postcard and vouch verification</li>
                         <li><strong>School membership</strong> is verified through vouch-based verification by existing school members</li>
                     </ul>
@@ -74,7 +74,7 @@ export async function render(container) {
                         <li>Impersonate another person or misrepresent your identity</li>
                         <li>Send spam or unsolicited messages through the platform</li>
                         <li>Circumvent or attempt to circumvent the verification process</li>
-                        <li>Share Signal group invite links with people outside the verified community</li>
+                        <li>Share Signal group invite links with people outside your community's membership</li>
                         <li>Engage in any illegal activity or encourage others to do so</li>
                         <li>Attempt to gain unauthorized access to other accounts or platform systems</li>
                         <li>Interfere with or disrupt the Service or its infrastructure</li>

@@ -422,7 +422,7 @@ function renderCoordinationInstructions(bootstrapMode = false, vouchesNeeded = 2
                         <div class="instruction-step__number">2</div>
                         <div class="instruction-step__content">
                             <h4>Connect with Neighbors</h4>
-                            <p>Meet verified community members in person, through local events, or via existing Signal groups. Vouchers can be from anywhere in your city or county &mdash; they don't need to be in your exact neighborhood.</p>
+                            <p>Meet members with verified addresses in person, through local events, or via existing Signal groups. Vouchers can be from anywhere in your city or county &mdash; they don't need to be in your exact neighborhood.</p>
                         </div>
                     </div>
 

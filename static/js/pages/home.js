@@ -22,10 +22,10 @@ export async function render(container) {
         <div class="hero">
             <div class="hero__map" id="home-map"></div>
             <div class="hero__content">
-                <h1 class="hero__title">Connect with your neighbors through verified Signal groups</h1>
+                <h1 class="hero__title">Connect with your neighbors through address-verified Signal groups</h1>
                 <p class="hero__description">
                     Community Rapid Response helps communities organize by connecting neighbors through
-                    geographic-based Signal group chats. Verify your address to join your local community.
+                    geographic-based Signal group chats where members have verified addresses in the area.
                 </p>
                 <div class="hero__actions">
                     ${authenticated ? `
