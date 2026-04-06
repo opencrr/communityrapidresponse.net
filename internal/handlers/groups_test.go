@@ -2598,7 +2598,7 @@ func TestGroupHandler_CreateResource_AdminSuccess(t *testing.T) {
 	}
 }
 
-func TestGroupHandler_CreateResource_NonAdmin(t *testing.T) {
+func TestGroupHandler_CreateResource_MemberCanCreate(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
 	admin := suite.createTestUser("grpres_cr_na_admin", models.TierVouched, false)
@@ -2627,8 +2627,8 @@ func TestGroupHandler_CreateResource_NonAdmin(t *testing.T) {
 
 	claims := suite.claimsForUser(member)
 	body := models.CreateResourceRequest{
-		Title:      "Should Fail",
-		URL:        "https://fail.example.com",
+		Title:      "Member Resource",
+		URL:        "https://member-created.example.com",
 		AccessTier: "member",
 	}
 	bodyBytes, _ := json.Marshal(body)
@@ -2641,8 +2641,8 @@ func TestGroupHandler_CreateResource_NonAdmin(t *testing.T) {
 	rec := httptest.NewRecorder()
 	suite.handler.CreateResource(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Errorf("Expected 201 for member creating resource, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -3238,7 +3238,7 @@ func TestGroupHandler_TopicBoard_BrowseByTag(t *testing.T) {
 		}
 	})
 
-	t.Run("browse requires tag parameter", func(t *testing.T) {
+	t.Run("browse without tag returns all postings", func(t *testing.T) {
 		claims := suite.claimsForUser(adminA)
 		req := httptest.NewRequest("GET", "/topic-board?group_id="+groupA.ID, nil)
 		reqCtx := middleware.ContextWithUser(req.Context(), claims)
@@ -3247,8 +3247,8 @@ func TestGroupHandler_TopicBoard_BrowseByTag(t *testing.T) {
 		rec := httptest.NewRecorder()
 		suite.handler.BrowsePostings(rec, req)
 
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected 400, got %d", rec.Code)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

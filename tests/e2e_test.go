@@ -6010,17 +6010,18 @@ func TestE2E_GroupResources(t *testing.T) {
 			t.Fatalf("Expected 1 resource after delete, got %d", len(afterDeleteResources))
 		}
 
-		// --- Non-admin cannot create/update/delete ---
+		// --- Non-admin member CAN create resources ---
 		nonAdminCreateResp := suite.request("POST", "/api/v1/groups/"+groupID+"/resources", map[string]interface{}{
-			"title":      "Should Fail",
-			"url":        "https://fail.example.com",
+			"title":       "Member Created Resource",
+			"url":         "https://member-created.example.com",
 			"access_tier": "member",
 		}, memberToken)
 		defer func() { _ = nonAdminCreateResp.Body.Close() }()
-		if nonAdminCreateResp.StatusCode != http.StatusForbidden {
-			t.Errorf("Expected 403 for non-admin create, got %d", nonAdminCreateResp.StatusCode)
+		if nonAdminCreateResp.StatusCode != http.StatusCreated {
+			t.Errorf("Expected 201 for member create, got %d", nonAdminCreateResp.StatusCode)
 		}
 
+		// --- Non-admin cannot update/delete resources ---
 		// Get remaining resource ID for update/delete test
 		remainingResource := afterDeleteResources[0].(map[string]interface{})
 		remainingID := remainingResource["id"].(string)
