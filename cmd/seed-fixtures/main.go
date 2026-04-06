@@ -402,36 +402,41 @@ func main() {
 		id           string
 		ownerGroupID string
 		groupName    string
+		description  string
 		accessTier   string
 	}
 
 	signalGroups := []signalGroupFixture{
-		// Seattle Mutual Aid
-		{"sg-seattle-ma-general", groupSeattleMA, "General Chat", "open"},
-		{"sg-seattle-ma-ops", groupSeattleMA, "Operations", "member"},
-		{"sg-seattle-ma-lead", groupSeattleMA, "Leadership", "admin_only"},
-		// Seattle Tenants Union
-		{"sg-seattle-tu-main", groupSeattleTenants, "Main Chat", "member"},
-		{"sg-seattle-tu-legal", groupSeattleTenants, "Legal Resources", "trusted"},
-		// Portland Mutual Aid
-		{"sg-portland-ma-welcome", groupPortlandMA, "Welcome", "open"},
-		{"sg-portland-ma-planning", groupPortlandMA, "Planning", "member"},
-		// Chicago Disaster Prep
-		{"sg-chicago-dp-general", groupChicagoDP, "General", "member"},
-		{"sg-chicago-dp-emergency", groupChicagoDP, "Emergency Response", "trusted"},
-		// The Secret Society
-		{"sg-secret-inner", groupSecretSociety, "Inner Circle", "member"},
-		// Open Community Hub
-		{"sg-open-hub-public", groupOpenHub, "Public Chat", "open"},
-		{"sg-open-hub-members", groupOpenHub, "Members Only", "member"},
+		// Seattle Mutual Aid (3 chats spanning all access levels)
+		{"sg-seattle-ma-general", groupSeattleMA, "General Chat", "Open chat for anyone interested in mutual aid in Seattle. Introduce yourself!", "open"},
+		{"sg-seattle-ma-ops", groupSeattleMA, "Operations", "Coordination for active mutual aid operations, supply runs, and volunteer scheduling.", "member"},
+		{"sg-seattle-ma-lead", groupSeattleMA, "Leadership", "Admin coordination, budget discussions, and strategic planning.", "admin_only"},
+		// Seattle Tenants Union (2 chats)
+		{"sg-seattle-tu-main", groupSeattleTenants, "Main Chat", "General discussion for Seattle tenants. Share experiences, ask questions, support each other.", "member"},
+		{"sg-seattle-tu-legal", groupSeattleTenants, "Legal Resources", "Sensitive legal discussions and case coordination. Trusted members only.", "trusted"},
+		// Portland Mutual Aid (3 chats)
+		{"sg-portland-ma-welcome", groupPortlandMA, "Welcome", "Open chat for newcomers. Learn about Portland mutual aid and how to get involved.", "open"},
+		{"sg-portland-ma-planning", groupPortlandMA, "Planning", "Weekly planning and coordination for active projects.", "member"},
+		{"sg-portland-ma-trusted", groupPortlandMA, "Trusted Circle", "Sensitive operational discussions for trusted members.", "trusted"},
+		// Chicago Disaster Prep (3 chats)
+		{"sg-chicago-dp-general", groupChicagoDP, "General", "General discussion about disaster preparedness in Chicago.", "member"},
+		{"sg-chicago-dp-emergency", groupChicagoDP, "Emergency Response", "Active emergency coordination. Trusted members with training only.", "trusted"},
+		{"sg-chicago-dp-public", groupChicagoDP, "Public Info", "Open channel for sharing public safety info and preparedness tips.", "open"},
+		// The Secret Society (2 chats)
+		{"sg-secret-inner", groupSecretSociety, "Inner Circle", "Main discussion space.", "member"},
+		{"sg-secret-ops", groupSecretSociety, "Operations", "Operational planning for trusted members.", "trusted"},
+		// Open Community Hub (3 chats)
+		{"sg-open-hub-public", groupOpenHub, "Public Chat", "Open to everyone! General community discussion, events, and announcements.", "open"},
+		{"sg-open-hub-members", groupOpenHub, "Members Only", "Member discussions, project planning, and coordination.", "member"},
+		{"sg-open-hub-admin", groupOpenHub, "Admin Channel", "Admin coordination and moderation discussion.", "admin_only"},
 	}
 
 	for _, sg := range signalGroups {
 		_, err := db.ExecContext(ctx, `
 			INSERT IGNORE INTO signal_groups
-				(id, owner_group_id, group_name, access_tier, is_active, created_at)
-			VALUES (?, ?, ?, ?, TRUE, ?)
-		`, sg.id, sg.ownerGroupID, sg.groupName, sg.accessTier, now)
+				(id, owner_group_id, group_name, description, access_tier, is_active, created_at)
+			VALUES (?, ?, ?, ?, ?, TRUE, ?)
+		`, sg.id, sg.ownerGroupID, sg.groupName, sg.description, sg.accessTier, now)
 		if err != nil {
 			log.Fatalf("failed to insert signal group %s: %v", sg.groupName, err)
 		}
@@ -443,34 +448,64 @@ func main() {
 	// =========================================================================
 	slog.Info("seeding group resources...")
 
-	type resourceFixture struct {
-		id         string
-		groupID    string
-		title      string
-		url        string
-		accessTier string
-		createdBy  string
+	type resourceFixtureWithDesc struct {
+		id          string
+		groupID     string
+		title       string
+		url         string
+		description string
+		accessTier  string
+		createdBy   string
 	}
 
-	resources := []resourceFixture{
-		{"res-ma-handbook", groupSeattleMA, "Mutual Aid Handbook", "https://example.com/ma-handbook", "open", userBob},
-		{"res-volunteer-schedule", groupSeattleMA, "Volunteer Schedule", "https://example.com/schedule", "member", userBob},
-		{"res-tenant-rights", groupSeattleTenants, "Tenant Rights Guide", "https://example.com/rights", "member", userCarol},
-		{"res-logistics", groupPortlandMA, "Supply Chain Logistics", "https://example.com/logistics", "member", userFrank},
-		{"res-contacts", groupChicagoDP, "Emergency Contact Sheet", "https://example.com/contacts", "trusted", userHeidi},
-		{"res-calendar", groupOpenHub, "Community Calendar", "https://example.com/calendar", "open", userBob},
+	resourcesWithDesc := []resourceFixtureWithDesc{
+		// Seattle Mutual Aid (5 resources)
+		{"res-ma-handbook", groupSeattleMA, "Mutual Aid Handbook", "https://docs.google.com/document/d/example-ma-handbook", "Comprehensive guide to running mutual aid operations. Covers logistics, communication, and volunteer management.", "open", userBob},
+		{"res-volunteer-schedule", groupSeattleMA, "Volunteer Schedule", "https://docs.google.com/spreadsheets/d/example-volunteer-schedule", "Weekly volunteer sign-up sheet. Update your availability here.", "member", userBob},
+		{"res-ma-budget", groupSeattleMA, "Budget Tracker", "https://docs.google.com/spreadsheets/d/example-budget", "Donation tracking and expense reporting. Admin eyes only.", "admin_only", userAlice},
+		{"res-ma-onboarding", groupSeattleMA, "New Volunteer Onboarding", "https://docs.google.com/document/d/example-onboarding", "Step-by-step guide for new volunteers joining the team.", "member", userBob},
+		{"res-ma-safety", groupSeattleMA, "Safety Protocols", "https://docs.google.com/document/d/example-safety", "Safety guidelines for supply runs and in-person events.", "trusted", userAlice},
+
+		// Seattle Tenants Union (4 resources)
+		{"res-tenant-rights", groupSeattleTenants, "WA Tenant Rights Guide", "https://www.washingtonlawhelp.org/resource/tenants-rights", "Washington state tenant rights overview from WA Law Help.", "member", userCarol},
+		{"res-tenant-hotline", groupSeattleTenants, "Tenant Hotline Numbers", "https://docs.google.com/document/d/example-hotlines", "Emergency hotline numbers for tenant emergencies, legal aid, and housing assistance.", "open", userCarol},
+		{"res-tenant-legal-templates", groupSeattleTenants, "Legal Letter Templates", "https://docs.google.com/document/d/example-legal-templates", "Template letters for landlord disputes, repair requests, and lease issues. Trusted members only.", "trusted", userCarol},
+		{"res-tenant-meeting-notes", groupSeattleTenants, "Meeting Notes Archive", "https://docs.google.com/document/d/example-meeting-notes", "Running notes from weekly tenant union meetings.", "member", userCarol},
+
+		// Portland Mutual Aid (4 resources)
+		{"res-logistics", groupPortlandMA, "Supply Chain Logistics", "https://docs.google.com/spreadsheets/d/example-logistics", "Tracking sheet for supply donations, storage locations, and distribution routes.", "member", userFrank},
+		{"res-portland-guide", groupPortlandMA, "Portland MA Getting Started", "https://docs.google.com/document/d/example-portland-start", "How to get involved with Portland mutual aid. Open to everyone.", "open", userFrank},
+		{"res-portland-contacts", groupPortlandMA, "Partner Organizations", "https://docs.google.com/document/d/example-partners", "Contact info for partner orgs, food banks, shelters, and community centers.", "member", userFrank},
+		{"res-portland-ops-manual", groupPortlandMA, "Operations Manual", "https://docs.google.com/document/d/example-ops-manual", "Detailed procedures for supply runs, volunteer coordination, and emergency response.", "trusted", userFrank},
+
+		// Chicago Disaster Prep (5 resources)
+		{"res-contacts", groupChicagoDP, "Emergency Contact Sheet", "https://docs.google.com/spreadsheets/d/example-emergency-contacts", "Emergency contacts for first responders, hospitals, shelters, and utility companies.", "trusted", userHeidi},
+		{"res-chicago-go-bag", groupChicagoDP, "Go-Bag Checklist", "https://docs.google.com/document/d/example-go-bag", "What to pack in your emergency go-bag. Printable checklist.", "open", userHeidi},
+		{"res-chicago-comms", groupChicagoDP, "Emergency Comms Plan", "https://docs.google.com/document/d/example-comms-plan", "Communication protocols during emergencies. Radio frequencies, check-in procedures, rally points.", "member", userHeidi},
+		{"res-chicago-training", groupChicagoDP, "Training Materials", "https://docs.google.com/drive/folders/example-training", "First aid, CPR, and disaster response training materials and videos.", "member", userHeidi},
+		{"res-chicago-shelter", groupChicagoDP, "Shelter Location Map", "https://www.google.com/maps/d/example-shelters", "Map of emergency shelters across Chicago with capacity and contact info.", "open", userHeidi},
+
+		// The Secret Society (2 resources)
+		{"res-secret-manifesto", groupSecretSociety, "The Manifesto", "https://docs.google.com/document/d/example-manifesto", "Our founding principles and operating guidelines.", "member", userKarl},
+		{"res-secret-contacts", groupSecretSociety, "Member Directory", "https://docs.google.com/spreadsheets/d/example-directory", "Contact information for all members. Handle with care.", "trusted", userKarl},
+
+		// Open Community Hub (4 resources)
+		{"res-calendar", groupOpenHub, "Community Calendar", "https://calendar.google.com/calendar/example-community", "Upcoming community events, meetings, and social gatherings. Open to all.", "open", userBob},
+		{"res-hub-local-biz", groupOpenHub, "Local Business Directory", "https://docs.google.com/spreadsheets/d/example-local-biz", "Community-maintained list of local businesses, services, and resources.", "open", userBob},
+		{"res-hub-projects", groupOpenHub, "Active Projects Board", "https://docs.google.com/document/d/example-projects", "Current community projects and how to get involved.", "member", userBob},
+		{"res-hub-minutes", groupOpenHub, "Meeting Minutes", "https://docs.google.com/document/d/example-hub-minutes", "Notes from community meetings and decisions made.", "member", userBob},
 	}
 
-	for _, r := range resources {
+	for _, r := range resourcesWithDesc {
 		_, err := db.ExecContext(ctx, `
-			INSERT IGNORE INTO group_resources (id, group_id, title, url, access_tier, created_by, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, r.id, r.groupID, r.title, r.url, r.accessTier, r.createdBy, now)
+			INSERT IGNORE INTO group_resources (id, group_id, title, url, description, access_tier, created_by, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, r.id, r.groupID, r.title, r.url, r.description, r.accessTier, r.createdBy, now)
 		if err != nil {
 			log.Fatalf("failed to insert resource %s: %v", r.title, err)
 		}
 	}
-	slog.Info("group resources seeded", "count", len(resources))
+	slog.Info("group resources seeded", "count", len(resourcesWithDesc))
 
 	// =========================================================================
 	// Trust Vouches
