@@ -4468,7 +4468,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		}
 	})
 
-	t.Run("join via link requires verification", func(t *testing.T) {
+	t.Run("unverified user can join via invite link", func(t *testing.T) {
 		password := "testpassword123!"
 
 		// Admin creates group + invite link
@@ -4481,21 +4481,27 @@ func TestE2E_GroupFormation(t *testing.T) {
 		regionID := suite.createTestRegionForGroups(adminID)
 		defer suite.cleanupRegionsForGroups(regionID)
 
-		groupID, _ := suite.createGroup("Verify Required Group", []string{regionID}, adminToken)
+		groupID, _ := suite.createGroup("Open Join Group", []string{regionID}, adminToken)
 		defer suite.cleanupGroups(groupID)
 
 		linkBody := suite.createInviteLink(groupID, nil, adminToken)
 		inviteToken := linkBody["token"].(string)
 
-		// Unverified user tries to join
+		// Unverified user joins via link — should succeed
 		unverifiedID, unverifiedToken := suite.registerOrGetUser("gf_jnv_uv", "gf_jnv_uv@test.com", password)
 		defer suite.cleanup(unverifiedID)
 
 		resp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, unverifiedToken)
 		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("Expected 403, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		// Verify membership
+		isMember, _ := suite.communityGroupRepo.IsUserMember(context.Background(), groupID, unverifiedID)
+		if !isMember {
+			t.Error("Expected unverified user to be a member after joining via invite link")
 		}
 	})
 
@@ -5502,6 +5508,340 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 			if sgMap["access_tier"] != "open" {
 				t.Errorf("Expected access_tier=open, got %v", sgMap["access_tier"])
 			}
+		}
+	})
+}
+
+func TestE2E_GroupBrowsing(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("listed active group appears in browse results", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		userID := suite.registerOrGetUserID("gb_listed", "gb_listed@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gb_listed@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Browse Listed Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		// Force active + listed
+		_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", groupID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse?region_id="+regionID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, ok := body["groups"].([]interface{})
+		if !ok {
+			t.Fatal("Expected groups array")
+		}
+
+		found := false
+		for _, g := range groups {
+			gMap := g.(map[string]interface{})
+			if gMap["name"] == "Browse Listed Group" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected listed active group in browse results")
+		}
+	})
+
+	t.Run("unlisted group does not appear in browse", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userID := suite.registerOrGetUserID("gb_unlisted", "gb_unlisted@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gb_unlisted@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Browse Unlisted Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		// Group is unlisted by default, force active
+		_, _ = suite.db.ExecContext(context.Background(), "UPDATE `groups` SET status = 'active' WHERE id = ?", groupID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse?region_id="+regionID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, _ := body["groups"].([]interface{})
+		for _, g := range groups {
+			gMap := g.(map[string]interface{})
+			if gMap["name"] == "Browse Unlisted Group" {
+				t.Error("Expected unlisted group NOT in browse results")
+			}
+		}
+	})
+
+	t.Run("provisional group does not appear in browse", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userID := suite.registerOrGetUserID("gb_prov", "gb_prov@test.com", password)
+		defer suite.cleanup(userID)
+		suite.disableMFA(userID)
+		suite.makeUserVouchVerified(userID)
+		token := suite.reloginUser("gb_prov@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(userID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Browse Provisional Group", []string{regionID}, token)
+		defer suite.cleanupGroups(groupID)
+
+		// Force listed but stay provisional
+		_, _ = suite.db.ExecContext(context.Background(), "UPDATE `groups` SET visibility = 'listed' WHERE id = ?", groupID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse?region_id="+regionID, nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, _ := body["groups"].([]interface{})
+		for _, g := range groups {
+			gMap := g.(map[string]interface{})
+			if gMap["name"] == "Browse Provisional Group" {
+				t.Error("Expected provisional group NOT in browse results")
+			}
+		}
+	})
+
+	t.Run("discoverable group visible to unverified user", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Admin creates a discoverable group with open signal group
+		adminID := suite.registerOrGetUserID("gb_disc_ad", "gb_disc_ad@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gb_disc_ad@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Discoverable Browse Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		// Force active, listed, discoverable
+		_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed', discoverable_by_unverified = TRUE WHERE id = ?", groupID)
+
+		// Create an open signal group
+		_, _ = suite.db.ExecContext(ctx, `
+			INSERT INTO signal_groups (id, owner_group_id, group_name, access_tier, is_active, created_at)
+			VALUES (UUID(), ?, 'Open Browse Chat', 'open', TRUE, NOW())
+		`, groupID)
+
+		// Unverified user browses without region_id (BrowseAll)
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("gb_disc_uv", "gb_disc_uv@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse", nil, unverifiedToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, ok := body["groups"].([]interface{})
+		if !ok {
+			t.Fatal("Expected groups array")
+		}
+
+		found := false
+		for _, g := range groups {
+			gMap := g.(map[string]interface{})
+			if gMap["name"] == "Discoverable Browse Group" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected discoverable group in BrowseAll results for unverified user")
+		}
+	})
+
+	t.Run("non-discoverable group hidden from unverified user", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		adminID := suite.registerOrGetUserID("gb_ndisc_ad", "gb_ndisc_ad@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gb_ndisc_ad@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Non-Discoverable Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		// Active + listed but NOT discoverable (default)
+		_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", groupID)
+
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("gb_ndisc_uv", "gb_ndisc_uv@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse", nil, unverifiedToken)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		groups, _ := body["groups"].([]interface{})
+		for _, g := range groups {
+			gMap := g.(map[string]interface{})
+			if gMap["name"] == "Non-Discoverable Group" {
+				t.Error("Expected non-discoverable group NOT in BrowseAll results")
+			}
+		}
+	})
+
+	t.Run("disclaimer present in browse response", func(t *testing.T) {
+		password := "testpassword123!"
+
+		userID, token := suite.registerOrGetUser("gb_disclaim", "gb_disclaim@test.com", password)
+		defer suite.cleanup(userID)
+
+		resp := suite.request("GET", "/api/v1/groups/browse", nil, token)
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+
+		disclaimer, ok := body["disclaimer"].([]interface{})
+		if !ok || len(disclaimer) != 2 {
+			t.Errorf("Expected disclaimer array with 2 entries, got %v", body["disclaimer"])
+		}
+	})
+
+	t.Run("unverified user can join group via invite link", func(t *testing.T) {
+		password := "testpassword123!"
+
+		adminID := suite.registerOrGetUserID("gb_ujoin_ad", "gb_ujoin_ad@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gb_ujoin_ad@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Unverified Join Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		linkBody := suite.createInviteLink(groupID, nil, adminToken)
+		inviteToken := linkBody["token"].(string)
+
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("gb_ujoin_uv", "gb_ujoin_uv@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		joinResp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, unverifiedToken)
+		defer func() { _ = joinResp.Body.Close() }()
+
+		if joinResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(joinResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200, got %d: %v", joinResp.StatusCode, errBody)
+		}
+
+		isMember, _ := suite.communityGroupRepo.IsUserMember(context.Background(), groupID, unverifiedID)
+		if !isMember {
+			t.Error("Expected unverified user to be a member after joining via invite link")
+		}
+	})
+
+	t.Run("unverified user can accept invitation", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		adminID := suite.registerOrGetUserID("gb_uinv_ad", "gb_uinv_ad@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gb_uinv_ad@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Unverified Invite Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		// Register unverified user
+		unverifiedID, unverifiedToken := suite.registerOrGetUser("gb_uinv_uv", "gb_uinv_uv@test.com", password)
+		defer suite.cleanup(unverifiedID)
+
+		// Admin invites unverified user
+		invResp := suite.request("POST", "/api/v1/groups/"+groupID+"/invitations", map[string]string{
+			"user_id": unverifiedID,
+		}, adminToken)
+		defer func() { _ = invResp.Body.Close() }()
+
+		if invResp.StatusCode != http.StatusCreated {
+			t.Fatalf("Expected 201 for invitation, got %d", invResp.StatusCode)
+		}
+
+		var invBody map[string]interface{}
+		_ = json.NewDecoder(invResp.Body).Decode(&invBody)
+		invitationID := invBody["id"].(string)
+
+		// Unverified user accepts invitation
+		acceptResp := suite.request("POST", "/api/v1/group-invitations/"+invitationID+"/respond", map[string]interface{}{
+			"accept": true,
+		}, unverifiedToken)
+		defer func() { _ = acceptResp.Body.Close() }()
+
+		if acceptResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(acceptResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200, got %d: %v", acceptResp.StatusCode, errBody)
+		}
+
+		isMember, _ := suite.communityGroupRepo.IsUserMember(ctx, groupID, unverifiedID)
+		if !isMember {
+			t.Error("Expected unverified user to be a member after accepting invitation")
 		}
 	})
 }
