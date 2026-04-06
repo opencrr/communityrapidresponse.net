@@ -28,6 +28,7 @@ type Group struct {
 	FoundingThreshold     *int            `json:"founding_threshold,omitempty" db:"founding_threshold"`
 	TrustedVouchThreshold    int             `json:"trusted_vouch_threshold" db:"trusted_vouch_threshold"`
 	DiscoverableByUnverified bool            `json:"discoverable_by_unverified" db:"discoverable_by_unverified"`
+	ShowAddressVerification  bool            `json:"show_address_verification" db:"show_address_verification"`
 	CreatedBy         *string         `json:"created_by" db:"created_by"`
 	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
@@ -62,6 +63,7 @@ type GroupMemberWithUser struct {
 	GroupMember
 	Username         string `json:"username" db:"username"`
 	VerificationTier int    `json:"verification_tier" db:"verification_tier"`
+	AddressVerified  bool   `json:"address_verified" db:"address_verified"`
 }
 
 // CreateGroupRequest is the request body for creating a new group.
@@ -80,6 +82,7 @@ type UpdateGroupRequest struct {
 	Visibility  *string   `json:"visibility" validate:"omitempty,oneof=listed unlisted"`
 	TopicTags                *[]string `json:"topic_tags" validate:"omitempty,max=10,dive,max=100"`
 	DiscoverableByUnverified *bool     `json:"discoverable_by_unverified"`
+	ShowAddressVerification  *bool     `json:"show_address_verification"`
 }
 
 // AccessTier defines the access level required to see a signal chat's invite link.
