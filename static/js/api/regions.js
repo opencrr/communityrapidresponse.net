@@ -128,7 +128,7 @@ export async function getRegionMembers(regionId) {
  */
 export async function getMyRegions() {
     try {
-        const response = await get('/communities');
+        const response = await get('/communities', { mine: 'true' });
         return response.regions || response || [];
     } catch (error) {
         if (error instanceof ApiError && error.status === 404) {

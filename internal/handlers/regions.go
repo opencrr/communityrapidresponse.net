@@ -42,6 +42,17 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If ?mine=true, return only the user's own regions regardless of superuser status
+	if r.URL.Query().Get("mine") == "true" {
+		regions, err := h.regionRepo.ListForUser(r.Context(), claims.UserID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to list user regions", "regions", "list_for_user")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"regions": regions})
+		return
+	}
+
 	// Superusers can see all regions and use filters
 	if claims.IsSuperuser {
 		// Parse query parameters
