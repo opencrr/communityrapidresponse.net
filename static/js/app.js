@@ -50,6 +50,10 @@ import groupBrowsePage from './pages/groupBrowse.js';
 import groupDetailPage from './pages/groupDetail.js';
 import groupCreatePage from './pages/groupCreate.js';
 import groupManagePage from './pages/groupManage.js';
+import discoveryPage from './pages/discovery.js';
+import connectionsListPage from './pages/connectionsList.js';
+import connectionDetailPage from './pages/connectionDetail.js';
+import groupInvitationsPage from './pages/groupInvitations.js';
 
 // Route definitions
 // - auth: requires login
@@ -84,6 +88,10 @@ const routes = [
     { path: '/groups/create', page: groupCreatePage, auth: true },
     { path: '/groups/:id', page: groupDetailPage, auth: true },
     { path: '/groups/:id/manage', page: groupManagePage, auth: true },
+    { path: '/discover', page: discoveryPage, auth: true },
+    { path: '/connections', page: connectionsListPage, auth: true },
+    { path: '/connections/:id', page: connectionDetailPage, auth: true },
+    { path: '/invitations', page: groupInvitationsPage, auth: true },
     { path: '/meshtastic', page: meshtasticPage, auth: true, requiresReadAccess: true },
     { path: '/admin/communities', page: createRegionPage, auth: true, requiresAdmin: true },
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },

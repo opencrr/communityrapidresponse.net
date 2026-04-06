@@ -3670,3 +3670,139 @@ ul, ol {
 .manage-tab-content {
     min-height: 200px;
 }
+
+/* --------------------------------------------
+   Discovery
+   -------------------------------------------- */
+
+.discovery__controls {
+    display: flex;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+}
+
+.discovery__results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--space-4);
+}
+
+.posting-card {
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+}
+
+.posting-card__region {
+    color: var(--color-gray-500);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-2);
+}
+
+.posting-card__description {
+    margin-bottom: var(--space-3);
+}
+
+.posting-card__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* --------------------------------------------
+   Connections
+   -------------------------------------------- */
+
+.connection-card {
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.connection-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.connection-card__groups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.connection-detail__section {
+    margin-top: var(--space-6);
+}
+
+.connection-detail__section-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--color-gray-200);
+}
+
+/* --------------------------------------------
+   Proposals
+   -------------------------------------------- */
+
+.proposal-card {
+    background: var(--color-warning-light, #fef3cd);
+    border: 1px solid var(--color-warning, #ca8a04);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+}
+
+.proposal-card__actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+/* --------------------------------------------
+   Invitations
+   -------------------------------------------- */
+
+.invitation-card {
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.invitation-card__actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+/* --------------------------------------------
+   Visibility Badges
+   -------------------------------------------- */
+
+.visibility-badge {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+}
+
+.visibility-badge--admin_only {
+    background: #fef2f2;
+    color: var(--color-error);
+}
+
+.visibility-badge--all_members {
+    background: var(--color-success-bg, #ecfdf5);
+    color: var(--color-success);
+}
