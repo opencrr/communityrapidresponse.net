@@ -56,6 +56,9 @@ func cleanupConnectionTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs, c
 	ctx := context.Background()
 
 	for _, connID := range connectionIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM connection_chat_proposal_votes WHERE proposal_id IN (SELECT id FROM connection_chat_proposals WHERE connection_id = ?)", connID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM connection_chat_proposals WHERE connection_id = ?", connID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM connection_proposal_groups WHERE proposal_id IN (SELECT id FROM connection_proposals WHERE connection_id = ?)", connID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM connection_proposals WHERE connection_id = ?", connID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM connection_members WHERE connection_id = ?", connID)
@@ -466,6 +469,200 @@ func TestConnectionRepository_CheckUnanimousBlock(t *testing.T) {
 // =============================================================================
 // ListPendingProposalsForGroup Tests
 // =============================================================================
+
+// =============================================================================
+// ProposeSignalChat Tests
+// =============================================================================
+
+func TestConnectionRepository_ProposeSignalChat(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "propose_chat1")
+	regionID := createConnectionTestRegion(t, db, "Propose Chat Region")
+	groupAID := createConnectionTestGroup(t, db, "Propose Chat A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Propose Chat B", userID, regionID)
+
+	// Form connection
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	chatProposal, err := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Test Chat",
+		Description: "A test chat",
+		AccessLevel: "admin_only",
+	})
+	if err != nil {
+		t.Fatalf("ProposeSignalChat failed: %v", err)
+	}
+	if chatProposal.Status != "pending" {
+		t.Errorf("Expected status=pending, got %s", chatProposal.Status)
+	}
+	if chatProposal.GroupName != "Test Chat" {
+		t.Errorf("Expected group_name=Test Chat, got %s", chatProposal.GroupName)
+	}
+	if len(chatProposal.Votes) != 2 {
+		t.Fatalf("Expected 2 votes, got %d", len(chatProposal.Votes))
+	}
+
+	// Proposer should be auto-approved
+	for _, v := range chatProposal.Votes {
+		if v.GroupID == groupAID && v.Status != "approved" {
+			t.Errorf("Expected proposer vote=approved, got %s", v.Status)
+		}
+		if v.GroupID == groupBID && v.Status != "pending" {
+			t.Errorf("Expected target vote=pending, got %s", v.Status)
+		}
+	}
+}
+
+func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "vote_chat_approve1")
+	regionID := createConnectionTestRegion(t, db, "Vote Chat Approve Region")
+	groupAID := createConnectionTestGroup(t, db, "Vote Chat Approve A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Vote Chat Approve B", userID, regionID)
+
+	// Form connection
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Propose chat
+	chatProposal, _ := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Approved Chat",
+		AccessLevel: "all_members",
+	})
+
+	// B votes approve (should trigger creation since A auto-approved)
+	result, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("VoteOnChatProposal failed: %v", err)
+	}
+	if result.Status != "approved" {
+		t.Errorf("Expected status=approved, got %s", result.Status)
+	}
+
+	// Verify signal group was created
+	signalGroups, err := repo.ListConnectionSignalGroups(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 1 {
+		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+	if signalGroups[0].GroupName != "Approved Chat" {
+		t.Errorf("Expected group_name=Approved Chat, got %s", signalGroups[0].GroupName)
+	}
+	if signalGroups[0].ConnectionID == nil || *signalGroups[0].ConnectionID != connectionID {
+		t.Error("Expected connection_id to be set")
+	}
+}
+
+func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "vote_chat_decline1")
+	regionID := createConnectionTestRegion(t, db, "Vote Chat Decline Region")
+	groupAID := createConnectionTestGroup(t, db, "Vote Chat Decline A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Vote Chat Decline B", userID, regionID)
+
+	// Form connection
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Propose chat
+	chatProposal, _ := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Declined Chat",
+		AccessLevel: "admin_only",
+	})
+
+	// B declines
+	result, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, false)
+	if err != nil {
+		t.Fatalf("VoteOnChatProposal failed: %v", err)
+	}
+	if result.Status != "declined" {
+		t.Errorf("Expected status=declined, got %s", result.Status)
+	}
+
+	// No signal group should be created
+	signalGroups, err := repo.ListConnectionSignalGroups(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 0 {
+		t.Errorf("Expected 0 signal groups, got %d", len(signalGroups))
+	}
+}
+
+func TestConnectionRepository_ListChatProposals(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "list_chat1")
+	regionID := createConnectionTestRegion(t, db, "List Chat Region")
+	groupAID := createConnectionTestGroup(t, db, "List Chat A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "List Chat B", userID, regionID)
+
+	// Form connection
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Propose a chat
+	_, _ = repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Listed Chat",
+		AccessLevel: "admin_only",
+	})
+
+	proposals, err := repo.ListChatProposals(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListChatProposals failed: %v", err)
+	}
+	if len(proposals) != 1 {
+		t.Fatalf("Expected 1 proposal, got %d", len(proposals))
+	}
+	if proposals[0].GroupName != "Listed Chat" {
+		t.Errorf("Expected group_name=Listed Chat, got %s", proposals[0].GroupName)
+	}
+	if len(proposals[0].Votes) != 2 {
+		t.Errorf("Expected 2 votes, got %d", len(proposals[0].Votes))
+	}
+}
 
 func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 	db := testDB(t)

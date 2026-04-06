@@ -162,6 +162,9 @@ func (s *ConnectionTestSuite) claimsForUser(user *models.User) *middleware.Claim
 func (s *ConnectionTestSuite) cleanup(userIDs, regionIDs, groupIDs, connectionIDs []string) {
 	ctx := context.Background()
 	for _, id := range connectionIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_chat_proposal_votes WHERE proposal_id IN (SELECT id FROM connection_chat_proposals WHERE connection_id = ?)", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_chat_proposals WHERE connection_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposal_groups WHERE proposal_id IN (SELECT id FROM connection_proposals WHERE connection_id = ?)", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposals WHERE connection_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_members WHERE connection_id = ?", id)
@@ -549,4 +552,174 @@ func TestConnectionHandler_Leave_Success(t *testing.T) {
 		t.Errorf("Expected 2 remaining members, got %d", len(conn.MemberGroups))
 	}
 	defer s.cleanup(nil, nil, nil, []string{connectionID})
+}
+
+// --- Signal Chat Proposal Tests ---
+
+func TestConnectionHandler_ProposeSignalChat_Success(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_chat_propose_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Propose Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Chat A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat B", user.ID, []string{region.ID})
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, nil)
+
+	// Form connection
+	proposal, _ := s.connectionRepo.ProposeConnection(context.Background(), groupA.ID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupB.ID},
+	})
+	result, _ := s.connectionRepo.RespondToProposal(context.Background(), proposal.ID, groupB.ID, true)
+	if result.ConnectionID == nil {
+		t.Fatal("Expected connection to be formed")
+	}
+	defer s.cleanup(nil, nil, nil, []string{*result.ConnectionID})
+
+	body, _ := json.Marshal(models.ProposeConnectionChatRequest{
+		GroupName:   "Test Chat",
+		Description: "A test chat",
+		AccessLevel: "admin_only",
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+*result.ConnectionID+"/signal-group-proposals?id="+*result.ConnectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ProposeSignalChat(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var chatProposal models.ConnectionChatProposalWithVotes
+	if err := json.NewDecoder(rr.Body).Decode(&chatProposal); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if chatProposal.GroupName != "Test Chat" {
+		t.Errorf("Expected group_name=Test Chat, got %s", chatProposal.GroupName)
+	}
+	if len(chatProposal.Votes) != 2 {
+		t.Errorf("Expected 2 votes, got %d", len(chatProposal.Votes))
+	}
+}
+
+func TestConnectionHandler_VoteOnChatProposal_Success(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_chat_vote_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Vote Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Vote A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Vote B", user.ID, []string{region.ID})
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, nil)
+
+	// Form connection
+	proposal, _ := s.connectionRepo.ProposeConnection(context.Background(), groupA.ID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupB.ID},
+	})
+	formResult, _ := s.connectionRepo.RespondToProposal(context.Background(), proposal.ID, groupB.ID, true)
+	if formResult.ConnectionID == nil {
+		t.Fatal("Expected connection to be formed")
+	}
+	connectionID := *formResult.ConnectionID
+	defer s.cleanup(nil, nil, nil, []string{connectionID})
+
+	// Propose chat
+	chatProposal, err := s.connectionRepo.ProposeSignalChat(context.Background(), connectionID, groupA.ID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Vote Test Chat",
+		AccessLevel: "all_members",
+	})
+	if err != nil {
+		t.Fatalf("ProposeSignalChat failed: %v", err)
+	}
+
+	// Vote approve as B
+	body, _ := json.Marshal(map[string]interface{}{
+		"approve":  true,
+		"group_id": groupB.ID,
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connection-chat-proposals/"+chatProposal.ID+"/vote?id="+chatProposal.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.VoteOnChatProposal(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var voteResult models.ConnectionChatProposalWithVotes
+	if err := json.NewDecoder(rr.Body).Decode(&voteResult); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if voteResult.Status != "approved" {
+		t.Errorf("Expected status=approved, got %s", voteResult.Status)
+	}
+
+	// Verify signal group was created
+	signalGroups, err := s.connectionRepo.ListConnectionSignalGroups(context.Background(), connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 1 {
+		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+}
+
+func TestConnectionHandler_ListConnectionSignalGroups(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_list_sg_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn List SG Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group List SG A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group List SG B", user.ID, []string{region.ID})
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, nil)
+
+	// Form connection
+	proposal, _ := s.connectionRepo.ProposeConnection(context.Background(), groupA.ID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupB.ID},
+	})
+	formResult, _ := s.connectionRepo.RespondToProposal(context.Background(), proposal.ID, groupB.ID, true)
+	if formResult.ConnectionID == nil {
+		t.Fatal("Expected connection to be formed")
+	}
+	connectionID := *formResult.ConnectionID
+	defer s.cleanup(nil, nil, nil, []string{connectionID})
+
+	// Propose and approve chat
+	chatProposal, _ := s.connectionRepo.ProposeSignalChat(context.Background(), connectionID, groupA.ID, &models.ProposeConnectionChatRequest{
+		GroupName:   "List Test Chat",
+		AccessLevel: "admin_only",
+	})
+	_, _ = s.connectionRepo.VoteOnChatProposal(context.Background(), chatProposal.ID, groupB.ID, true)
+
+	// List signal groups via handler
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups?id="+connectionID, nil)
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ListConnectionSignalGroups(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	signalGroups, ok := response["signal_groups"].([]interface{})
+	if !ok {
+		t.Fatal("Expected signal_groups array in response")
+	}
+	if len(signalGroups) != 1 {
+		t.Errorf("Expected 1 signal group, got %d", len(signalGroups))
+	}
 }

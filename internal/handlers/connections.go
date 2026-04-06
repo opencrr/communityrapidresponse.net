@@ -405,6 +405,275 @@ func (h *ConnectionHandler) LeaveConnection(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Left connection successfully"})
 }
 
+// ProposeSignalChat handles POST /api/v1/connections/{id}/signal-group-proposals
+func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	proposerGroupID := r.URL.Query().Get("proposer_group_id")
+	if proposerGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_proposer_group", "proposer_group_id query parameter required")
+		return
+	}
+
+	// Verify user is admin of proposer group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), proposerGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check admin status", "connection", "propose_chat")
+		return
+	}
+	if !isAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		return
+	}
+
+	var req models.ProposeConnectionChatRequest
+	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.GroupName == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "group_name is required")
+		return
+	}
+	if req.AccessLevel == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "access_level is required")
+		return
+	}
+	if req.AccessLevel != "admin_only" && req.AccessLevel != "all_members" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "access_level must be admin_only or all_members")
+		return
+	}
+
+	proposal, err := h.connectionRepo.ProposeSignalChat(r.Context(), connectionID, proposerGroupID, &req)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Connection not found")
+			return
+		}
+		if errors.Is(err, database.ErrNotConnectionMember) {
+			writeError(w, http.StatusForbidden, "not_member", "Group is not a member of this connection")
+			return
+		}
+		if errors.Is(err, database.ErrConnectionSignalGroupLimitReached) {
+			writeError(w, http.StatusConflict, "limit_reached", "Connection signal group limit reached (max 5)")
+			return
+		}
+		writeServerError(w, r, err, "Failed to propose signal chat", "connection", "propose_chat")
+		return
+	}
+
+	resourceType := "connection_chat_proposal"
+	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionChatProposed,
+		&resourceType, &proposal.ID, map[string]interface{}{
+			"connection_id":    connectionID,
+			"proposer_group_id": proposerGroupID,
+			"group_name":       req.GroupName,
+			"access_level":     req.AccessLevel,
+		}), models.AuditActionConnectionChatProposed)
+
+	writeJSON(w, http.StatusCreated, proposal)
+}
+
+// VoteOnChatProposal handles POST /api/v1/connection-chat-proposals/{id}/vote
+func (h *ConnectionHandler) VoteOnChatProposal(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	proposalID := r.URL.Query().Get("id")
+	if proposalID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
+		return
+	}
+
+	var req struct {
+		Approve bool   `json:"approve"`
+		GroupID string `json:"group_id"`
+	}
+	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.GroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_group_id", "group_id is required")
+		return
+	}
+
+	// Verify user is admin of voting group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), req.GroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check admin status", "connection", "vote_chat")
+		return
+	}
+	if !isAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of the voting group")
+		return
+	}
+
+	result, err := h.connectionRepo.VoteOnChatProposal(r.Context(), proposalID, req.GroupID, req.Approve)
+	if err != nil {
+		if errors.Is(err, database.ErrChatProposalNotFound) {
+			writeError(w, http.StatusNotFound, "proposal_not_found", "Chat proposal not found")
+			return
+		}
+		if errors.Is(err, database.ErrChatProposalNotPending) {
+			writeError(w, http.StatusConflict, "proposal_not_pending", "Chat proposal is no longer pending")
+			return
+		}
+		if errors.Is(err, database.ErrChatProposalVoteNotFound) {
+			writeError(w, http.StatusForbidden, "not_in_proposal", "Group is not part of this proposal")
+			return
+		}
+		if errors.Is(err, database.ErrChatProposalAlreadyVoted) {
+			writeError(w, http.StatusConflict, "already_voted", "Group has already voted")
+			return
+		}
+		writeServerError(w, r, err, "Failed to vote on chat proposal", "connection", "vote_chat")
+		return
+	}
+
+	resourceType := "connection_chat_proposal"
+	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionChatVoted,
+		&resourceType, &proposalID, map[string]interface{}{
+			"group_id": req.GroupID,
+			"approve":  req.Approve,
+		}), models.AuditActionConnectionChatVoted)
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// ListConnectionSignalGroups handles GET /api/v1/connections/{id}/signal-groups
+func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	// Get connection to verify access
+	connection, err := h.connectionRepo.GetConnection(r.Context(), connectionID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Connection not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get connection", "connection", "list_signal_groups")
+		return
+	}
+
+	// Verify user is admin of at least one member group
+	hasAccess := false
+	for _, member := range connection.MemberGroups {
+		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
+		if adminErr != nil {
+			writeServerError(w, r, adminErr, "Failed to check admin status", "connection", "list_signal_groups")
+			return
+		}
+		if isAdmin {
+			hasAccess = true
+			break
+		}
+	}
+
+	if !hasAccess {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		return
+	}
+
+	groups, err := h.connectionRepo.ListConnectionSignalGroups(r.Context(), connectionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list signal groups", "connection", "list_signal_groups")
+		return
+	}
+
+	if groups == nil {
+		groups = []*models.SignalGroup{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"signal_groups": groups,
+	})
+}
+
+// ListChatProposals handles GET /api/v1/connections/{id}/signal-group-proposals
+func (h *ConnectionHandler) ListChatProposals(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	// Get connection to verify access
+	connection, err := h.connectionRepo.GetConnection(r.Context(), connectionID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Connection not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get connection", "connection", "list_chat_proposals")
+		return
+	}
+
+	// Verify user is admin of at least one member group
+	hasAccess := false
+	for _, member := range connection.MemberGroups {
+		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
+		if adminErr != nil {
+			writeServerError(w, r, adminErr, "Failed to check admin status", "connection", "list_chat_proposals")
+			return
+		}
+		if isAdmin {
+			hasAccess = true
+			break
+		}
+	}
+
+	if !hasAccess {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		return
+	}
+
+	proposals, err := h.connectionRepo.ListChatProposals(r.Context(), connectionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list chat proposals", "connection", "list_chat_proposals")
+		return
+	}
+
+	if proposals == nil {
+		proposals = []models.ConnectionChatProposalWithVotes{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"proposals": proposals,
+	})
+}
+
 // ListPendingProposals handles GET /api/v1/connection-proposals
 func (h *ConnectionHandler) ListPendingProposals(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

@@ -763,3 +763,429 @@ func (r *ConnectionRepository) SetConnectionName(ctx context.Context, connection
 	)
 	return err
 }
+
+// =============================================================================
+// Connection Signal Chat Proposals
+// =============================================================================
+
+var (
+	ErrChatProposalNotFound = errors.New("chat proposal not found")
+	ErrChatProposalNotPending = errors.New("chat proposal is not pending")
+	ErrChatProposalVoteNotFound = errors.New("vote not found for this group")
+	ErrChatProposalAlreadyVoted = errors.New("group has already voted on this proposal")
+	ErrConnectionSignalGroupLimitReached = errors.New("connection signal group limit reached (max 5)")
+)
+
+// ProposeSignalChat creates a proposal to add a signal chat to a connection.
+func (r *ConnectionRepository) ProposeSignalChat(ctx context.Context, connectionID, proposerGroupID string, req *models.ProposeConnectionChatRequest) (*models.ConnectionChatProposalWithVotes, error) {
+	var result *models.ConnectionChatProposalWithVotes
+
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// Verify connection exists
+		var connExists bool
+		checkErr := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM connections WHERE id = ?)", connectionID,
+		).Scan(&connExists)
+		if checkErr != nil {
+			return fmt.Errorf("check connection: %w", checkErr)
+		}
+		if !connExists {
+			return ErrConnectionNotFound
+		}
+
+		// Verify proposer is a member
+		var isMember bool
+		checkErr = tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM connection_members WHERE connection_id = ? AND group_id = ?)",
+			connectionID, proposerGroupID,
+		).Scan(&isMember)
+		if checkErr != nil {
+			return fmt.Errorf("check membership: %w", checkErr)
+		}
+		if !isMember {
+			return ErrNotConnectionMember
+		}
+
+		// Check signal group count for this connection
+		var signalGroupCount int
+		checkErr = tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM signal_groups WHERE connection_id = ? AND is_active = TRUE",
+			connectionID,
+		).Scan(&signalGroupCount)
+		if checkErr != nil {
+			return fmt.Errorf("count signal groups: %w", checkErr)
+		}
+		if signalGroupCount >= 5 {
+			return ErrConnectionSignalGroupLimitReached
+		}
+
+		proposalID := uuid.New().String()
+		now := time.Now().UTC()
+		expiresAt := now.Add(7 * 24 * time.Hour)
+
+		var description *string
+		if req.Description != "" {
+			description = &req.Description
+		}
+
+		// Insert the proposal
+		_, insertErr := tx.ExecContext(ctx,
+			`INSERT INTO connection_chat_proposals (id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+			proposalID, connectionID, proposerGroupID, req.GroupName, description, req.AccessLevel, now, expiresAt,
+		)
+		if insertErr != nil {
+			return fmt.Errorf("insert chat proposal: %w", insertErr)
+		}
+
+		// Get all member groups
+		memberRows, queryErr := tx.QueryContext(ctx,
+			"SELECT group_id FROM connection_members WHERE connection_id = ?",
+			connectionID,
+		)
+		if queryErr != nil {
+			return fmt.Errorf("get member groups: %w", queryErr)
+		}
+		defer memberRows.Close()
+
+		var memberGroupIDs []string
+		for memberRows.Next() {
+			var memberGroupID string
+			if scanErr := memberRows.Scan(&memberGroupID); scanErr != nil {
+				return fmt.Errorf("scan member group id: %w", scanErr)
+			}
+			memberGroupIDs = append(memberGroupIDs, memberGroupID)
+		}
+		if rowsErr := memberRows.Err(); rowsErr != nil {
+			return fmt.Errorf("iterate member groups: %w", rowsErr)
+		}
+
+		// Create votes for all member groups
+		var votes []models.ConnectionChatProposalVote
+		for _, memberGroupID := range memberGroupIDs {
+			voteID := uuid.New().String()
+			voteStatus := "pending"
+			var respondedAt *time.Time
+			if memberGroupID == proposerGroupID {
+				voteStatus = "approved"
+				respondedAt = &now
+			}
+			_, insertErr = tx.ExecContext(ctx,
+				"INSERT INTO connection_chat_proposal_votes (id, proposal_id, group_id, status, responded_at) VALUES (?, ?, ?, ?, ?)",
+				voteID, proposalID, memberGroupID, voteStatus, respondedAt,
+			)
+			if insertErr != nil {
+				return fmt.Errorf("insert vote: %w", insertErr)
+			}
+			votes = append(votes, models.ConnectionChatProposalVote{
+				ID:          voteID,
+				ProposalID:  proposalID,
+				GroupID:     memberGroupID,
+				Status:      voteStatus,
+				RespondedAt: respondedAt,
+			})
+		}
+
+		proposal := models.ConnectionChatProposal{
+			ID:              proposalID,
+			ConnectionID:    connectionID,
+			ProposerGroupID: proposerGroupID,
+			GroupName:       req.GroupName,
+			Description:     description,
+			AccessLevel:     req.AccessLevel,
+			Status:          "pending",
+			CreatedAt:       now,
+			ExpiresAt:       &expiresAt,
+		}
+
+		result = &models.ConnectionChatProposalWithVotes{
+			ConnectionChatProposal: proposal,
+			Votes:                  votes,
+		}
+
+		// If only 1 member group (edge case), auto-create the signal group
+		if len(memberGroupIDs) == 1 {
+			createErr := r.createConnectionSignalGroup(ctx, tx, connectionID, proposerGroupID, req)
+			if createErr != nil {
+				return createErr
+			}
+			_, updateErr := tx.ExecContext(ctx,
+				"UPDATE connection_chat_proposals SET status = 'approved' WHERE id = ?", proposalID,
+			)
+			if updateErr != nil {
+				return fmt.Errorf("approve single-member proposal: %w", updateErr)
+			}
+			result.Status = "approved"
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// VoteOnChatProposal handles a group's vote on a connection chat proposal.
+func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalID, groupID string, approve bool) (*models.ConnectionChatProposalWithVotes, error) {
+	var result *models.ConnectionChatProposalWithVotes
+
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// Load the proposal
+		var proposal models.ConnectionChatProposal
+		loadErr := tx.QueryRowContext(ctx,
+			`SELECT id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at
+			FROM connection_chat_proposals WHERE id = ?`,
+			proposalID,
+		).Scan(&proposal.ID, &proposal.ConnectionID, &proposal.ProposerGroupID, &proposal.GroupName,
+			&proposal.Description, &proposal.AccessLevel, &proposal.Status, &proposal.CreatedAt, &proposal.ExpiresAt)
+		if loadErr == sql.ErrNoRows {
+			return ErrChatProposalNotFound
+		}
+		if loadErr != nil {
+			return fmt.Errorf("load chat proposal: %w", loadErr)
+		}
+
+		if proposal.Status != "pending" {
+			return ErrChatProposalNotPending
+		}
+
+		// Check expiration
+		if proposal.ExpiresAt != nil && time.Now().UTC().After(*proposal.ExpiresAt) {
+			_, _ = tx.ExecContext(ctx, "UPDATE connection_chat_proposals SET status = 'expired' WHERE id = ?", proposalID)
+			return ErrChatProposalNotPending
+		}
+
+		// Find the vote for this group
+		var voteID string
+		var voteStatus string
+		loadErr = tx.QueryRowContext(ctx,
+			"SELECT id, status FROM connection_chat_proposal_votes WHERE proposal_id = ? AND group_id = ?",
+			proposalID, groupID,
+		).Scan(&voteID, &voteStatus)
+		if loadErr == sql.ErrNoRows {
+			return ErrChatProposalVoteNotFound
+		}
+		if loadErr != nil {
+			return fmt.Errorf("load vote: %w", loadErr)
+		}
+
+		if voteStatus != "pending" {
+			return ErrChatProposalAlreadyVoted
+		}
+
+		// Update vote
+		now := time.Now().UTC()
+		newVoteStatus := "declined"
+		if approve {
+			newVoteStatus = "approved"
+		}
+		_, updateErr := tx.ExecContext(ctx,
+			"UPDATE connection_chat_proposal_votes SET status = ?, responded_at = ? WHERE id = ?",
+			newVoteStatus, now, voteID,
+		)
+		if updateErr != nil {
+			return fmt.Errorf("update vote: %w", updateErr)
+		}
+
+		if !approve {
+			// Decline the whole proposal
+			_, updateErr = tx.ExecContext(ctx,
+				"UPDATE connection_chat_proposals SET status = 'declined' WHERE id = ?", proposalID,
+			)
+			if updateErr != nil {
+				return fmt.Errorf("decline proposal: %w", updateErr)
+			}
+			proposal.Status = "declined"
+		} else {
+			// Check if all groups have approved (unanimous)
+			var pendingCount int
+			countErr := tx.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM connection_chat_proposal_votes WHERE proposal_id = ? AND status = 'pending'",
+				proposalID,
+			).Scan(&pendingCount)
+			if countErr != nil {
+				return fmt.Errorf("count pending votes: %w", countErr)
+			}
+
+			if pendingCount == 0 {
+				// All approved — create the signal group
+				req := &models.ProposeConnectionChatRequest{
+					GroupName:   proposal.GroupName,
+					AccessLevel: proposal.AccessLevel,
+				}
+				if proposal.Description != nil {
+					req.Description = *proposal.Description
+				}
+				createErr := r.createConnectionSignalGroup(ctx, tx, proposal.ConnectionID, proposal.ProposerGroupID, req)
+				if createErr != nil {
+					return createErr
+				}
+				_, updateErr = tx.ExecContext(ctx,
+					"UPDATE connection_chat_proposals SET status = 'approved' WHERE id = ?", proposalID,
+				)
+				if updateErr != nil {
+					return fmt.Errorf("approve proposal: %w", updateErr)
+				}
+				proposal.Status = "approved"
+			}
+		}
+
+		// Load all votes for the response
+		votes, loadVotesErr := r.loadChatProposalVotes(ctx, tx, proposalID)
+		if loadVotesErr != nil {
+			return loadVotesErr
+		}
+
+		result = &models.ConnectionChatProposalWithVotes{
+			ConnectionChatProposal: proposal,
+			Votes:                  votes,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// ListConnectionSignalGroups returns active signal groups for a connection.
+func (r *ConnectionRepository) ListConnectionSignalGroups(ctx context.Context, connectionID string) ([]*models.SignalGroup, error) {
+	query := `
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active
+		FROM signal_groups sg
+		WHERE sg.connection_id = ? AND sg.is_active = TRUE
+		ORDER BY sg.created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list connection signal groups: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []*models.SignalGroup
+	for rows.Next() {
+		group := &models.SignalGroup{}
+		if scanErr := rows.Scan(
+			&group.ID,
+			&group.RegionID,
+			&group.SchoolID,
+			&group.DistrictID,
+			&group.OwnerGroupID,
+			&group.ConnectionID,
+			&group.GroupName,
+			&group.Description,
+			&group.AccessTier,
+			&group.CreatedBy,
+			&group.CreatedAt,
+			&group.IsActive,
+		); scanErr != nil {
+			return nil, fmt.Errorf("scan signal group: %w", scanErr)
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+// ListChatProposals returns pending chat proposals for a connection.
+func (r *ConnectionRepository) ListChatProposals(ctx context.Context, connectionID string) ([]models.ConnectionChatProposalWithVotes, error) {
+	proposalRows, err := r.db.QueryContext(ctx,
+		`SELECT id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at
+		FROM connection_chat_proposals WHERE connection_id = ? AND status = 'pending' ORDER BY created_at DESC`,
+		connectionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list chat proposals: %w", err)
+	}
+	defer proposalRows.Close()
+
+	var proposals []models.ConnectionChatProposalWithVotes
+	for proposalRows.Next() {
+		var p models.ConnectionChatProposalWithVotes
+		if scanErr := proposalRows.Scan(
+			&p.ID, &p.ConnectionID, &p.ProposerGroupID, &p.GroupName,
+			&p.Description, &p.AccessLevel, &p.Status, &p.CreatedAt, &p.ExpiresAt,
+		); scanErr != nil {
+			return nil, fmt.Errorf("scan chat proposal: %w", scanErr)
+		}
+		proposals = append(proposals, p)
+	}
+	if rowsErr := proposalRows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+
+	// Load votes for each proposal
+	for i := range proposals {
+		voteRows, queryErr := r.db.QueryContext(ctx,
+			"SELECT id, proposal_id, group_id, status, responded_at FROM connection_chat_proposal_votes WHERE proposal_id = ?",
+			proposals[i].ID,
+		)
+		if queryErr != nil {
+			return nil, fmt.Errorf("load chat proposal votes: %w", queryErr)
+		}
+
+		var votes []models.ConnectionChatProposalVote
+		for voteRows.Next() {
+			var v models.ConnectionChatProposalVote
+			if scanErr := voteRows.Scan(&v.ID, &v.ProposalID, &v.GroupID, &v.Status, &v.RespondedAt); scanErr != nil {
+				voteRows.Close()
+				return nil, fmt.Errorf("scan vote: %w", scanErr)
+			}
+			votes = append(votes, v)
+		}
+		voteRows.Close()
+		if rowsErr := voteRows.Err(); rowsErr != nil {
+			return nil, rowsErr
+		}
+		proposals[i].Votes = votes
+	}
+
+	return proposals, nil
+}
+
+// createConnectionSignalGroup creates a signal group owned by a connection.
+func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, tx *sql.Tx, connectionID, _ string, req *models.ProposeConnectionChatRequest) error {
+	signalGroupID := uuid.New().String()
+	now := time.Now().UTC()
+
+	var description *string
+	if req.Description != "" {
+		description = &req.Description
+	}
+
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
+		VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, 'member', NULL, ?, TRUE)`,
+		signalGroupID, connectionID, req.GroupName, description, now,
+	)
+	if err != nil {
+		return fmt.Errorf("create connection signal group: %w", err)
+	}
+	return nil
+}
+
+// loadChatProposalVotes loads all votes for a chat proposal within a transaction.
+func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sql.Tx, proposalID string) ([]models.ConnectionChatProposalVote, error) {
+	rows, err := tx.QueryContext(ctx,
+		"SELECT id, proposal_id, group_id, status, responded_at FROM connection_chat_proposal_votes WHERE proposal_id = ?",
+		proposalID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load chat proposal votes: %w", err)
+	}
+	defer rows.Close()
+
+	var votes []models.ConnectionChatProposalVote
+	for rows.Next() {
+		var v models.ConnectionChatProposalVote
+		if scanErr := rows.Scan(&v.ID, &v.ProposalID, &v.GroupID, &v.Status, &v.RespondedAt); scanErr != nil {
+			return nil, fmt.Errorf("scan vote: %w", scanErr)
+		}
+		votes = append(votes, v)
+	}
+	return votes, rows.Err()
+}

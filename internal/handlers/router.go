@@ -179,6 +179,7 @@ func (r *Router) Setup() http.Handler {
 		r.mux.HandleFunc("/api/v1/connections/", r.handleConnectionByID)
 		r.mux.HandleFunc("/api/v1/connection-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.connections.ListPendingProposals)))
 		r.mux.HandleFunc("/api/v1/connection-proposals/", r.handleConnectionProposalByID)
+		r.mux.HandleFunc("/api/v1/connection-chat-proposals/", r.handleConnectionChatProposalByID)
 	}
 
 	// School routes (all authenticated)
@@ -1561,6 +1562,29 @@ func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	// POST/GET /api/v1/connections/{id}/signal-group-proposals
+	if len(parts) >= 2 && parts[1] == "signal-group-proposals" {
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.connections.ProposeSignalChat)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.connections.ListChatProposals)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// GET /api/v1/connections/{id}/signal-groups
+	if len(parts) >= 2 && parts[1] == "signal-groups" {
+		if req.Method == http.MethodGet {
+			r.authenticated(r.connections.ListConnectionSignalGroups)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
 	// GET /api/v1/connections/{id}
 	if req.Method == http.MethodGet {
 		r.authenticated(r.connections.GetConnection)(w, req)
@@ -1568,6 +1592,33 @@ func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) 
 	}
 
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+}
+
+// handleConnectionChatProposalByID handles /api/v1/connection-chat-proposals/{id}/vote
+func (r *Router) handleConnectionChatProposalByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connection-chat-proposals/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	proposalID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "vote" {
+		q := req.URL.Query()
+		q.Set("id", proposalID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.VoteOnChatProposal)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
 // handleConnectionProposalByID handles /api/v1/connection-proposals/{id}/respond
