@@ -444,6 +444,45 @@ func main() {
 	slog.Info("signal groups seeded", "count", len(signalGroups))
 
 	// =========================================================================
+	// Meshtastic Channels (within groups)
+	// =========================================================================
+	slog.Info("seeding meshtastic channels...")
+
+	type meshtasticFixture struct {
+		id           string
+		ownerGroupID string
+		channelName  string
+		description  string
+		accessTier   string
+		createdBy    string
+	}
+
+	meshtasticChannels := []meshtasticFixture{
+		// Seattle Mutual Aid
+		{"mesh-seattle-ma-emergency", groupSeattleMA, "Emergency Mesh Network", "Emergency mesh communications for mutual aid operations.", "member", userBob},
+		{"mesh-seattle-ma-public", groupSeattleMA, "Public Info Channel", "Open mesh channel for public information and alerts.", "open", userBob},
+		// Portland Mutual Aid
+		{"mesh-portland-ma-net", groupPortlandMA, "PDX Mesh Net", "Portland area mesh networking for mutual aid coordination.", "member", userFrank},
+		// Chicago Disaster Prep
+		{"mesh-chicago-dp-emergency", groupChicagoDP, "Emergency Comms", "Emergency communications for trained responders.", "trusted", userAlice},
+		{"mesh-chicago-dp-weather", groupChicagoDP, "Weather Alerts", "Open weather alert channel for the Chicago area.", "open", userAlice},
+		// Open Community Hub
+		{"mesh-open-hub-community", groupOpenHub, "Community Mesh", "Open mesh channel for community communication.", "open", userAlice},
+	}
+
+	for _, mc := range meshtasticChannels {
+		_, err := db.ExecContext(ctx, `
+			INSERT IGNORE INTO meshtastic_channels
+				(id, owner_group_id, channel_name, description, access_tier, is_active, created_by, created_at)
+			VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)
+		`, mc.id, mc.ownerGroupID, mc.channelName, mc.description, mc.accessTier, mc.createdBy, now)
+		if err != nil {
+			log.Fatalf("failed to insert meshtastic channel %s: %v", mc.channelName, err)
+		}
+	}
+	slog.Info("meshtastic channels seeded", "count", len(meshtasticChannels))
+
+	// =========================================================================
 	// Group Resources
 	// =========================================================================
 	slog.Info("seeding group resources...")
@@ -713,6 +752,12 @@ func printSummary() {
 	fmt.Println("  Shared resource: Mutual Aid Handbook (all_members)")
 	fmt.Println()
 	fmt.Println("Group block: Seattle Tenants Union blocks The Secret Society")
+	fmt.Println()
+	fmt.Println("Meshtastic channels:")
+	fmt.Println("  Seattle Mutual Aid:    Emergency Mesh Network (member), Public Info Channel (open)")
+	fmt.Println("  Portland Mutual Aid:   PDX Mesh Net (member)")
+	fmt.Println("  Chicago Disaster Prep: Emergency Comms (trusted), Weather Alerts (open)")
+	fmt.Println("  Open Community Hub:    Community Mesh (open)")
 	fmt.Println()
 	fmt.Println("Trust vouches: Dave is trusted in Seattle MA (vouched by alice + bob)")
 }

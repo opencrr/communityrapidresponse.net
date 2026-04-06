@@ -3,7 +3,7 @@
  * Shows full group info with sections gated by membership/admin status.
  */
 
-import { getGroup, listGroupMembers, listSignalGroups, listResources, listInviteLinks, leaveGroup, joinViaLink } from '../api/groups.js';
+import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink } from '../api/groups.js';
 import { isAuthenticated, getUser, isSuperuser } from '../utils/store.js';
 import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 import { navigate } from '../app.js';
@@ -141,6 +141,9 @@ async function renderGroupDetail(container, group) {
                     <!-- Signal Groups (members only, filtered by API) -->
                     ${isMember ? '<div id="signal-groups-section" class="mt-6"></div>' : ''}
 
+                    <!-- Meshtastic Channels (members only, filtered by API) -->
+                    ${isMember ? '<div id="meshtastic-channels-section" class="mt-6"></div>' : ''}
+
                     <!-- Resources (members only, filtered by API) -->
                     ${isMember ? '<div id="resources-section" class="mt-6"></div>' : ''}
 
@@ -175,6 +178,7 @@ async function renderGroupDetail(container, group) {
     // Load dynamic sections for members
     if (isMember) {
         loadSignalGroups(group.id);
+        loadMeshtasticChannels(group.id);
         loadResources(group.id);
         loadMembers(group.id);
     }
@@ -293,6 +297,42 @@ async function loadSignalGroups(groupId) {
         bindCopyButtons(section);
     } catch (error) {
         console.error('Failed to load signal groups:', error);
+    }
+}
+
+/**
+ * Load and display meshtastic channels for this group
+ * @param {string} groupId - Group UUID
+ */
+async function loadMeshtasticChannels(groupId) {
+    const section = document.getElementById('meshtastic-channels-section');
+    if (!section) return;
+
+    try {
+        const response = await listMeshtasticChannels(groupId);
+        const channels = response.meshtastic_channels || [];
+
+        if (channels.length === 0) {
+            section.innerHTML = '';
+            return;
+        }
+
+        section.innerHTML = `
+            <h2 class="group-detail__section-title">Meshtastic Channels</h2>
+            <div class="dashboard-grid">
+                ${channels.map(ch => `
+                    <div class="card group-card">
+                        <div class="card__body">
+                            <div class="group-card__name">${escapeHtml(ch.name)}</div>
+                            ${ch.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(ch.description)}</p>` : ''}
+                            ${ch.access_tier ? `<span class="tier-badge tier-badge--${ch.access_tier}">${formatAccessTier(ch.access_tier)}</span>` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } catch (error) {
+        console.error('Failed to load meshtastic channels:', error);
     }
 }
 

@@ -30,6 +30,10 @@ export async function respondToInvitation(id, data) { return post(`/group-invita
 export async function createSignalGroup(groupId, data) { return post(`/groups/${groupId}/signal-groups`, data); }
 export async function listSignalGroups(groupId) { return get(`/groups/${groupId}/signal-groups`); }
 
+// Meshtastic channels
+export async function createMeshtasticChannel(groupId, data) { return post(`/groups/${groupId}/meshtastic-channels`, data); }
+export async function listMeshtasticChannels(groupId) { return get(`/groups/${groupId}/meshtastic-channels`); }
+
 // Resources
 export async function createResource(groupId, data) { return post(`/groups/${groupId}/resources`, data); }
 export async function listResources(groupId) { return get(`/groups/${groupId}/resources`); }
@@ -68,6 +72,8 @@ export default {
     respondToInvitation,
     createSignalGroup,
     listSignalGroups,
+    createMeshtasticChannel,
+    listMeshtasticChannels,
     createResource,
     listResources,
     updateResource,
