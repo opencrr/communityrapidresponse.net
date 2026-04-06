@@ -1742,10 +1742,6 @@ func (h *GroupHandler) BrowsePostings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	topicTag := r.URL.Query().Get("tag")
-	if topicTag == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "tag query parameter is required")
-		return
-	}
 
 	browsingGroupID := r.URL.Query().Get("group_id")
 	if browsingGroupID == "" {

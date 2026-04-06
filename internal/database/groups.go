@@ -1823,25 +1823,45 @@ func (r *GroupRepository) RemovePosting(ctx context.Context, groupID string) err
 	return nil
 }
 
-// BrowsePostings returns active topic board postings filtered by tag,
+// BrowsePostings returns active topic board postings, optionally filtered by tag,
 // excluding postings from groups blocked by browsingGroupID.
 // Results are returned in random order, paginated with limit/offset.
 // No total count is returned by design.
 func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, browsingGroupID string, limit, offset int) ([]models.TopicBoardPostingWithTags, error) {
-	query := `
-		SELECT p.id, p.group_id, p.region_label, p.auto_region_label, p.description,
-			p.is_active, p.created_at, p.updated_at
-		FROM topic_board_postings p
-		JOIN topic_board_tags t ON p.id = t.posting_id
-		LEFT JOIN group_blocks gb ON gb.blocker_group_id = ? AND gb.blocked_group_id = p.group_id
-		WHERE p.is_active = TRUE
-			AND t.tag = ?
-			AND gb.id IS NULL
-			AND p.group_id != ?
-		ORDER BY RAND()
-		LIMIT ? OFFSET ?
-	`
-	rows, err := r.db.QueryContext(ctx, query, browsingGroupID, topicTag, browsingGroupID, limit, offset)
+	var query string
+	var args []interface{}
+
+	if topicTag != "" {
+		query = `
+			SELECT DISTINCT p.id, p.group_id, p.region_label, p.auto_region_label, p.description,
+				p.is_active, p.created_at, p.updated_at
+			FROM topic_board_postings p
+			JOIN topic_board_tags t ON p.id = t.posting_id
+			LEFT JOIN group_blocks gb ON gb.blocker_group_id = ? AND gb.blocked_group_id = p.group_id
+			WHERE p.is_active = TRUE
+				AND t.tag = ?
+				AND gb.id IS NULL
+				AND p.group_id != ?
+			ORDER BY RAND()
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{browsingGroupID, topicTag, browsingGroupID, limit, offset}
+	} else {
+		query = `
+			SELECT p.id, p.group_id, p.region_label, p.auto_region_label, p.description,
+				p.is_active, p.created_at, p.updated_at
+			FROM topic_board_postings p
+			LEFT JOIN group_blocks gb ON gb.blocker_group_id = ? AND gb.blocked_group_id = p.group_id
+			WHERE p.is_active = TRUE
+				AND gb.id IS NULL
+				AND p.group_id != ?
+			ORDER BY RAND()
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{browsingGroupID, browsingGroupID, limit, offset}
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("browse postings: %w", err)
 	}

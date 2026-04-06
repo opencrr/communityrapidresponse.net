@@ -57,8 +57,8 @@ export async function render(container) {
                         <select id="topic-group-select" class="form-input">
                             <option value="">Select your group...</option>
                         </select>
-                        <input type="text" id="topic-tag-search" class="form-input" placeholder="Search by topic (e.g., mutual-aid)" />
-                        <button class="btn btn--primary" id="topic-search-btn" disabled>Search</button>
+                        <input type="text" id="topic-tag-search" class="form-input" placeholder="Filter by topic (e.g., mutual-aid)" />
+                        <button class="btn btn--primary" id="topic-search-btn">Filter</button>
                     </div>
                     <div class="loading" id="topic-loading" style="display:none"><div class="spinner"></div></div>
                     <div id="topic-results" class="discovery__results"></div>
@@ -284,10 +284,12 @@ async function loadAdminGroups() {
         const selectEl = document.getElementById('topic-group-select');
         if (!selectEl) return;
 
-        selectEl.innerHTML = '<option value="">Select your group...</option>' +
-            adminGroups.map(group =>
-                `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`
+        selectEl.innerHTML = adminGroups.map((group, i) =>
+                `<option value="${escapeHtml(group.id)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(group.name)}</option>`
             ).join('');
+
+        // Auto-load postings for the first group
+        performTopicSearch();
     } catch (error) {
         console.error('Failed to load admin groups for topic board:', error);
         // Silently fail — topic board section stays hidden
@@ -304,7 +306,9 @@ function bindTopicBoardEvents() {
 
     if (groupSelect) {
         groupSelect.addEventListener('change', () => {
-            if (searchBtn) searchBtn.disabled = !groupSelect.value;
+            if (groupSelect.value) {
+                performTopicSearch();
+            }
         });
     }
 
