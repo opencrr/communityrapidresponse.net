@@ -246,9 +246,18 @@ func (s *E2ETestSuite) disableMFA(userID string) {
 // Call this BEFORE login/re-login so the JWT includes the correct claims.
 func (s *E2ETestSuite) makeUserVouchVerified(userID string) {
 	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE users SET vouch_verified = TRUE, postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
+		"UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
 	if err != nil {
 		s.t.Fatalf("Failed to make user vouch-verified: %v", err)
+	}
+}
+
+// makeUserFullyVerified sets a user as both vouch and postcard verified (tier 2).
+func (s *E2ETestSuite) makeUserFullyVerified(userID string) {
+	_, err := s.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE, postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
+	if err != nil {
+		s.t.Fatalf("Failed to make user fully verified: %v", err)
 	}
 }
 
@@ -3885,7 +3894,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_create", "grp_create@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_create@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -3927,7 +3936,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_detail", "grp_detail@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_detail@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -3971,7 +3980,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_update", "grp_update@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_update@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4010,7 +4019,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userAID := suite.registerOrGetUserID("grp_upd_a", "grp_upd_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("grp_upd_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4047,7 +4056,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_list", "grp_list@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_list@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4084,7 +4093,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userAID := suite.registerOrGetUserID("grp_leav_a", "grp_leav_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("grp_leav_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4123,7 +4132,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_lastadm", "grp_lastadm@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_lastadm@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4151,7 +4160,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_mems", "grp_mems@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_mems@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4191,7 +4200,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userAID := suite.registerOrGetUserID("grp_hid_a", "grp_hid_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("grp_hid_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4222,7 +4231,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_sudel", "grp_sudel@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_sudel@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4257,7 +4266,7 @@ func TestE2E_GroupLifecycle(t *testing.T) {
 		userID := suite.registerOrGetUserID("grp_nodel", "grp_nodel@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("grp_nodel@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4301,11 +4310,11 @@ func (s *E2ETestSuite) createInviteLink(groupID string, body interface{}, token 
 	return result
 }
 
-// createVerifiedUserInRegion registers a user, makes them vouch-verified, adds them to a region, and returns (userID, token).
+// createVerifiedUserInRegion registers a user, makes them fully verified (vouch + postcard), adds them to a region, and returns (userID, token).
 func (s *E2ETestSuite) createVerifiedUserInRegion(username, email, password, regionID string) (string, string) {
 	userID := s.registerOrGetUserID(username, email, password)
 	s.disableMFA(userID)
-	s.makeUserVouchVerified(userID)
+	s.makeUserFullyVerified(userID)
 	s.addUserToRegionForGroups(userID, regionID)
 	token := s.reloginUser(email, password)
 	return userID, token
@@ -4319,7 +4328,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userID := suite.registerOrGetUserID("gf_invlnk", "gf_invlnk@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gf_invlnk@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4345,7 +4354,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userID := suite.registerOrGetUserID("gf_invopt", "gf_invopt@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gf_invopt@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4384,7 +4393,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userID := suite.registerOrGetUserID("gf_lstlnk", "gf_lstlnk@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gf_lstlnk@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4419,7 +4428,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_lnk_a", "gf_lnk_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_lnk_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4454,7 +4463,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_join_a", "gf_join_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_join_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4499,7 +4508,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gf_jnv_ad", "gf_jnv_ad@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gf_jnv_ad@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -4535,7 +4544,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userID := suite.registerOrGetUserID("gf_jn_dup", "gf_jn_dup@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gf_jn_dup@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -4563,7 +4572,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_grad_a", "gf_grad_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_grad_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4631,7 +4640,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_inv_a", "gf_inv_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_inv_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4712,7 +4721,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_dec_a", "gf_dec_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_dec_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4762,7 +4771,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_dup_a", "gf_dup_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_dup_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4789,7 +4798,7 @@ func TestE2E_GroupFormation(t *testing.T) {
 		userAID := suite.registerOrGetUserID("gf_grd2_a", "gf_grd2_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("gf_grd2_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4873,7 +4882,7 @@ func TestE2E_AccessTiers(t *testing.T) {
 		userAID := suite.registerOrGetUserID("at_tv_a", "at_tv_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("at_tv_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4960,7 +4969,7 @@ func TestE2E_AccessTiers(t *testing.T) {
 		userAID := suite.registerOrGetUserID("at_sv_a", "at_sv_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("at_sv_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -4988,7 +4997,7 @@ func TestE2E_AccessTiers(t *testing.T) {
 		adminID := suite.registerOrGetUserID("at_na_adm", "at_na_adm@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		tokenAdmin := suite.reloginUser("at_na_adm@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5027,7 +5036,7 @@ func TestE2E_AccessTiers(t *testing.T) {
 		adminID := suite.registerOrGetUserID("at_vs_adm", "at_vs_adm@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		tokenAdmin := suite.reloginUser("at_vs_adm@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5065,7 +5074,7 @@ func TestE2E_AccessTiers(t *testing.T) {
 		userAID := suite.registerOrGetUserID("at_tm_a", "at_tm_a@test.com", password)
 		defer suite.cleanup(userAID)
 		suite.disableMFA(userAID)
-		suite.makeUserVouchVerified(userAID)
+		suite.makeUserFullyVerified(userAID)
 		tokenA := suite.reloginUser("at_tm_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userAID)
@@ -5173,7 +5182,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		userID := suite.registerOrGetUserID("gsg_cr_a", "gsg_cr_a@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gsg_cr_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5231,7 +5240,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		userID := suite.registerOrGetUserID("gsg_prov", "gsg_prov@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gsg_prov@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5269,7 +5278,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gsg_na_a", "gsg_na_a@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gsg_na_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5314,7 +5323,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gsg_ls_a", "gsg_ls_a@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gsg_ls_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5434,7 +5443,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		userID := suite.registerOrGetUserID("gsg_lim", "gsg_lim@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gsg_lim@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5483,7 +5492,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		userID := suite.registerOrGetUserID("gsg_det", "gsg_det@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gsg_det@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5546,7 +5555,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		userID := suite.registerOrGetUserID("gb_listed", "gb_listed@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gb_listed@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5592,7 +5601,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		userID := suite.registerOrGetUserID("gb_unlisted", "gb_unlisted@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gb_unlisted@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5629,7 +5638,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		userID := suite.registerOrGetUserID("gb_prov", "gb_prov@test.com", password)
 		defer suite.cleanup(userID)
 		suite.disableMFA(userID)
-		suite.makeUserVouchVerified(userID)
+		suite.makeUserFullyVerified(userID)
 		token := suite.reloginUser("gb_prov@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(userID)
@@ -5668,7 +5677,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gb_disc_ad", "gb_disc_ad@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gb_disc_ad@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5725,7 +5734,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gb_ndisc_ad", "gb_ndisc_ad@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gb_ndisc_ad@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5787,7 +5796,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gb_ujoin_ad", "gb_ujoin_ad@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gb_ujoin_ad@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5824,7 +5833,7 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gb_uinv_ad", "gb_uinv_ad@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gb_uinv_ad@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -5881,7 +5890,7 @@ func TestE2E_GroupResources(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gres_a", "gres_a@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gres_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -6043,7 +6052,7 @@ func TestE2E_GroupBlocking(t *testing.T) {
 		adminID := suite.registerOrGetUserID("gblk_a", "gblk_a@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("gblk_a@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -6150,7 +6159,7 @@ func TestE2E_TopicBoards(t *testing.T) {
 		adminID := suite.registerOrGetUserID("tb_admin", "tb_admin@test.com", password)
 		defer suite.cleanup(adminID)
 		suite.disableMFA(adminID)
-		suite.makeUserVouchVerified(adminID)
+		suite.makeUserFullyVerified(adminID)
 		adminToken := suite.reloginUser("tb_admin@test.com", password)
 
 		regionID := suite.createTestRegionForGroups(adminID)
@@ -6299,8 +6308,8 @@ func TestE2E_Connections(t *testing.T) {
 	// Create two users with groups
 	userAID, tokenA := suite.registerOrGetUser("conn_e2e_a", "conn_e2e_a@test.com", "password12345")
 	userBID, _ := suite.registerOrGetUser("conn_e2e_b", "conn_e2e_b@test.com", "password12345")
-	suite.makeUserVouchVerified(userAID)
-	suite.makeUserVouchVerified(userBID)
+	suite.makeUserFullyVerified(userAID)
+	suite.makeUserFullyVerified(userBID)
 	tokenA = suite.reloginUser("conn_e2e_a@test.com", "password12345")
 	tokenB := suite.reloginUser("conn_e2e_b@test.com", "password12345")
 
@@ -6416,7 +6425,7 @@ func TestE2E_Connections(t *testing.T) {
 	t.Run("Expansion and leave", func(t *testing.T) {
 		// Create a third user/group
 		userCID, _ := suite.registerOrGetUser("conn_e2e_c", "conn_e2e_c@test.com", "password12345")
-		suite.makeUserVouchVerified(userCID)
+		suite.makeUserFullyVerified(userCID)
 		tokenC := suite.reloginUser("conn_e2e_c@test.com", "password12345")
 		regionCID := suite.createTestRegionForGroups(userCID)
 		groupCID, _ := suite.createGroup("Conn E2E Group C", []string{regionCID}, tokenC)
@@ -6499,7 +6508,7 @@ func TestE2E_Connections(t *testing.T) {
 	t.Run("Auto-remove on unanimous block", func(t *testing.T) {
 		// Create a third user/group for this subtest
 		userDID, _ := suite.registerOrGetUser("conn_e2e_d", "conn_e2e_d@test.com", "password12345")
-		suite.makeUserVouchVerified(userDID)
+		suite.makeUserFullyVerified(userDID)
 		tokenD := suite.reloginUser("conn_e2e_d@test.com", "password12345")
 		regionDID := suite.createTestRegionForGroups(userDID)
 		groupDID, _ := suite.createGroup("Conn E2E Group D", []string{regionDID}, tokenD)
@@ -6570,7 +6579,7 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		adminAID := suite.registerOrGetUserID("disc_a", "disc_a@test.com", password)
 		defer suite.cleanup(adminAID)
 		suite.disableMFA(adminAID)
-		suite.makeUserVouchVerified(adminAID)
+		suite.makeUserFullyVerified(adminAID)
 		tokenA := suite.reloginUser("disc_a@test.com", password)
 
 		regionAID := suite.createTestRegionForGroups(adminAID)
@@ -6586,7 +6595,7 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		adminBID := suite.registerOrGetUserID("disc_b", "disc_b@test.com", password)
 		defer suite.cleanup(adminBID)
 		suite.disableMFA(adminBID)
-		suite.makeUserVouchVerified(adminBID)
+		suite.makeUserFullyVerified(adminBID)
 		tokenB := suite.reloginUser("disc_b@test.com", password)
 
 		regionBID := suite.createTestRegionForGroups(adminBID)
@@ -6870,7 +6879,7 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		adminCID := suite.registerOrGetUserID("disc_c", "disc_c@test.com", password)
 		defer suite.cleanup(adminCID)
 		suite.disableMFA(adminCID)
-		suite.makeUserVouchVerified(adminCID)
+		suite.makeUserFullyVerified(adminCID)
 		tokenC := suite.reloginUser("disc_c@test.com", password)
 
 		regionCID := suite.createTestRegionForGroups(adminCID)
@@ -6883,7 +6892,7 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		adminDID := suite.registerOrGetUserID("disc_d", "disc_d@test.com", password)
 		defer suite.cleanup(adminDID)
 		suite.disableMFA(adminDID)
-		suite.makeUserVouchVerified(adminDID)
+		suite.makeUserFullyVerified(adminDID)
 		tokenD := suite.reloginUser("disc_d@test.com", password)
 
 		regionDID := suite.createTestRegionForGroups(adminDID)
@@ -6948,7 +6957,7 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		adminEID := suite.registerOrGetUserID("disc_e", "disc_e@test.com", password)
 		defer suite.cleanup(adminEID)
 		suite.disableMFA(adminEID)
-		suite.makeUserVouchVerified(adminEID)
+		suite.makeUserFullyVerified(adminEID)
 		tokenE := suite.reloginUser("disc_e@test.com", password)
 
 		regionEID := suite.createTestRegionForGroups(adminEID)
