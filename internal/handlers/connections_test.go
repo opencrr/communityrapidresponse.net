@@ -73,7 +73,8 @@ func setupConnectionTestSuite(t *testing.T) *ConnectionTestSuite {
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	connectionHandler := NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
-	groupHandler := NewGroupHandler(groupRepo, signalGroupRepo, regionRepo, userRepo, auditRepo)
+	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
+	groupHandler := NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",

@@ -269,19 +269,19 @@ func main() {
 		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
 	)
 
-	// Initialize group repository and handler
-	groupRepo := database.NewGroupRepository(db)
-	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, regionRepo, userRepo, auditRepo)
-
-	// Initialize connection repository and handler
-	connectionRepo := database.NewConnectionRepository(db)
-	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
-
 	// Initialize meshtastic channel repository and handler
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 	meshtasticHandler := handlers.NewMeshtasticHandler(
 		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
 	)
+
+	// Initialize group repository and handler
+	groupRepo := database.NewGroupRepository(db)
+	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+
+	// Initialize connection repository and handler
+	connectionRepo := database.NewConnectionRepository(db)
+	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
 
 	// Initialize encryption handler
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)

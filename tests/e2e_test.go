@@ -149,7 +149,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
 	)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
-	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	connectionRepo := database.NewConnectionRepository(db)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)
 

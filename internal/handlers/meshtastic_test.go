@@ -387,9 +387,10 @@ func TestMeshtasticHandler_Create_Region_Success(t *testing.T) {
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
 		WithArgs(
 			sqlmock.AnyArg(), // id (uuid)
-			strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), // region_id, school_id, district_id
+			strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), // region_id, school_id, district_id, owner_group_id
 			"Test Channel",
 			sqlmock.AnyArg(), // description
+			sqlmock.AnyArg(), // access_tier
 			sqlmock.AnyArg(), // created_by
 			sqlmock.AnyArg(), // created_at
 			true,             // is_active
@@ -478,8 +479,8 @@ func TestMeshtasticHandler_Create_Region_Superuser(t *testing.T) {
 
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
 		WithArgs(
-			sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			"Test Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
+			sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			"Test Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -668,8 +669,8 @@ func TestMeshtasticHandler_Create_School_Success(t *testing.T) {
 
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
 		WithArgs(
-			sqlmock.AnyArg(), sqlmock.AnyArg(), strPtr("school-1"), sqlmock.AnyArg(),
-			"School Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
+			sqlmock.AnyArg(), sqlmock.AnyArg(), strPtr("school-1"), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			"School Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -849,8 +850,8 @@ func TestMeshtasticHandler_Create_District_Success(t *testing.T) {
 
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
 		WithArgs(
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), strPtr("district-1"),
-			"District Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), strPtr("district-1"), sqlmock.AnyArg(),
+			"District Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -979,8 +980,8 @@ func TestMeshtasticHandler_Create_NoAuditRepo(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
-		WithArgs(sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			"Test Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true).
+		WithArgs(sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			"Test Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	suite.mock.ExpectExec("INSERT INTO encrypted_secrets").
@@ -1062,11 +1063,11 @@ func TestMeshtasticHandler_List_ByRegion(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*meshtastic_channels.*WHERE.*region_id").
 		WithArgs("region-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by",
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by",
 			"created_at", "is_active", "has_pending_deletion", "region_name",
-		}).AddRow("ch-1", &regionID, nil, nil,
-			"Channel One", nil, "user-1",
+		}).AddRow("ch-1", &regionID, nil, nil, nil,
+			"Channel One", nil, "member", "user-1",
 			createdAt, true, false, "Region One"))
 
 	// GetByMeshtasticChannelID
@@ -1131,11 +1132,11 @@ func TestMeshtasticHandler_List_BySchool(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*meshtastic_channels.*WHERE.*school_id").
 		WithArgs("school-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by",
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by",
 			"created_at", "is_active", "has_pending_deletion",
-		}).AddRow("ch-2", nil, &schoolID, nil,
-			"School Channel", nil, "user-1",
+		}).AddRow("ch-2", nil, &schoolID, nil, nil,
+			"School Channel", nil, "member", "user-1",
 			createdAt, true, false))
 
 	// GetByMeshtasticChannelID — not found (no secret yet)
@@ -1177,8 +1178,8 @@ func TestMeshtasticHandler_List_AllUserChannels(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*meshtastic_channels.*UNION").
 		WithArgs("vouched-user-789", "vouched-user-789", "vouched-user-789").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by",
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by",
 			"created_at", "is_active", "has_pending_deletion",
 			"region_name", "school_name", "district_name",
 		}))
@@ -1273,13 +1274,13 @@ func TestMeshtasticHandler_ListAdmin_Success(t *testing.T) {
 	suite.mock.ExpectQuery("user_admin_regions.*UNION").
 		WithArgs("admin-user-123", "admin-user-123", "admin-user-123").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
 			"region_name", "school_name", "district_name",
-			"channel_name", "description",
+			"channel_name", "description", "access_tier",
 			"created_by", "created_at", "is_active", "has_pending_deletion",
-		}).AddRow("ch-1", &regionID, nil, nil,
+		}).AddRow("ch-1", &regionID, nil, nil, nil,
 			"Region One", "", "",
-			"Admin Channel", nil,
+			"Admin Channel", nil, "member",
 			"admin-user-123", createdAt, true, false))
 
 	// GetByMeshtasticChannelID
@@ -1393,8 +1394,8 @@ func TestMeshtasticHandler_Update_ChannelNotFound(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("nonexistent").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
 		}))
 
 	body, _ := json.Marshal(models.UpdateMeshtasticChannelRequest{Name: strPtr("New Name")})
@@ -1418,9 +1419,9 @@ func TestMeshtasticHandler_Update_RegionChannel_Success(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-1", &regionID, nil, nil, "Old Name", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-1", &regionID, nil, nil, nil, "Old Name", nil, "member", "user-1", createdAt, true))
 
 	// IsUserAdmin (userID, regionID)
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -1470,9 +1471,9 @@ func TestMeshtasticHandler_Update_RegionChannel_NotAdmin(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-1", &regionID, nil, nil, "Old Name", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-1", &regionID, nil, nil, nil, "Old Name", nil, "member", "user-1", createdAt, true))
 
 	// IsUserAdmin returns false (userID, regionID)
 	suite.mock.ExpectQuery("user_admin_regions").
@@ -1501,9 +1502,9 @@ func TestMeshtasticHandler_Update_SchoolChannel_Success(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-2").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-2", nil, &schoolID, nil, "School Channel", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-2", nil, &schoolID, nil, nil, "School Channel", nil, "member", "user-1", createdAt, true))
 
 	// GetUserSchool — admin
 	suite.mock.ExpectQuery("SELECT.*FROM user_schools.*WHERE user_id").
@@ -1550,9 +1551,9 @@ func TestMeshtasticHandler_Update_SchoolChannel_NotAdmin(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-2").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-2", nil, &schoolID, nil, "School Channel", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-2", nil, &schoolID, nil, nil, "School Channel", nil, "member", "user-1", createdAt, true))
 
 	// GetUserSchool — member but not admin
 	suite.mock.ExpectQuery("SELECT.*FROM user_schools.*WHERE user_id").
@@ -1581,9 +1582,9 @@ func TestMeshtasticHandler_Update_SchoolChannel_NotMember(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-2").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-2", nil, &schoolID, nil, "School Channel", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-2", nil, &schoolID, nil, nil, "School Channel", nil, "member", "user-1", createdAt, true))
 
 	// GetUserSchool — no rows (not a member)
 	suite.mock.ExpectQuery("SELECT.*FROM user_schools.*WHERE user_id").
@@ -1611,9 +1612,9 @@ func TestMeshtasticHandler_Update_Superuser(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-1", &regionID, nil, nil, "Old Name", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-1", &regionID, nil, nil, nil, "Old Name", nil, "member", "user-1", createdAt, true))
 
 	// Superuser skips admin checks — goes straight to Update
 	newName := "Superuser Rename"
@@ -1653,9 +1654,9 @@ func TestMeshtasticHandler_Update_DistrictChannel_NotAdmin(t *testing.T) {
 	suite.mock.ExpectQuery("SELECT.*FROM meshtastic_channels.*WHERE id").
 		WithArgs("ch-3").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "region_id", "school_id", "district_id",
-			"channel_name", "description", "created_by", "created_at", "is_active",
-		}).AddRow("ch-3", nil, nil, &districtID, "District Channel", nil, "user-1", createdAt, true))
+			"id", "region_id", "school_id", "district_id", "owner_group_id",
+			"channel_name", "description", "access_tier", "created_by", "created_at", "is_active",
+		}).AddRow("ch-3", nil, nil, &districtID, nil, "District Channel", nil, "member", "user-1", createdAt, true))
 
 	// ListByDistrict
 	suite.mock.ExpectQuery("SELECT.*FROM schools.*WHERE.*district_id").
@@ -1717,8 +1718,8 @@ func TestMeshtasticHandler_Create_MultipleWrappedKeys(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
-		WithArgs(sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			"Multi-Key Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true).
+		WithArgs(sqlmock.AnyArg(), strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			"Multi-Key Channel", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	suite.mock.ExpectExec("INSERT INTO encrypted_secrets").

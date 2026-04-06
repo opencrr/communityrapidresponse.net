@@ -1337,6 +1337,23 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for meshtastic-channels sub-route: /api/v1/groups/{id}/meshtastic-channels
+	if len(parts) >= 2 && parts[1] == "meshtastic-channels" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateMeshtasticChannel)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListMeshtasticChannels)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
 	// Check for invite-links sub-route: /api/v1/groups/{id}/invite-links
 	if len(parts) >= 2 && parts[1] == "invite-links" {
 		q := req.URL.Query()

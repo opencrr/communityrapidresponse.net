@@ -266,6 +266,8 @@ func (h *MeshtasticHandler) createChannelWithSecret(r *http.Request, claims *mid
 				count, txErr = h.channelRepo.CountBySchoolForUpdate(r.Context(), tx, *channel.SchoolID)
 			} else if channel.DistrictID != nil {
 				count, txErr = h.channelRepo.CountByDistrictForUpdate(r.Context(), tx, *channel.DistrictID)
+			} else if channel.OwnerGroupID != nil {
+				count, txErr = h.channelRepo.CountByOwnerGroupForUpdate(r.Context(), tx, *channel.OwnerGroupID)
 			}
 			if txErr != nil {
 				return txErr
@@ -353,11 +355,13 @@ func (h *MeshtasticHandler) List(w http.ResponseWriter, r *http.Request) {
 				RegionID:           ch.RegionID,
 				SchoolID:           ch.SchoolID,
 				DistrictID:         ch.DistrictID,
+				OwnerGroupID:       ch.OwnerGroupID,
 				RegionName:         ch.RegionName,
 				SchoolName:         ch.SchoolName,
 				DistrictName:       ch.DistrictName,
 				Name:               ch.ChannelName,
 				Description:        ch.Description,
+				AccessTier:         string(ch.AccessTier),
 				CreatedAt:          ch.CreatedAt,
 				HasPendingDeletion: ch.HasPendingDeletion,
 			},
@@ -404,11 +408,13 @@ func (h *MeshtasticHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 				RegionID:           ch.RegionID,
 				SchoolID:           ch.SchoolID,
 				DistrictID:         ch.DistrictID,
+				OwnerGroupID:       ch.OwnerGroupID,
 				RegionName:         ch.RegionName,
 				SchoolName:         ch.SchoolName,
 				DistrictName:       ch.DistrictName,
 				Name:               ch.ChannelName,
 				Description:        ch.Description,
+				AccessTier:         string(ch.AccessTier),
 				CreatedAt:          ch.CreatedAt,
 				HasPendingDeletion: ch.HasPendingDeletion,
 			},

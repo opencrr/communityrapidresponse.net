@@ -13,27 +13,30 @@ import (
 
 // GroupHandler handles group endpoints.
 type GroupHandler struct {
-	groupRepo       *database.GroupRepository
-	signalGroupRepo *database.SignalGroupRepository
-	regionRepo      *database.RegionRepository
-	userRepo        *database.UserRepository
-	auditRepo       *database.AuditRepository
+	groupRepo            *database.GroupRepository
+	signalGroupRepo      *database.SignalGroupRepository
+	meshtasticChannelRepo *database.MeshtasticChannelRepository
+	regionRepo           *database.RegionRepository
+	userRepo             *database.UserRepository
+	auditRepo            *database.AuditRepository
 }
 
 // NewGroupHandler creates a new group handler.
 func NewGroupHandler(
 	groupRepo *database.GroupRepository,
 	signalGroupRepo *database.SignalGroupRepository,
+	meshtasticChannelRepo *database.MeshtasticChannelRepository,
 	regionRepo *database.RegionRepository,
 	userRepo *database.UserRepository,
 	auditRepo *database.AuditRepository,
 ) *GroupHandler {
 	return &GroupHandler{
-		groupRepo:       groupRepo,
-		signalGroupRepo: signalGroupRepo,
-		regionRepo:      regionRepo,
-		userRepo:        userRepo,
-		auditRepo:       auditRepo,
+		groupRepo:            groupRepo,
+		signalGroupRepo:      signalGroupRepo,
+		meshtasticChannelRepo: meshtasticChannelRepo,
+		regionRepo:           regionRepo,
+		userRepo:             userRepo,
+		auditRepo:            auditRepo,
 	}
 }
 
@@ -1784,5 +1787,189 @@ func (h *GroupHandler) BrowsePostings(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"postings": postings,
+	})
+}
+
+const maxMeshtasticChannelsPerOwnerGroup = 5
+
+// CreateMeshtasticChannel handles POST /api/v1/groups/:id/meshtastic-channels
+func (h *GroupHandler) CreateMeshtasticChannel(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check group exists and is active
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", "create_meshtastic_channel")
+		return
+	}
+	if group.Status == models.GroupStatusProvisional {
+		writeError(w, http.StatusBadRequest, "group_provisional", "Cannot create meshtastic channels for a provisional group")
+		return
+	}
+
+	// Check user is admin of this group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_meshtastic_channel")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	// Check meshtastic channel limit
+	count, err := h.meshtasticChannelRepo.CountByOwnerGroup(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to count meshtastic channels", "group", "create_meshtastic_channel")
+		return
+	}
+	if count >= maxMeshtasticChannelsPerOwnerGroup {
+		writeError(w, http.StatusBadRequest, "limit_reached", "Maximum number of meshtastic channels reached for this group")
+		return
+	}
+
+	var req models.CreateGroupMeshtasticChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate channel_name
+	if req.ChannelName == "" || len(req.ChannelName) > 255 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Channel name must be between 1 and 255 characters")
+		return
+	}
+
+	// Validate access_tier
+	accessTier := models.AccessTier(req.AccessTier)
+	switch accessTier {
+	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
+		return
+	}
+
+	var description *string
+	if req.Description != "" {
+		description = &req.Description
+	}
+
+	meshtasticChannel := &models.MeshtasticChannel{
+		OwnerGroupID: &groupID,
+		ChannelName:  req.ChannelName,
+		Description:  description,
+		AccessTier:   accessTier,
+		CreatedBy:    &claims.UserID,
+	}
+
+	if err := h.meshtasticChannelRepo.CreateForOwnerGroup(r.Context(), meshtasticChannel); err != nil {
+		writeServerError(w, r, err, "Failed to create meshtastic channel", "group", "create_meshtastic_channel")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionMeshtasticChannelCreated, &resourceType, &groupID, map[string]interface{}{
+			"meshtastic_channel_id":   meshtasticChannel.ID,
+			"meshtastic_channel_name": meshtasticChannel.ChannelName,
+			"access_tier":             string(meshtasticChannel.AccessTier),
+		}), "group_meshtastic_channel_created")
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":             meshtasticChannel.ID,
+		"channel_name":   meshtasticChannel.ChannelName,
+		"access_tier":    string(meshtasticChannel.AccessTier),
+		"owner_group_id": groupID,
+		"created_at":     meshtasticChannel.CreatedAt,
+	})
+}
+
+// ListMeshtasticChannels handles GET /api/v1/groups/:id/meshtastic-channels
+func (h *GroupHandler) ListMeshtasticChannels(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Get all meshtastic channels for this owner group
+	meshtasticChannels, err := h.meshtasticChannelRepo.ListByOwnerGroup(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list meshtastic channels", "group", "list_meshtastic_channels")
+		return
+	}
+
+	// Get user's membership info for access tier filtering
+	memberInfo, err := h.groupRepo.GetMember(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get membership info", "group", "list_meshtastic_channels")
+		return
+	}
+
+	// Determine if user is a verified resident in any of the group's regions
+	isVerifiedResident := false
+	regions, err := h.groupRepo.GetRegions(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group regions", "group", "list_meshtastic_channels")
+		return
+	}
+	for _, region := range regions {
+		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		if regionErr != nil {
+			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_meshtastic_channels")
+			return
+		}
+		if inRegion {
+			isVerifiedResident = true
+			break
+		}
+	}
+
+	// Filter meshtastic channels by access tier
+	var filteredChannels []models.MeshtasticChannelPublic
+	for _, mc := range meshtasticChannels {
+		if claims.IsSuperuser || database.UserMeetsAccessTier(mc.AccessTier, true, isVerifiedResident, memberInfo) {
+			filteredChannels = append(filteredChannels, models.MeshtasticChannelPublic{
+				ID:                 mc.ID,
+				OwnerGroupID:       mc.OwnerGroupID,
+				Name:               mc.ChannelName,
+				Description:        mc.Description,
+				AccessTier:         string(mc.AccessTier),
+				CreatedAt:          mc.CreatedAt,
+				HasPendingDeletion: mc.HasPendingDeletion,
+			})
+		}
+	}
+
+	if filteredChannels == nil {
+		filteredChannels = []models.MeshtasticChannelPublic{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"meshtastic_channels": filteredChannels,
 	})
 }
