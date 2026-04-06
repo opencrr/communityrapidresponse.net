@@ -46,7 +46,6 @@ import schoolDetailPage from './pages/schoolDetail.js';
 import districtDetailPage from './pages/districtDetail.js';
 import privacyPage from './pages/privacy.js';
 import termsPage from './pages/terms.js';
-import groupBrowsePage from './pages/groupBrowse.js';
 import groupDetailPage from './pages/groupDetail.js';
 import groupCreatePage from './pages/groupCreate.js';
 import groupManagePage from './pages/groupManage.js';
@@ -85,7 +84,7 @@ const routes = [
     { path: '/verify', page: verificationPage, auth: true },
     { path: '/vouch', page: vouchPage, auth: true },
     { path: '/groups', page: myGroupsPage, auth: true },
-    { path: '/groups/browse', page: groupBrowsePage, auth: true },
+    { path: '/groups/browse', redirect: '/discover' },
     { path: '/groups/create', page: groupCreatePage, auth: true },
     { path: '/groups/:id', page: groupDetailPage, auth: true },
     { path: '/groups/:id/manage', page: groupManagePage, auth: true },
