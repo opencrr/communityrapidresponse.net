@@ -246,9 +246,17 @@ func (s *E2ETestSuite) disableMFA(userID string) {
 // Call this BEFORE login/re-login so the JWT includes the correct claims.
 func (s *E2ETestSuite) makeUserVouchVerified(userID string) {
 	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE users SET vouch_verified = TRUE, verification_tier = 1 WHERE id = ?", userID)
+		"UPDATE users SET vouch_verified = TRUE, postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
 	if err != nil {
 		s.t.Fatalf("Failed to make user vouch-verified: %v", err)
+	}
+}
+
+func (s *E2ETestSuite) makeUserPostcardVerified(userID string) {
+	_, err := s.db.ExecContext(context.Background(),
+		"UPDATE users SET postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
+	if err != nil {
+		s.t.Fatalf("Failed to make user postcard-verified: %v", err)
 	}
 }
 
@@ -3855,7 +3863,7 @@ func (s *E2ETestSuite) cleanupRegionsForGroups(regionIDs ...string) {
 func TestE2E_GroupLifecycle(t *testing.T) {
 	suite := SetupE2ETest(t)
 
-	t.Run("create group requires vouch verification", func(t *testing.T) {
+	t.Run("create group requires address verification", func(t *testing.T) {
 		password := "testpassword123!"
 		userID, token := suite.registerOrGetUser("grp_unverif", "grp_unverif@test.com", password)
 		defer suite.cleanup(userID)
