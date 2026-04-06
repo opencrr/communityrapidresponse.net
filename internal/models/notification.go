@@ -146,6 +146,8 @@ const (
 	AuditActionGroupResourceDeleted          = "group_resource_deleted"
 	AuditActionGroupBlocked                  = "group_blocked"
 	AuditActionGroupUnblocked                = "group_unblocked"
+	AuditActionTopicBoardPosted              = "topic_board_posted"
+	AuditActionTopicBoardRemoved             = "topic_board_removed"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

@@ -6114,3 +6114,153 @@ func TestE2E_GroupBlocking(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_TopicBoards(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("post, browse, block-filter, remove, non-admin rejected", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Setup admin user with two groups
+		adminID := suite.registerOrGetUserID("tb_admin", "tb_admin@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("tb_admin@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupAID, _ := suite.createGroup("TB E2E Group A", []string{regionID}, adminToken)
+		groupBID, _ := suite.createGroup("TB E2E Group B", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupAID, groupBID)
+
+		// --- Post to topic board ---
+		postResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/topic-board", map[string]interface{}{
+			"description": "Group A offers mutual aid in the region",
+			"tags":        []string{"mutual-aid", "safety"},
+		}, adminToken)
+		defer func() { _ = postResp.Body.Close() }()
+
+		if postResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(postResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for post, got %d: %v", postResp.StatusCode, errBody)
+		}
+
+		var postingA map[string]interface{}
+		_ = json.NewDecoder(postResp.Body).Decode(&postingA)
+		if postingA["id"] == nil || postingA["id"] == "" {
+			t.Error("Expected posting ID in response")
+		}
+
+		// Post for group B too
+		postBResp := suite.request("POST", "/api/v1/groups/"+groupBID+"/topic-board", map[string]interface{}{
+			"description": "Group B looking for defense partners",
+			"tags":        []string{"mutual-aid", "defense"},
+		}, adminToken)
+		defer func() { _ = postBResp.Body.Close() }()
+
+		if postBResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for post B, got %d", postBResp.StatusCode)
+		}
+
+		// --- Browse by tag: see the other group's posting ---
+		browseResp := suite.request("GET", "/api/v1/topic-board?tag=mutual-aid&group_id="+groupAID, nil, adminToken)
+		defer func() { _ = browseResp.Body.Close() }()
+
+		if browseResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for browse, got %d", browseResp.StatusCode)
+		}
+
+		var browseBody map[string]interface{}
+		_ = json.NewDecoder(browseResp.Body).Decode(&browseBody)
+		postings := browseBody["postings"].([]interface{})
+		if len(postings) != 1 {
+			t.Fatalf("Expected 1 posting (other group), got %d", len(postings))
+		}
+		firstPosting := postings[0].(map[string]interface{})
+		if firstPosting["group_id"] != groupBID {
+			t.Errorf("Expected group B posting, got %v", firstPosting["group_id"])
+		}
+
+		// --- Block group B, posting filtered out ---
+		blockResp := suite.request("POST", "/api/v1/groups/"+groupAID+"/blocks", map[string]interface{}{
+			"group_id": groupBID,
+		}, adminToken)
+		defer func() { _ = blockResp.Body.Close() }()
+
+		if blockResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for block, got %d", blockResp.StatusCode)
+		}
+
+		browseAfterBlock := suite.request("GET", "/api/v1/topic-board?tag=mutual-aid&group_id="+groupAID, nil, adminToken)
+		defer func() { _ = browseAfterBlock.Body.Close() }()
+
+		var browseAfterBody map[string]interface{}
+		_ = json.NewDecoder(browseAfterBlock.Body).Decode(&browseAfterBody)
+		filteredPostings := browseAfterBody["postings"].([]interface{})
+		if len(filteredPostings) != 0 {
+			t.Errorf("Expected 0 postings after blocking, got %d", len(filteredPostings))
+		}
+
+		// Unblock for further tests
+		unblockResp := suite.request("DELETE", "/api/v1/groups/"+groupAID+"/blocks/"+groupBID, nil, adminToken)
+		defer func() { _ = unblockResp.Body.Close() }()
+
+		// --- Get own posting ---
+		getResp := suite.request("GET", "/api/v1/groups/"+groupAID+"/topic-board", nil, adminToken)
+		defer func() { _ = getResp.Body.Close() }()
+
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for get, got %d", getResp.StatusCode)
+		}
+
+		// --- Remove posting ---
+		removeResp := suite.request("DELETE", "/api/v1/groups/"+groupAID+"/topic-board", nil, adminToken)
+		defer func() { _ = removeResp.Body.Close() }()
+
+		if removeResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for remove, got %d", removeResp.StatusCode)
+		}
+
+		// Verify removed
+		getAfterRemove := suite.request("GET", "/api/v1/groups/"+groupAID+"/topic-board", nil, adminToken)
+		defer func() { _ = getAfterRemove.Body.Close() }()
+
+		if getAfterRemove.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected 404 after removal, got %d", getAfterRemove.StatusCode)
+		}
+
+		// --- Non-admin cannot post or browse ---
+		memberID := suite.registerOrGetUserID("tb_member", "tb_member@test.com", password)
+		defer suite.cleanup(memberID)
+		suite.disableMFA(memberID)
+		suite.makeUserVouchVerified(memberID)
+		memberToken := suite.reloginUser("tb_member@test.com", password)
+
+		// Add member to region and group (non-admin)
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			memberID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupAID, memberID, false, false)
+
+		nonAdminPost := suite.request("POST", "/api/v1/groups/"+groupAID+"/topic-board", map[string]interface{}{
+			"description": "Non-admin should not be able to post",
+			"tags":        []string{"test"},
+		}, memberToken)
+		defer func() { _ = nonAdminPost.Body.Close() }()
+
+		if nonAdminPost.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin post, got %d", nonAdminPost.StatusCode)
+		}
+
+		nonAdminBrowse := suite.request("GET", "/api/v1/topic-board?tag=mutual-aid&group_id="+groupAID, nil, memberToken)
+		defer func() { _ = nonAdminBrowse.Body.Close() }()
+
+		if nonAdminBrowse.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin browse, got %d", nonAdminBrowse.StatusCode)
+		}
+	})
+}

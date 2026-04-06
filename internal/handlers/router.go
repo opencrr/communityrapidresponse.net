@@ -167,6 +167,7 @@ func (r *Router) Setup() http.Handler {
 		r.mux.HandleFunc("/api/v1/groups/", r.handleGroupByID)
 		r.mux.HandleFunc("/api/v1/group-invitations", r.authenticated(r.methodHandler(http.MethodGet, r.groups.ListMyInvitations)))
 		r.mux.HandleFunc("/api/v1/group-invitations/", r.handleGroupInvitationByID)
+		r.mux.HandleFunc("/api/v1/topic-board", r.authenticated(r.methodHandler(http.MethodGet, r.groups.BrowsePostings)))
 	}
 
 	// School routes (all authenticated)
@@ -1405,6 +1406,25 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for topic-board sub-route: /api/v1/groups/{id}/topic-board
+	if len(parts) >= 2 && parts[1] == "topic-board" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateOrUpdatePosting)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.GetPosting)(w, req)
+		case http.MethodDelete:
+			r.authenticated(r.groups.RemovePosting)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
 		return
 	}
 

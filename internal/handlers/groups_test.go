@@ -144,6 +144,7 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM topic_board_postings WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_blocks WHERE blocker_group_id = ? OR blocked_group_id = ?", id, id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", id)
@@ -3071,5 +3072,261 @@ func TestGroupHandler_BlockGroup_SelfBlockRejected(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// Topic Board Handler Tests
+// =============================================================================
+
+func TestGroupHandler_TopicBoard_CreatePosting(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("tb_h_create", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("TBHandlerRegion", models.RegionTypeState, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	groupReq := &models.CreateGroupRequest{
+		Name: "TB Handler Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, groupReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	t.Run("admin can create posting", func(t *testing.T) {
+		claims := suite.claimsForUser(admin)
+		body, _ := json.Marshal(models.CreateTopicBoardPostingRequest{
+			Description: "Looking for mutual aid partners nearby",
+			Tags:        []string{"mutual-aid", "safety"},
+		})
+		req := httptest.NewRequest("POST", "/topic-board?id="+group.ID, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		reqCtx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(reqCtx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.CreateOrUpdatePosting(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var posting models.TopicBoardPostingWithTags
+		_ = json.NewDecoder(rec.Body).Decode(&posting)
+		if posting.ID == "" {
+			t.Error("Expected posting ID")
+		}
+		if posting.Description != "Looking for mutual aid partners nearby" {
+			t.Errorf("Unexpected description: %s", posting.Description)
+		}
+		if len(posting.Tags) != 2 {
+			t.Errorf("Expected 2 tags, got %d", len(posting.Tags))
+		}
+	})
+}
+
+func TestGroupHandler_TopicBoard_CreatePosting_NonAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("tb_h_nonadm_a", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("tb_h_nonadm_m", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("TBNonAdminRegion", models.RegionTypeState, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB NonAdmin Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add member as non-admin
+	_ = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(member)
+	body, _ := json.Marshal(models.CreateTopicBoardPostingRequest{
+		Description: "Non-admin trying to post something",
+		Tags:        []string{"test"},
+	})
+	req := httptest.NewRequest("POST", "/topic-board?id="+group.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateOrUpdatePosting(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_TopicBoard_BrowseByTag(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	adminA := suite.createTestUser("tb_h_br_a", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := suite.createTestUser("tb_h_br_b", models.TierVouched, false)
+	adminB.VouchVerified = true
+	region := suite.createTestRegion("TBBrowseRegion", models.RegionTypeState, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, adminA.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, adminB.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB Browse A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, adminA.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB Browse B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, adminB.ID)
+
+	defer suite.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	// Create postings
+	_, _ = suite.groupRepo.CreateOrUpdatePosting(ctx, groupB.ID, &models.CreateTopicBoardPostingRequest{
+		Description: "Group B is ready for mutual aid",
+		Tags:        []string{"mutual-aid"},
+	})
+
+	t.Run("browse returns matching postings", func(t *testing.T) {
+		claims := suite.claimsForUser(adminA)
+		req := httptest.NewRequest("GET", "/topic-board?tag=mutual-aid&group_id="+groupA.ID, nil)
+		reqCtx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(reqCtx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.BrowsePostings(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var result map[string][]models.TopicBoardPostingWithTags
+		_ = json.NewDecoder(rec.Body).Decode(&result)
+		postings := result["postings"]
+		if len(postings) != 1 {
+			t.Fatalf("Expected 1 posting, got %d", len(postings))
+		}
+		if postings[0].GroupID != groupB.ID {
+			t.Errorf("Expected group B, got %s", postings[0].GroupID)
+		}
+	})
+
+	t.Run("browse requires tag parameter", func(t *testing.T) {
+		claims := suite.claimsForUser(adminA)
+		req := httptest.NewRequest("GET", "/topic-board?group_id="+groupA.ID, nil)
+		reqCtx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(reqCtx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.BrowsePostings(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400, got %d", rec.Code)
+		}
+	})
+}
+
+func TestGroupHandler_TopicBoard_BrowseExcludesBlocked(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	adminA := suite.createTestUser("tb_h_blk_a", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := suite.createTestUser("tb_h_blk_b", models.TierVouched, false)
+	adminB.VouchVerified = true
+	region := suite.createTestRegion("TBBlockRegion", models.RegionTypeState, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, adminA.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, adminB.ID, region.ID, false)
+
+	groupA, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB Block A", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, adminA.ID)
+	groupB, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB Block B", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, adminB.ID)
+
+	defer suite.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID})
+
+	// Create posting for group B
+	_, _ = suite.groupRepo.CreateOrUpdatePosting(ctx, groupB.ID, &models.CreateTopicBoardPostingRequest{
+		Description: "Group B offers mutual aid services",
+		Tags:        []string{"mutual-aid"},
+	})
+
+	// Block group B from group A
+	_ = suite.groupRepo.BlockGroup(ctx, groupA.ID, groupB.ID)
+
+	claims := suite.claimsForUser(adminA)
+	req := httptest.NewRequest("GET", "/topic-board?tag=mutual-aid&group_id="+groupA.ID, nil)
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.BrowsePostings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string][]models.TopicBoardPostingWithTags
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	if len(result["postings"]) != 0 {
+		t.Errorf("Expected 0 postings (blocked group excluded), got %d", len(result["postings"]))
+	}
+}
+
+func TestGroupHandler_TopicBoard_RemovePosting(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("tb_h_remove", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("TBRemoveRegion", models.RegionTypeState, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, _ := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "TB Remove Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	// Create posting
+	_, _ = suite.groupRepo.CreateOrUpdatePosting(ctx, group.ID, &models.CreateTopicBoardPostingRequest{
+		Description: "Posting that will be removed later",
+		Tags:        []string{"test"},
+	})
+
+	claims := suite.claimsForUser(admin)
+	req := httptest.NewRequest("DELETE", "/topic-board?id="+group.ID, nil)
+	reqCtx := middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(reqCtx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.RemovePosting(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify posting is gone
+	_, err := suite.groupRepo.GetPosting(ctx, group.ID)
+	if err == nil {
+		t.Error("Expected posting to be removed")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -1550,5 +1551,223 @@ func (h *GroupHandler) ListBlockedGroups(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"blocked_groups": groups,
+	})
+}
+
+// =============================================================================
+// Topic Board Handlers
+// =============================================================================
+
+// CreateOrUpdatePosting handles POST /api/v1/groups/{id}/topic-board
+func (h *GroupHandler) CreateOrUpdatePosting(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_posting")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to post to the topic board")
+		return
+	}
+
+	var req models.CreateTopicBoardPostingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate description
+	if len(req.Description) < 10 || len(req.Description) > 500 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Description must be between 10 and 500 characters")
+		return
+	}
+
+	// Validate tags
+	if len(req.Tags) == 0 || len(req.Tags) > 5 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Must provide between 1 and 5 tags")
+		return
+	}
+	for _, tag := range req.Tags {
+		if len(tag) < 2 || len(tag) > 100 {
+			writeError(w, http.StatusBadRequest, "validation_error", "Each tag must be between 2 and 100 characters")
+			return
+		}
+	}
+
+	// Validate region label if provided
+	if req.RegionLabel != nil && len(*req.RegionLabel) > 255 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Region label must be at most 255 characters")
+		return
+	}
+
+	posting, err := h.groupRepo.CreateOrUpdatePosting(r.Context(), groupID, &req)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to create topic board posting", "group", "create_posting")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionTopicBoardPosted, &resourceType, &groupID, map[string]interface{}{
+			"posting_id": posting.ID,
+			"tags":       req.Tags,
+		}), "topic_board_posted")
+	}
+
+	writeJSON(w, http.StatusOK, posting)
+}
+
+// GetPosting handles GET /api/v1/groups/{id}/topic-board
+func (h *GroupHandler) GetPosting(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "get_posting")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to view topic board postings")
+		return
+	}
+
+	posting, err := h.groupRepo.GetPosting(r.Context(), groupID)
+	if err != nil {
+		if errors.Is(err, database.ErrTopicBoardPostingNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "No topic board posting found for this group")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get topic board posting", "group", "get_posting")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, posting)
+}
+
+// RemovePosting handles DELETE /api/v1/groups/{id}/topic-board
+func (h *GroupHandler) RemovePosting(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check admin permission
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "remove_posting")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to remove topic board postings")
+		return
+	}
+
+	err = h.groupRepo.RemovePosting(r.Context(), groupID)
+	if err != nil {
+		if errors.Is(err, database.ErrTopicBoardPostingNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "No topic board posting found for this group")
+			return
+		}
+		writeServerError(w, r, err, "Failed to remove topic board posting", "group", "remove_posting")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionTopicBoardRemoved, &resourceType, &groupID, nil), "topic_board_removed")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Topic board posting removed",
+	})
+}
+
+// BrowsePostings handles GET /api/v1/topic-board
+func (h *GroupHandler) BrowsePostings(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	topicTag := r.URL.Query().Get("tag")
+	if topicTag == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "tag query parameter is required")
+		return
+	}
+
+	browsingGroupID := r.URL.Query().Get("group_id")
+	if browsingGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "group_id query parameter is required")
+		return
+	}
+
+	// Verify the user is an admin of the browsing group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), browsingGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "browse_postings")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of the specified group to browse the topic board")
+		return
+	}
+
+	// Parse pagination
+	limit := 20
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 50 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	postings, err := h.groupRepo.BrowsePostings(r.Context(), topicTag, browsingGroupID, limit, offset)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to browse topic board", "group", "browse_postings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"postings": postings,
 	})
 }

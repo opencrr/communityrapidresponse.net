@@ -43,6 +43,7 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 	ctx := context.Background()
 
 	for _, groupID := range groupIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM topic_board_postings WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", groupID)
@@ -2665,6 +2666,329 @@ func TestGroupRepository_DeleteResource(t *testing.T) {
 		err := repo.DeleteResource(ctx, "nonexistent-id")
 		if err != ErrResourceNotFound {
 			t.Errorf("Expected ErrResourceNotFound, got %v", err)
+		}
+	})
+}
+
+// =============================================================================
+// Topic Board Tests
+// =============================================================================
+
+func createGroupTestStateRegion(t *testing.T, db *DB, name string) string {
+	t.Helper()
+	regionID := uuid.New().String()
+	_, err := db.ExecContext(context.Background(),
+		"INSERT INTO geographic_regions (id, name, region_type, created_at) VALUES (?, ?, 'state', NOW())",
+		regionID, name)
+	if err != nil {
+		t.Fatalf("Failed to create test state region %s: %v", name, err)
+	}
+	return regionID
+}
+
+func createGroupTestCityRegion(t *testing.T, db *DB, name, parentID string) string {
+	t.Helper()
+	regionID := uuid.New().String()
+	_, err := db.ExecContext(context.Background(),
+		"INSERT INTO geographic_regions (id, name, region_type, parent_region_id, created_at) VALUES (?, ?, 'city', ?, NOW())",
+		regionID, name, parentID)
+	if err != nil {
+		t.Fatalf("Failed to create test city region %s: %v", name, err)
+	}
+	return regionID
+}
+
+func TestGroupRepository_DeriveRegionLabel(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "derive_label")
+	stateID := createGroupTestStateRegion(t, db, "Washington")
+	cityID := createGroupTestCityRegion(t, db, "Seattle", stateID)
+
+	req := &models.CreateGroupRequest{
+		Name:       "Label Test Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{cityID},
+	}
+	group, err := repo.Create(ctx, req, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{cityID, stateID})
+	})
+
+	t.Run("returns state name for city region", func(t *testing.T) {
+		label, err := repo.DeriveRegionLabel(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("DeriveRegionLabel failed: %v", err)
+		}
+		if label != "Washington" {
+			t.Errorf("Expected 'Washington', got %q", label)
+		}
+	})
+
+	t.Run("returns Unknown for nonexistent group", func(t *testing.T) {
+		label, err := repo.DeriveRegionLabel(ctx, "nonexistent-group-id")
+		if err != nil {
+			t.Fatalf("DeriveRegionLabel failed: %v", err)
+		}
+		if label != "Unknown" {
+			t.Errorf("Expected 'Unknown', got %q", label)
+		}
+	})
+}
+
+func TestGroupRepository_TopicBoardPosting_CreateAndUpdate(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "tb_create")
+	stateID := createGroupTestStateRegion(t, db, "Oregon")
+	cityID := createGroupTestCityRegion(t, db, "Portland", stateID)
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Topic Board Group", Visibility: "unlisted", RegionIDs: []string{cityID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{cityID, stateID})
+	})
+
+	t.Run("creates posting with auto label", func(t *testing.T) {
+		req := &models.CreateTopicBoardPostingRequest{
+			Description: "Looking for mutual aid partners in the area",
+			Tags:        []string{"mutual-aid", "safety"},
+		}
+
+		posting, err := repo.CreateOrUpdatePosting(ctx, group.ID, req)
+		if err != nil {
+			t.Fatalf("CreateOrUpdatePosting failed: %v", err)
+		}
+
+		if posting.ID == "" {
+			t.Error("Expected posting ID")
+		}
+		if posting.GroupID != group.ID {
+			t.Errorf("Expected group ID %s, got %s", group.ID, posting.GroupID)
+		}
+		if posting.RegionLabel != "Oregon" {
+			t.Errorf("Expected auto region label 'Oregon', got %q", posting.RegionLabel)
+		}
+		if posting.AutoRegionLabel == nil || *posting.AutoRegionLabel != "Oregon" {
+			t.Errorf("Expected auto_region_label 'Oregon', got %v", posting.AutoRegionLabel)
+		}
+		if posting.Description != "Looking for mutual aid partners in the area" {
+			t.Errorf("Unexpected description: %s", posting.Description)
+		}
+		if len(posting.Tags) != 2 {
+			t.Fatalf("Expected 2 tags, got %d", len(posting.Tags))
+		}
+		if !posting.IsActive {
+			t.Error("Expected posting to be active")
+		}
+	})
+
+	t.Run("updates existing posting (upsert)", func(t *testing.T) {
+		customLabel := "Pacific Northwest"
+		req := &models.CreateTopicBoardPostingRequest{
+			RegionLabel: &customLabel,
+			Description: "Updated: seeking community defense allies",
+			Tags:        []string{"defense", "community"},
+		}
+
+		posting, err := repo.CreateOrUpdatePosting(ctx, group.ID, req)
+		if err != nil {
+			t.Fatalf("CreateOrUpdatePosting (update) failed: %v", err)
+		}
+
+		if posting.RegionLabel != "Pacific Northwest" {
+			t.Errorf("Expected custom label 'Pacific Northwest', got %q", posting.RegionLabel)
+		}
+		if posting.Description != "Updated: seeking community defense allies" {
+			t.Errorf("Unexpected description: %s", posting.Description)
+		}
+		if len(posting.Tags) != 2 || posting.Tags[0] != "defense" || posting.Tags[1] != "community" {
+			t.Errorf("Expected tags [defense, community], got %v", posting.Tags)
+		}
+	})
+}
+
+func TestGroupRepository_TopicBoardPosting_GetAndRemove(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "tb_getrem")
+	regionID := createGroupTestRegion(t, db, "Get Remove Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Get Remove Group", Visibility: "unlisted", RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("get returns not found when no posting exists", func(t *testing.T) {
+		_, err := repo.GetPosting(ctx, group.ID)
+		if err != ErrTopicBoardPostingNotFound {
+			t.Errorf("Expected ErrTopicBoardPostingNotFound, got %v", err)
+		}
+	})
+
+	t.Run("get returns posting after creation", func(t *testing.T) {
+		_, err := repo.CreateOrUpdatePosting(ctx, group.ID, &models.CreateTopicBoardPostingRequest{
+			Description: "Test posting for get test scenario",
+			Tags:        []string{"test"},
+		})
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		posting, err := repo.GetPosting(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("GetPosting failed: %v", err)
+		}
+		if posting.Description != "Test posting for get test scenario" {
+			t.Errorf("Unexpected description: %s", posting.Description)
+		}
+		if len(posting.Tags) != 1 || posting.Tags[0] != "test" {
+			t.Errorf("Expected [test], got %v", posting.Tags)
+		}
+	})
+
+	t.Run("remove deletes posting", func(t *testing.T) {
+		err := repo.RemovePosting(ctx, group.ID)
+		if err != nil {
+			t.Fatalf("RemovePosting failed: %v", err)
+		}
+
+		_, err = repo.GetPosting(ctx, group.ID)
+		if err != ErrTopicBoardPostingNotFound {
+			t.Errorf("Expected not found after remove, got %v", err)
+		}
+	})
+
+	t.Run("remove returns not found when no posting", func(t *testing.T) {
+		err := repo.RemovePosting(ctx, group.ID)
+		if err != ErrTopicBoardPostingNotFound {
+			t.Errorf("Expected ErrTopicBoardPostingNotFound, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_BrowsePostings(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userA := createGroupTestUser(t, db, "tb_browse_a")
+	userB := createGroupTestUser(t, db, "tb_browse_b")
+	regionID := createGroupTestRegion(t, db, "Browse Region")
+
+	groupA, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Browse Group A", Visibility: "unlisted", RegionIDs: []string{regionID},
+	}, userA)
+	if err != nil {
+		t.Fatalf("Create group A failed: %v", err)
+	}
+	groupB, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Browse Group B", Visibility: "unlisted", RegionIDs: []string{regionID},
+	}, userB)
+	if err != nil {
+		t.Fatalf("Create group B failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{groupA.ID, groupB.ID}, []string{userA, userB}, []string{regionID})
+	})
+
+	// Create postings for both groups
+	_, err = repo.CreateOrUpdatePosting(ctx, groupA.ID, &models.CreateTopicBoardPostingRequest{
+		Description: "Group A posting for browsing test",
+		Tags:        []string{"mutual-aid", "safety"},
+	})
+	if err != nil {
+		t.Fatalf("Create posting A failed: %v", err)
+	}
+	_, err = repo.CreateOrUpdatePosting(ctx, groupB.ID, &models.CreateTopicBoardPostingRequest{
+		Description: "Group B posting for browsing test",
+		Tags:        []string{"mutual-aid", "defense"},
+	})
+	if err != nil {
+		t.Fatalf("Create posting B failed: %v", err)
+	}
+
+	t.Run("returns matching postings by tag", func(t *testing.T) {
+		// Browse as group A, looking for "mutual-aid" — should see group B
+		postings, err := repo.BrowsePostings(ctx, "mutual-aid", groupA.ID, 20, 0)
+		if err != nil {
+			t.Fatalf("BrowsePostings failed: %v", err)
+		}
+		if len(postings) != 1 {
+			t.Fatalf("Expected 1 posting (group B), got %d", len(postings))
+		}
+		if postings[0].GroupID != groupB.ID {
+			t.Errorf("Expected group B posting, got group %s", postings[0].GroupID)
+		}
+	})
+
+	t.Run("filters by tag correctly", func(t *testing.T) {
+		// Browse as group A for "defense" — should see group B
+		postings, err := repo.BrowsePostings(ctx, "defense", groupA.ID, 20, 0)
+		if err != nil {
+			t.Fatalf("BrowsePostings failed: %v", err)
+		}
+		if len(postings) != 1 {
+			t.Fatalf("Expected 1 posting with 'defense' tag, got %d", len(postings))
+		}
+
+		// Browse for a tag no one has
+		postings, err = repo.BrowsePostings(ctx, "nonexistent-tag", groupA.ID, 20, 0)
+		if err != nil {
+			t.Fatalf("BrowsePostings failed: %v", err)
+		}
+		if len(postings) != 0 {
+			t.Errorf("Expected 0 postings for nonexistent tag, got %d", len(postings))
+		}
+	})
+
+	t.Run("excludes own group posting", func(t *testing.T) {
+		// Browse as group A for "safety" — group A has it but should be excluded
+		postings, err := repo.BrowsePostings(ctx, "safety", groupA.ID, 20, 0)
+		if err != nil {
+			t.Fatalf("BrowsePostings failed: %v", err)
+		}
+		if len(postings) != 0 {
+			t.Errorf("Expected 0 postings (own group excluded), got %d", len(postings))
+		}
+	})
+
+	t.Run("excludes blocked group postings", func(t *testing.T) {
+		// Block group B from group A
+		err := repo.BlockGroup(ctx, groupA.ID, groupB.ID)
+		if err != nil {
+			t.Fatalf("BlockGroup failed: %v", err)
+		}
+		defer func() { _ = repo.UnblockGroup(ctx, groupA.ID, groupB.ID) }()
+
+		postings, err := repo.BrowsePostings(ctx, "mutual-aid", groupA.ID, 20, 0)
+		if err != nil {
+			t.Fatalf("BrowsePostings failed: %v", err)
+		}
+		if len(postings) != 0 {
+			t.Errorf("Expected 0 postings (blocked group excluded), got %d", len(postings))
 		}
 	})
 }

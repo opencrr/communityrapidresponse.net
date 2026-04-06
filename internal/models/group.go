@@ -204,3 +204,28 @@ type UpdateResourceRequest struct {
 type BlockGroupRequest struct {
 	GroupID string `json:"group_id" validate:"required"`
 }
+
+// TopicBoardPosting represents a group's presence on the topic board.
+type TopicBoardPosting struct {
+	ID              string    `json:"id" db:"id"`
+	GroupID         string    `json:"group_id" db:"group_id"`
+	RegionLabel     string    `json:"region_label" db:"region_label"`
+	AutoRegionLabel *string   `json:"auto_region_label,omitempty" db:"auto_region_label"`
+	Description     string    `json:"description" db:"description"`
+	IsActive        bool      `json:"is_active" db:"is_active"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// TopicBoardPostingWithTags includes the tags for display.
+type TopicBoardPostingWithTags struct {
+	TopicBoardPosting
+	Tags []string `json:"tags"`
+}
+
+// CreateTopicBoardPostingRequest is the request for publishing to the topic board.
+type CreateTopicBoardPostingRequest struct {
+	RegionLabel *string  `json:"region_label" validate:"omitempty,max=255"`
+	Description string   `json:"description" validate:"required,min=10,max=500"`
+	Tags        []string `json:"tags" validate:"required,min=1,max=5,dive,min=2,max=100"`
+}

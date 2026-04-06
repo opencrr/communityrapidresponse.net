@@ -30,6 +30,7 @@ var (
 	ErrResourceNotFound         = errors.New("resource not found")
 	ErrCannotBlockSelf          = errors.New("cannot block own group")
 	ErrGroupAlreadyBlocked      = errors.New("group already blocked")
+	ErrTopicBoardPostingNotFound = errors.New("topic board posting not found")
 )
 
 // GroupRepository handles group database operations
@@ -1569,4 +1570,321 @@ func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string)
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
+}
+
+// =============================================================================
+// Topic Board Methods
+// =============================================================================
+
+// DeriveRegionLabel walks the region hierarchy for a group's regions up to the
+// state level and returns a comma-joined label of distinct state names.
+func (r *GroupRepository) DeriveRegionLabel(ctx context.Context, groupID string) (string, error) {
+	// Get the group's direct regions
+	regionQuery := `
+		SELECT gr2.id, gr2.name, gr2.region_type, gr2.parent_region_id
+		FROM group_regions gr
+		JOIN geographic_regions gr2 ON gr.region_id = gr2.id
+		WHERE gr.group_id = ?
+	`
+	rows, err := r.db.QueryContext(ctx, regionQuery, groupID)
+	if err != nil {
+		return "", fmt.Errorf("query group regions: %w", err)
+	}
+	defer rows.Close()
+
+	type regionInfo struct {
+		id             string
+		name           string
+		regionType     string
+		parentRegionID *string
+	}
+
+	var regions []regionInfo
+	for rows.Next() {
+		var ri regionInfo
+		if err := rows.Scan(&ri.id, &ri.name, &ri.regionType, &ri.parentRegionID); err != nil {
+			return "", fmt.Errorf("scan group region: %w", err)
+		}
+		regions = append(regions, ri)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate group regions: %w", err)
+	}
+
+	if len(regions) == 0 {
+		return "Unknown", nil
+	}
+
+	// For each region, walk up the parent chain to find the state
+	stateNames := make(map[string]bool)
+	for _, region := range regions {
+		current := region
+		for {
+			if current.regionType == "state" {
+				stateNames[current.name] = true
+				break
+			}
+			if current.parentRegionID == nil {
+				// Reached root without finding a state
+				break
+			}
+			// Fetch parent
+			var parent regionInfo
+			err := r.db.QueryRowContext(ctx,
+				"SELECT id, name, region_type, parent_region_id FROM geographic_regions WHERE id = ?",
+				*current.parentRegionID,
+			).Scan(&parent.id, &parent.name, &parent.regionType, &parent.parentRegionID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					break
+				}
+				return "", fmt.Errorf("query parent region: %w", err)
+			}
+			current = parent
+		}
+	}
+
+	if len(stateNames) == 0 {
+		return "Unknown", nil
+	}
+
+	// Sort for deterministic output
+	var names []string
+	for name := range stateNames {
+		names = append(names, name)
+	}
+	// Simple sort — small cardinality
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			if names[j] < names[i] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+	return strings.Join(names, ", "), nil
+}
+
+// CreateOrUpdatePosting creates or updates a topic board posting for a group.
+// There is at most one posting per group (UPSERT via ON DUPLICATE KEY UPDATE).
+func (r *GroupRepository) CreateOrUpdatePosting(ctx context.Context, groupID string, req *models.CreateTopicBoardPostingRequest) (*models.TopicBoardPostingWithTags, error) {
+	autoLabel, err := r.DeriveRegionLabel(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("derive region label: %w", err)
+	}
+
+	regionLabel := autoLabel
+	if req.RegionLabel != nil && *req.RegionLabel != "" {
+		regionLabel = *req.RegionLabel
+	}
+
+	postingID := uuid.New().String()
+
+	var result *models.TopicBoardPostingWithTags
+
+	err = r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// Upsert the posting
+		upsertQuery := `
+			INSERT INTO topic_board_postings (id, group_id, region_label, auto_region_label, description, is_active)
+			VALUES (?, ?, ?, ?, ?, TRUE)
+			ON DUPLICATE KEY UPDATE
+				region_label = VALUES(region_label),
+				auto_region_label = VALUES(auto_region_label),
+				description = VALUES(description),
+				is_active = TRUE
+		`
+		_, err := tx.ExecContext(ctx, upsertQuery, postingID, groupID, regionLabel, autoLabel, req.Description)
+		if err != nil {
+			return fmt.Errorf("upsert posting: %w", err)
+		}
+
+		// Fetch the actual posting ID (could be existing if upserted)
+		var actualPostingID string
+		err = tx.QueryRowContext(ctx,
+			"SELECT id FROM topic_board_postings WHERE group_id = ?", groupID,
+		).Scan(&actualPostingID)
+		if err != nil {
+			return fmt.Errorf("fetch posting id: %w", err)
+		}
+
+		// Replace tags: delete all then insert new
+		_, err = tx.ExecContext(ctx, "DELETE FROM topic_board_tags WHERE posting_id = ?", actualPostingID)
+		if err != nil {
+			return fmt.Errorf("delete existing tags: %w", err)
+		}
+
+		for _, tag := range req.Tags {
+			_, err = tx.ExecContext(ctx,
+				"INSERT INTO topic_board_tags (posting_id, tag) VALUES (?, ?)",
+				actualPostingID, tag,
+			)
+			if err != nil {
+				return fmt.Errorf("insert tag %q: %w", tag, err)
+			}
+		}
+
+		// Fetch the result
+		posting := &models.TopicBoardPostingWithTags{}
+		err = tx.QueryRowContext(ctx,
+			"SELECT id, group_id, region_label, auto_region_label, description, is_active, created_at, updated_at FROM topic_board_postings WHERE group_id = ?",
+			groupID,
+		).Scan(
+			&posting.ID, &posting.GroupID, &posting.RegionLabel,
+			&posting.AutoRegionLabel, &posting.Description, &posting.IsActive,
+			&posting.CreatedAt, &posting.UpdatedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("fetch created posting: %w", err)
+		}
+
+		posting.Tags = req.Tags
+		result = posting
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// GetPosting retrieves a topic board posting with tags for a given group.
+func (r *GroupRepository) GetPosting(ctx context.Context, groupID string) (*models.TopicBoardPostingWithTags, error) {
+	posting := &models.TopicBoardPostingWithTags{}
+	err := r.db.QueryRowContext(ctx,
+		"SELECT id, group_id, region_label, auto_region_label, description, is_active, created_at, updated_at FROM topic_board_postings WHERE group_id = ?",
+		groupID,
+	).Scan(
+		&posting.ID, &posting.GroupID, &posting.RegionLabel,
+		&posting.AutoRegionLabel, &posting.Description, &posting.IsActive,
+		&posting.CreatedAt, &posting.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrTopicBoardPostingNotFound
+		}
+		return nil, fmt.Errorf("get posting: %w", err)
+	}
+
+	// Fetch tags
+	tagRows, err := r.db.QueryContext(ctx,
+		"SELECT tag FROM topic_board_tags WHERE posting_id = ? ORDER BY tag",
+		posting.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get posting tags: %w", err)
+	}
+	defer tagRows.Close()
+
+	var tags []string
+	for tagRows.Next() {
+		var tag string
+		if err := tagRows.Scan(&tag); err != nil {
+			return nil, fmt.Errorf("scan posting tag: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+	if err := tagRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate posting tags: %w", err)
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+	posting.Tags = tags
+
+	return posting, nil
+}
+
+// RemovePosting deletes a topic board posting for a group.
+// The CASCADE on topic_board_tags handles tag cleanup.
+func (r *GroupRepository) RemovePosting(ctx context.Context, groupID string) error {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM topic_board_postings WHERE group_id = ?", groupID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove posting: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("remove posting rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrTopicBoardPostingNotFound
+	}
+	return nil
+}
+
+// BrowsePostings returns active topic board postings filtered by tag,
+// excluding postings from groups blocked by browsingGroupID.
+// Results are returned in random order, paginated with limit/offset.
+// No total count is returned by design.
+func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, browsingGroupID string, limit, offset int) ([]models.TopicBoardPostingWithTags, error) {
+	query := `
+		SELECT p.id, p.group_id, p.region_label, p.auto_region_label, p.description,
+			p.is_active, p.created_at, p.updated_at
+		FROM topic_board_postings p
+		JOIN topic_board_tags t ON p.id = t.posting_id
+		LEFT JOIN group_blocks gb ON gb.blocker_group_id = ? AND gb.blocked_group_id = p.group_id
+		WHERE p.is_active = TRUE
+			AND t.tag = ?
+			AND gb.id IS NULL
+			AND p.group_id != ?
+		ORDER BY RAND()
+		LIMIT ? OFFSET ?
+	`
+	rows, err := r.db.QueryContext(ctx, query, browsingGroupID, topicTag, browsingGroupID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("browse postings: %w", err)
+	}
+	defer rows.Close()
+
+	var postings []models.TopicBoardPostingWithTags
+	for rows.Next() {
+		var posting models.TopicBoardPostingWithTags
+		if err := rows.Scan(
+			&posting.ID, &posting.GroupID, &posting.RegionLabel,
+			&posting.AutoRegionLabel, &posting.Description, &posting.IsActive,
+			&posting.CreatedAt, &posting.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan posting: %w", err)
+		}
+		postings = append(postings, posting)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate postings: %w", err)
+	}
+
+	// Fetch tags for each posting
+	for i := range postings {
+		tagRows, err := r.db.QueryContext(ctx,
+			"SELECT tag FROM topic_board_tags WHERE posting_id = ? ORDER BY tag",
+			postings[i].ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("get browse posting tags: %w", err)
+		}
+
+		var tags []string
+		for tagRows.Next() {
+			var tag string
+			if err := tagRows.Scan(&tag); err != nil {
+				tagRows.Close()
+				return nil, fmt.Errorf("scan browse posting tag: %w", err)
+			}
+			tags = append(tags, tag)
+		}
+		tagRows.Close()
+		if err := tagRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate browse posting tags: %w", err)
+		}
+		if tags == nil {
+			tags = []string{}
+		}
+		postings[i].Tags = tags
+	}
+
+	if postings == nil {
+		postings = []models.TopicBoardPostingWithTags{}
+	}
+
+	return postings, nil
 }
