@@ -129,7 +129,8 @@ func (r *GroupRepository) Create(ctx context.Context, req *models.CreateGroupReq
 func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group, error) {
 	query := `
 		SELECT id, name, description, status, visibility, founding_threshold,
-			trusted_vouch_threshold, created_by, created_at, updated_at, graduated_at
+			trusted_vouch_threshold, discoverable_by_unverified,
+			created_by, created_at, updated_at, graduated_at
 		FROM ` + "`groups`" + `
 		WHERE id = ?
 	`
@@ -138,7 +139,7 @@ func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&group.ID, &group.Name, &group.Description,
 		&group.Status, &group.Visibility, &group.FoundingThreshold,
-		&group.TrustedVouchThreshold,
+		&group.TrustedVouchThreshold, &group.DiscoverableByUnverified,
 		&group.CreatedBy, &group.CreatedAt, &group.UpdatedAt, &group.GraduatedAt,
 	)
 
@@ -220,7 +221,8 @@ func (r *GroupRepository) GetByIDWithDetails(ctx context.Context, id, userID str
 func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]models.GroupWithDetails, error) {
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
-			g.trusted_vouch_threshold, g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.trusted_vouch_threshold, g.discoverable_by_unverified,
+			g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count,
 			gm.is_admin
@@ -242,7 +244,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 		err := rows.Scan(
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
-			&gwd.TrustedVouchThreshold,
+			&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 			&gwd.IsUserAdmin,
@@ -272,7 +274,8 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]models.GroupWithDetails, error) {
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
-			g.trusted_vouch_threshold, g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.trusted_vouch_threshold, g.discoverable_by_unverified,
+			g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count
 		FROM ` + "`groups`" + ` g
@@ -295,7 +298,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 		err := rows.Scan(
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
-			&gwd.TrustedVouchThreshold,
+			&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 		)
@@ -335,6 +338,10 @@ func (r *GroupRepository) Update(ctx context.Context, id string, req *models.Upd
 	if req.Visibility != nil {
 		setClauses = append(setClauses, "visibility = ?")
 		args = append(args, *req.Visibility)
+	}
+	if req.DiscoverableByUnverified != nil {
+		setClauses = append(setClauses, "discoverable_by_unverified = ?")
+		args = append(args, *req.DiscoverableByUnverified)
 	}
 
 	if len(setClauses) > 0 {
