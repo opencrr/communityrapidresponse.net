@@ -16,7 +16,6 @@ import loginPage from './pages/login.js';
 import registerPage from './pages/register.js';
 import mfaSetupPage from './pages/mfaSetup.js';
 import mfaVerifyPage from './pages/mfaVerify.js';
-import dashboardPage from './pages/dashboard.js';
 import regionsPage from './pages/regions.js';
 import regionDetailPage from './pages/regionDetail.js';
 import verificationPage from './pages/verification.js';
@@ -76,8 +75,8 @@ const routes = [
     { path: '/mfa/setup', page: mfaSetupPage, auth: false, mfaFlow: true },
     { path: '/mfa/verify', page: mfaVerifyPage, auth: false, mfaFlow: true },
     { path: '/dashboard', redirect: '/groups' },
-    { path: '/communities', page: regionsPage, auth: true },
-    { path: '/communities/:id', page: regionDetailPage, auth: true },
+    { path: '/communities', redirect: '/profile' },
+    { path: '/communities/:id', page: regionDetailPage, auth: true, requiresSuperuser: true },
     { path: '/schools', page: schoolsPage, auth: true },
     { path: '/schools/:id', page: schoolDetailPage, auth: true },
     { path: '/school-districts/:id', page: districtDetailPage, auth: true },
@@ -92,7 +91,7 @@ const routes = [
     { path: '/connections', page: connectionsListPage, auth: true },
     { path: '/connections/:id', page: connectionDetailPage, auth: true },
     { path: '/invitations', page: groupInvitationsPage, auth: true },
-    { path: '/meshtastic', page: meshtasticPage, auth: true },
+    { path: '/meshtastic', redirect: '/groups' },
     { path: '/admin/communities', page: createRegionPage, auth: true, requiresAdmin: true },
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },
     { path: '/admin/meshtastic', page: manageMeshtasticPage, auth: true, requiresAdmin: true },
