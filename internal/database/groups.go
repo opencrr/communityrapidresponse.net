@@ -322,6 +322,151 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 	return groups, rows.Err()
 }
 
+// groupBrowseColumns is the shared SELECT column list for browse queries.
+const groupBrowseColumns = `
+	g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
+	g.trusted_vouch_threshold, g.discoverable_by_unverified,
+	g.created_by, g.created_at, g.updated_at, g.graduated_at,
+	(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
+	(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count
+`
+
+// scanBrowseGroup scans a row from a browse query into a GroupWithDetails.
+func scanBrowseGroup(rows *sql.Rows) (models.GroupWithDetails, error) {
+	var gwd models.GroupWithDetails
+	err := rows.Scan(
+		&gwd.ID, &gwd.Name, &gwd.Description,
+		&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
+		&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
+		&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
+		&gwd.MemberCount, &gwd.AdminCount,
+	)
+	return gwd, err
+}
+
+// enrichBrowseGroup populates regions and topic tags on a scanned GroupWithDetails.
+func (r *GroupRepository) enrichBrowseGroup(ctx context.Context, gwd *models.GroupWithDetails) error {
+	var err error
+	gwd.Regions, err = r.GetRegions(ctx, gwd.ID)
+	if err != nil {
+		return fmt.Errorf("get regions for group %s: %w", gwd.ID, err)
+	}
+
+	gwd.TopicTags, err = r.GetTopicTags(ctx, gwd.ID)
+	if err != nil {
+		return fmt.Errorf("get tags for group %s: %w", gwd.ID, err)
+	}
+
+	return nil
+}
+
+// BrowseByRegion returns listed active groups visible for a given region.
+// When includeUnverifiedDiscoverable is true, it also includes discoverable_by_unverified
+// groups from any region that have at least one open-tier signal group.
+func (r *GroupRepository) BrowseByRegion(ctx context.Context, regionID string, includeUnverifiedDiscoverable bool) ([]models.GroupWithDetails, error) {
+	var query string
+
+	if includeUnverifiedDiscoverable {
+		query = `
+			SELECT ` + groupBrowseColumns + `
+			FROM ` + "`groups`" + ` g
+			JOIN group_regions gr ON g.id = gr.group_id
+			WHERE gr.region_id = ?
+				AND g.visibility = 'listed'
+				AND g.status = 'active'
+
+			UNION
+
+			SELECT ` + groupBrowseColumns + `
+			FROM ` + "`groups`" + ` g
+			WHERE g.visibility = 'listed'
+				AND g.status = 'active'
+				AND g.discoverable_by_unverified = TRUE
+				AND EXISTS (
+					SELECT 1 FROM signal_groups sg
+					WHERE sg.owner_group_id = g.id
+						AND sg.access_tier = 'open'
+						AND sg.is_active = TRUE
+				)
+
+			ORDER BY RAND()
+		`
+	} else {
+		query = `
+			SELECT ` + groupBrowseColumns + `
+			FROM ` + "`groups`" + ` g
+			JOIN group_regions gr ON g.id = gr.group_id
+			WHERE gr.region_id = ?
+				AND g.visibility = 'listed'
+				AND g.status = 'active'
+			ORDER BY RAND()
+		`
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, regionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []models.GroupWithDetails
+	for rows.Next() {
+		gwd, err := scanBrowseGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := r.enrichBrowseGroup(ctx, &gwd); err != nil {
+			return nil, err
+		}
+
+		groups = append(groups, gwd)
+	}
+
+	return groups, rows.Err()
+}
+
+// BrowseAll returns all listed active discoverable groups that have at least one
+// open-tier signal group. Intended for unverified users or users without a region.
+func (r *GroupRepository) BrowseAll(ctx context.Context) ([]models.GroupWithDetails, error) {
+	query := `
+		SELECT ` + groupBrowseColumns + `
+		FROM ` + "`groups`" + ` g
+		WHERE g.visibility = 'listed'
+			AND g.status = 'active'
+			AND g.discoverable_by_unverified = TRUE
+			AND EXISTS (
+				SELECT 1 FROM signal_groups sg
+				WHERE sg.owner_group_id = g.id
+					AND sg.access_tier = 'open'
+					AND sg.is_active = TRUE
+			)
+		ORDER BY RAND()
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []models.GroupWithDetails
+	for rows.Next() {
+		gwd, err := scanBrowseGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := r.enrichBrowseGroup(ctx, &gwd); err != nil {
+			return nil, err
+		}
+
+		groups = append(groups, gwd)
+	}
+
+	return groups, rows.Err()
+}
+
 // Update applies partial updates to a group. Only non-nil fields are updated.
 func (r *GroupRepository) Update(ctx context.Context, id string, req *models.UpdateGroupRequest) error {
 	var setClauses []string

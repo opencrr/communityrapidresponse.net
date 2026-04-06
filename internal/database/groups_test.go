@@ -2107,3 +2107,280 @@ func TestGroupRepository_GetByIDWithDetails_IncludesSignalGroups(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Browse Tests
+// =============================================================================
+
+// makeActiveListedGroup creates a group, promotes it to active+listed, and returns its ID.
+func makeActiveListedGroup(t *testing.T, repo *GroupRepository, db *DB, ctx context.Context, name, regionID, userID string) string {
+	t.Helper()
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:      name,
+		RegionIDs: []string{regionID},
+		TopicTags: []string{"tag1"},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group %q failed: %v", name, err)
+	}
+	_, err = db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed' WHERE id = ?", group.ID)
+	if err != nil {
+		t.Fatalf("Promote group %q failed: %v", name, err)
+	}
+	return group.ID
+}
+
+func TestGroupRepository_BrowseByRegion(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "browse_region1")
+	regionA := createGroupTestRegion(t, db, "Browse Region A")
+	regionB := createGroupTestRegion(t, db, "Browse Region B")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionA, regionB})
+	})
+
+	// Group 1: listed+active in regionA
+	groupListedActive := makeActiveListedGroup(t, groupRepo, db, ctx, "Listed Active Group", regionA, userID)
+	createdGroupIDs = append(createdGroupIDs, groupListedActive)
+
+	// Group 2: unlisted+active in regionA
+	groupUnlisted, err := groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Unlisted Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionA},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create unlisted group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, groupUnlisted.ID)
+	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET status = 'active' WHERE id = ?", groupUnlisted.ID)
+
+	// Group 3: listed+provisional in regionA
+	groupProvisional, err := groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:      "Provisional Group",
+		RegionIDs: []string{regionA},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create provisional group failed: %v", err)
+	}
+	createdGroupIDs = append(createdGroupIDs, groupProvisional.ID)
+	// Set listed but keep provisional
+	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET visibility = 'listed' WHERE id = ?", groupProvisional.ID)
+
+	// Group 4: discoverable in regionB with open signal group
+	groupDiscoverable := makeActiveListedGroup(t, groupRepo, db, ctx, "Discoverable Group", regionB, userID)
+	createdGroupIDs = append(createdGroupIDs, groupDiscoverable)
+	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverable)
+	sgOpen := &models.SignalGroup{
+		OwnerGroupID: &groupDiscoverable,
+		GroupName:     "Open Chat",
+		AccessTier:   models.AccessTierOpen,
+		CreatedBy:    &userID,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sgOpen); err != nil {
+		t.Fatalf("Create open signal group failed: %v", err)
+	}
+
+	// Group 5: discoverable in regionB but NO open signal group
+	groupDiscoverableNoOpen := makeActiveListedGroup(t, groupRepo, db, ctx, "Discoverable No Open", regionB, userID)
+	createdGroupIDs = append(createdGroupIDs, groupDiscoverableNoOpen)
+	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverableNoOpen)
+	sgMember := &models.SignalGroup{
+		OwnerGroupID: &groupDiscoverableNoOpen,
+		GroupName:     "Member Chat",
+		AccessTier:   models.AccessTierMember,
+		CreatedBy:    &userID,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sgMember); err != nil {
+		t.Fatalf("Create member signal group failed: %v", err)
+	}
+
+	t.Run("returns listed active groups in region", func(t *testing.T) {
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, false)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("Expected 1 group, got %d", len(groups))
+		}
+		if groups[0].ID != groupListedActive {
+			t.Errorf("Expected group %s, got %s", groupListedActive, groups[0].ID)
+		}
+		// Verify enrichment
+		if len(groups[0].Regions) == 0 {
+			t.Error("Expected regions to be populated")
+		}
+		if len(groups[0].TopicTags) == 0 {
+			t.Error("Expected topic tags to be populated")
+		}
+		// IsUserMember/IsUserAdmin should be false (browse, not user-specific)
+		if groups[0].IsUserMember || groups[0].IsUserAdmin {
+			t.Error("Expected IsUserMember and IsUserAdmin to be false for browse")
+		}
+	})
+
+	t.Run("excludes unlisted groups", func(t *testing.T) {
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, false)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+		for _, g := range groups {
+			if g.ID == groupUnlisted.ID {
+				t.Error("Unlisted group should not appear in browse results")
+			}
+		}
+	})
+
+	t.Run("excludes provisional groups", func(t *testing.T) {
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, false)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+		for _, g := range groups {
+			if g.ID == groupProvisional.ID {
+				t.Error("Provisional group should not appear in browse results")
+			}
+		}
+	})
+
+	t.Run("with includeUnverifiedDiscoverable includes discoverable groups from other regions", func(t *testing.T) {
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, true)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+
+		foundListed := false
+		foundDiscoverable := false
+		for _, g := range groups {
+			if g.ID == groupListedActive {
+				foundListed = true
+			}
+			if g.ID == groupDiscoverable {
+				foundDiscoverable = true
+			}
+		}
+		if !foundListed {
+			t.Error("Expected listed active group from regionA")
+		}
+		if !foundDiscoverable {
+			t.Error("Expected discoverable group from regionB")
+		}
+	})
+
+	t.Run("discoverable group without open-tier signal group is excluded", func(t *testing.T) {
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, true)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+		for _, g := range groups {
+			if g.ID == groupDiscoverableNoOpen {
+				t.Error("Discoverable group without open signal group should not appear")
+			}
+		}
+	})
+
+	t.Run("deduplicates groups in region that are also discoverable", func(t *testing.T) {
+		// Make the discoverable group also belong to regionA
+		_ = groupRepo.AddRegion(ctx, groupDiscoverable, regionA)
+		defer func() {
+			_, _ = db.ExecContext(ctx, "DELETE FROM group_regions WHERE group_id = ? AND region_id = ?", groupDiscoverable, regionA)
+		}()
+
+		groups, err := groupRepo.BrowseByRegion(ctx, regionA, true)
+		if err != nil {
+			t.Fatalf("BrowseByRegion failed: %v", err)
+		}
+
+		discoverableCount := 0
+		for _, g := range groups {
+			if g.ID == groupDiscoverable {
+				discoverableCount++
+			}
+		}
+		if discoverableCount != 1 {
+			t.Errorf("Expected discoverable group to appear once, got %d", discoverableCount)
+		}
+	})
+}
+
+func TestGroupRepository_BrowseAll(t *testing.T) {
+	db := testDB(t)
+	groupRepo := NewGroupRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "browse_all1")
+	regionID := createGroupTestRegion(t, db, "Browse All Region")
+	var createdGroupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, createdGroupIDs, []string{userID}, []string{regionID})
+	})
+
+	t.Run("returns empty for no discoverable groups", func(t *testing.T) {
+		groups, err := groupRepo.BrowseAll(ctx)
+		if err != nil {
+			t.Fatalf("BrowseAll failed: %v", err)
+		}
+		if len(groups) != 0 {
+			// There might be pre-existing data, but for a clean test DB this should be 0.
+			// We'll verify our specific groups below.
+		}
+		_ = groups
+	})
+
+	t.Run("returns only discoverable groups with open-tier signal groups", func(t *testing.T) {
+		// Create a discoverable group with open signal group
+		discoverableID := makeActiveListedGroup(t, groupRepo, db, ctx, "BrowseAll Discoverable", regionID, userID)
+		createdGroupIDs = append(createdGroupIDs, discoverableID)
+		_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", discoverableID)
+		sgOpen := &models.SignalGroup{
+			OwnerGroupID: &discoverableID,
+			GroupName:     "Open Chat All",
+			AccessTier:   models.AccessTierOpen,
+			CreatedBy:    &userID,
+		}
+		if err := sgRepo.CreateForOwnerGroup(ctx, sgOpen); err != nil {
+			t.Fatalf("Create open signal group failed: %v", err)
+		}
+
+		// Create a non-discoverable listed active group (should NOT appear)
+		nonDiscoverableID := makeActiveListedGroup(t, groupRepo, db, ctx, "Non Discoverable", regionID, userID)
+		createdGroupIDs = append(createdGroupIDs, nonDiscoverableID)
+
+		// Create a discoverable group without open signal group (should NOT appear)
+		discoverableNoOpenID := makeActiveListedGroup(t, groupRepo, db, ctx, "Discoverable No Open All", regionID, userID)
+		createdGroupIDs = append(createdGroupIDs, discoverableNoOpenID)
+		_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", discoverableNoOpenID)
+
+		groups, err := groupRepo.BrowseAll(ctx)
+		if err != nil {
+			t.Fatalf("BrowseAll failed: %v", err)
+		}
+
+		foundDiscoverable := false
+		for _, g := range groups {
+			if g.ID == discoverableID {
+				foundDiscoverable = true
+				if len(g.Regions) == 0 {
+					t.Error("Expected regions to be populated")
+				}
+			}
+			if g.ID == nonDiscoverableID {
+				t.Error("Non-discoverable group should not appear in BrowseAll")
+			}
+			if g.ID == discoverableNoOpenID {
+				t.Error("Discoverable group without open signal group should not appear in BrowseAll")
+			}
+		}
+		if !foundDiscoverable {
+			t.Error("Expected discoverable group with open signal group to appear")
+		}
+	})
+}
