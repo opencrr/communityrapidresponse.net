@@ -81,12 +81,16 @@ build-prod:
 
 # Start database containers
 db-start:
-    @echo "🗄️  Starting database..."
+    #!/usr/bin/env bash
+    if docker compose exec -T db mariadb -u root -prootpassword -e "SELECT 1" >/dev/null 2>&1; then
+        exit 0
+    fi
+    echo "🗄️  Starting database..."
     docker compose up -d db db-test
-    @echo "⏳ Waiting for database to be ready..."
-    @sleep 5
-    @just _wait-for-db
-    @echo "✅ Database is ready"
+    echo "⏳ Waiting for database to be ready..."
+    sleep 5
+    just _wait-for-db
+    echo "✅ Database is ready"
 
 # Wait for database to be healthy
 _wait-for-db:
@@ -757,7 +761,7 @@ create-superuser: _maybe-db-start
     # Note: mfa_secret is stored unencrypted here - in production it should be encrypted with MFA_ENCRYPTION_KEY
     # For CLI-created superusers, we skip encryption as they may not have the key available
     # The user will need to re-setup MFA through the web interface for proper encryption
-    sql="INSERT INTO users (id, email, username, password_hash, email_verified, postcard_verified, vouch_verified, is_superuser, verification_tier, mfa_enabled, mfa_setup_required, mfa_backup_codes) VALUES ('$uuid', '$email', '$username', '$password_hash', TRUE, TRUE, TRUE, TRUE, 1, FALSE, TRUE, '$backup_codes_hashed') ON DUPLICATE KEY UPDATE is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 1, mfa_setup_required = TRUE;"
+    sql="INSERT INTO users (id, email, username, password_hash, email_verified, postcard_verified, vouch_verified, is_superuser, verification_tier, mfa_enabled, mfa_setup_required, mfa_backup_codes) VALUES ('$uuid', '$email', '$username', '$password_hash', TRUE, TRUE, TRUE, TRUE, 2, FALSE, TRUE, '$backup_codes_hashed') ON DUPLICATE KEY UPDATE is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2, mfa_setup_required = TRUE;"
     just _db-query "$sql"
     echo ""
     echo "✅ Superuser created successfully!"
@@ -797,14 +801,14 @@ create-superuser-batch EMAIL USERNAME PASSWORD: _maybe-db-start
         backup_codes_hashed="$backup_codes_hashed\"$code_hash\""
     done
     backup_codes_hashed="$backup_codes_hashed]"
-    sql="INSERT INTO users (id, email, username, password_hash, email_verified, postcard_verified, vouch_verified, is_superuser, verification_tier, mfa_enabled, mfa_setup_required, mfa_backup_codes) VALUES ('$uuid', '$email', '$username', '$password_hash', TRUE, TRUE, TRUE, TRUE, 1, FALSE, TRUE, '$backup_codes_hashed') ON DUPLICATE KEY UPDATE is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 1, mfa_setup_required = TRUE;"
+    sql="INSERT INTO users (id, email, username, password_hash, email_verified, postcard_verified, vouch_verified, is_superuser, verification_tier, mfa_enabled, mfa_setup_required, mfa_backup_codes) VALUES ('$uuid', '$email', '$username', '$password_hash', TRUE, TRUE, TRUE, TRUE, 2, FALSE, TRUE, '$backup_codes_hashed') ON DUPLICATE KEY UPDATE is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2, mfa_setup_required = TRUE;"
     just _db-query "$sql"
     echo "✅ Superuser created: $email (MFA setup required on first login)"
 
 # Promote an existing user to superuser by email
 promote-superuser EMAIL: _maybe-db-start
     @echo "👑 Promoting user to superuser: {{EMAIL}}"
-    @just _db-query "UPDATE users SET is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 1 WHERE email = '{{EMAIL}}';"
+    @just _db-query "UPDATE users SET is_superuser = TRUE, email_verified = TRUE, postcard_verified = TRUE, vouch_verified = TRUE, verification_tier = 2 WHERE email = '{{EMAIL}}';"
     @echo "✅ User promoted to superuser"
 
 # Demote a superuser back to regular user by email
@@ -866,6 +870,34 @@ list-pending-school-vouches: _maybe-db-start
     @echo "🏫 Pending School Verifications"
     @echo "================================"
     @just _db-query "SELECT u.email, u.username, s.name as school, s.city, s.state, (SELECT COUNT(*) FROM school_vouches sv WHERE sv.vouched_user_id = u.id AND sv.school_id = s.id) as vouches_received, CASE WHEN (SELECT COUNT(*) FROM user_schools us2 WHERE us2.school_id = s.id AND us2.is_admin = TRUE AND us2.verification_status = 'verified') < 3 THEN 3 ELSE 2 END as vouches_needed FROM user_schools us JOIN users u ON us.user_id = u.id JOIN schools s ON us.school_id = s.id WHERE us.verification_status = 'pending' ORDER BY s.state, s.name, u.username;"
+
+# List all groups with status and member counts
+list-groups: _maybe-db-start
+    #!/usr/bin/env bash
+    echo "🏘️  Groups"
+    echo "========="
+    docker compose exec -T db mariadb -u root -prootpassword communityrapidresponse -e "SELECT g.name, g.status, g.visibility, g.discoverable_by_unverified as discoverable, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) as members, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id AND gm.is_admin = TRUE) as admins, g.created_at FROM \`groups\` g ORDER BY g.name;" | column -ts $'\t'
+
+# List group memberships - who belongs to which groups
+list-group-members: _maybe-db-start
+    #!/usr/bin/env bash
+    echo "🏘️  Group Memberships"
+    echo "====================="
+    docker compose exec -T db mariadb -u root -prootpassword communityrapidresponse -e "SELECT g.name as grp, u.username, gm.is_admin, gm.is_founding_member, gm.trust_level, gm.joined_at FROM group_members gm JOIN \`groups\` g ON gm.group_id = g.id JOIN users u ON gm.user_id = u.id ORDER BY g.name, u.username;" | column -ts $'\t'
+
+# List all connections with member groups
+list-connections: _maybe-db-start
+    #!/usr/bin/env bash
+    echo "🔗 Connections"
+    echo "=============="
+    docker compose exec -T db mariadb -u root -prootpassword communityrapidresponse -e "SELECT c.name as connection_name, g.name as member_group, cm.joined_at FROM connection_members cm JOIN connections c ON cm.connection_id = c.id JOIN \`groups\` g ON cm.group_id = g.id ORDER BY c.name, g.name;" | column -ts $'\t'
+
+# List topic board postings
+list-topic-board: _maybe-db-start
+    #!/usr/bin/env bash
+    echo "📋 Topic Board Postings"
+    echo "======================="
+    docker compose exec -T db mariadb -u root -prootpassword communityrapidresponse -e "SELECT g.name as grp, tbp.region_label, tbp.description, GROUP_CONCAT(tbt.tag) as tags FROM topic_board_postings tbp JOIN \`groups\` g ON tbp.group_id = g.id LEFT JOIN topic_board_tags tbt ON tbt.posting_id = tbp.id WHERE tbp.is_active = TRUE GROUP BY tbp.id ORDER BY g.name;" | column -ts $'\t'
 
 # Seed schools from NCES public dataset
 seed-schools *ARGS:
