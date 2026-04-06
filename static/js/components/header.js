@@ -35,6 +35,7 @@ export function renderHeader() {
                     ${authenticated ? `
                         <a href="/groups" class="header__nav-link" data-link>My Groups</a>
                         <a href="/discover" class="header__nav-link" data-link>Discover</a>
+                        <a href="/connections" class="header__nav-link" data-link>Connections</a>
                         <a href="/schools" class="header__nav-link" data-link>Schools</a>
                         <a href="/profile" class="header__nav-link" data-link>Profile</a>
                         ${userIsSuperuser ? `<a href="/admin/users" class="header__nav-link" data-link>Admin</a>` : ''}
