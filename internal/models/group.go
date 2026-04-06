@@ -205,6 +205,63 @@ type BlockGroupRequest struct {
 	GroupID string `json:"group_id" validate:"required"`
 }
 
+// Connection represents a group of groups.
+type Connection struct {
+	ID        string    `json:"id" db:"id"`
+	Name      *string   `json:"name" db:"name"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+// ConnectionWithDetails includes member groups.
+type ConnectionWithDetails struct {
+	Connection
+	MemberGroups []ConnectionMemberGroup `json:"member_groups"`
+}
+
+// ConnectionMemberGroup is a group's info within a connection.
+type ConnectionMemberGroup struct {
+	GroupID   string    `json:"group_id" db:"group_id"`
+	GroupName string    `json:"group_name" db:"group_name"`
+	JoinedAt  time.Time `json:"joined_at" db:"joined_at"`
+}
+
+// ConnectionProposal tracks formation or expansion proposals.
+type ConnectionProposal struct {
+	ID              string     `json:"id" db:"id"`
+	ConnectionID    *string    `json:"connection_id" db:"connection_id"`
+	ProposerGroupID string    `json:"proposer_group_id" db:"proposer_group_id"`
+	ProposalType    string     `json:"proposal_type" db:"proposal_type"`
+	Status          string     `json:"status" db:"status"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+}
+
+// ConnectionProposalGroup tracks per-group status on a proposal.
+type ConnectionProposalGroup struct {
+	ID          string     `json:"id" db:"id"`
+	ProposalID  string     `json:"proposal_id" db:"proposal_id"`
+	GroupID     string     `json:"group_id" db:"group_id"`
+	Status      string     `json:"status" db:"status"`
+	RespondedAt *time.Time `json:"responded_at,omitempty" db:"responded_at"`
+}
+
+// ConnectionProposalWithGroups includes the per-group statuses.
+type ConnectionProposalWithGroups struct {
+	ConnectionProposal
+	Groups []ConnectionProposalGroup `json:"groups"`
+}
+
+// ProposeConnectionRequest is the request for proposing a new connection.
+type ProposeConnectionRequest struct {
+	Name     string   `json:"name" validate:"max=255"`
+	GroupIDs []string `json:"group_ids" validate:"required,min=1"`
+}
+
+// InviteToConnectionRequest is the request for expanding a connection.
+type InviteToConnectionRequest struct {
+	GroupID string `json:"group_id" validate:"required"`
+}
+
 // TopicBoardPosting represents a group's presence on the topic board.
 type TopicBoardPosting struct {
 	ID              string    `json:"id" db:"id"`

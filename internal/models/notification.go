@@ -149,6 +149,11 @@ const (
 	AuditActionTopicBoardPosted              = "topic_board_posted"
 	AuditActionTopicBoardRemoved             = "topic_board_removed"
 
+	// Connection actions
+	AuditActionConnectionProposed = "connection_proposed"
+	AuditActionConnectionAccepted = "connection_accepted"
+	AuditActionConnectionLeft     = "connection_left"
+
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"
 	AuditActionMFALocked                = "mfa_locked"
