@@ -154,6 +154,74 @@ func main() {
 	slog.Info("regions seeded", "count", len(regions))
 
 	// =========================================================================
+	// User Regions (verified address associations)
+	// =========================================================================
+	slog.Info("seeding user regions...")
+
+	type userRegionFixture struct {
+		userID   string
+		regionID string
+		isAdmin  bool
+	}
+
+	// Address-verified users get user_regions entries for their city + parent hierarchy
+	userRegions := []userRegionFixture{
+		// Alice (superuser) - verified in Seattle
+		{userAlice, regionSeattle, true},
+		{userAlice, regionKingCounty, false},
+		{userAlice, regionWashington, false},
+		// Bob - verified in Seattle
+		{userBob, regionSeattle, true},
+		{userBob, regionKingCounty, false},
+		{userBob, regionWashington, false},
+		// Carol - verified in Seattle
+		{userCarol, regionSeattle, true},
+		{userCarol, regionKingCounty, false},
+		{userCarol, regionWashington, false},
+		// Dave - vouch-only, verified in Seattle (pending postcard)
+		{userDave, regionSeattle, false},
+		{userDave, regionKingCounty, false},
+		{userDave, regionWashington, false},
+		// Eve - vouch-only, verified in Seattle
+		{userEve, regionSeattle, false},
+		{userEve, regionKingCounty, false},
+		{userEve, regionWashington, false},
+		// Frank - verified in Portland
+		{userFrank, regionPortland, true},
+		{userFrank, regionMultnomahCounty, false},
+		{userFrank, regionOregon, false},
+		// Grace - vouch-only, verified in Portland
+		{userGrace, regionPortland, false},
+		{userGrace, regionMultnomahCounty, false},
+		{userGrace, regionOregon, false},
+		// Heidi - verified in Chicago
+		{userHeidi, regionChicago, true},
+		{userHeidi, regionCookCounty, false},
+		{userHeidi, regionIllinois, false},
+		// Ivan - vouch-only, verified in Chicago
+		{userIvan, regionChicago, false},
+		{userIvan, regionCookCounty, false},
+		{userIvan, regionIllinois, false},
+		// Karl - verified in Seattle
+		{userKarl, regionSeattle, true},
+		{userKarl, regionKingCounty, false},
+		{userKarl, regionWashington, false},
+		// Judy - unverified, no regions
+	}
+
+	for _, ur := range userRegions {
+		urID := fmt.Sprintf("ur-%s-%s", ur.userID, ur.regionID)
+		_, err := db.ExecContext(ctx, `
+			INSERT IGNORE INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at)
+			VALUES (?, ?, ?, ?, 'verified', ?)
+		`, urID, ur.userID, ur.regionID, ur.isAdmin, now)
+		if err != nil {
+			log.Fatalf("failed to insert user_region %s->%s: %v", ur.userID, ur.regionID, err)
+		}
+	}
+	slog.Info("user regions seeded", "count", len(userRegions))
+
+	// =========================================================================
 	// Groups
 	// =========================================================================
 	slog.Info("seeding groups...")
