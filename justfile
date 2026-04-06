@@ -881,6 +881,22 @@ seed-schools *ARGS:
     fi
     ./bin/seed-schools {{ARGS}}
 
+# Seed fixture data for local testing
+seed-fixtures: db-start
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Seeding fixture data..."
+    go build -o bin/seed-fixtures ./cmd/seed-fixtures
+
+    # Load local .env for DB credentials (Docker dev DB)
+    if [ -f .env ]; then
+        set -a
+        source .env
+        set +a
+    fi
+    ./bin/seed-fixtures
+    echo "Fixtures seeded!"
+
 # =============================================================================
 # Configuration
 # =============================================================================
