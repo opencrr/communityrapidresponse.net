@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/handlers"
@@ -203,7 +204,7 @@ func (s *APIContractTestSuite) createUser(username, email string, postcardVerifi
 
 func (s *APIContractTestSuite) createRegion(name string, regionType models.RegionType) *models.GeographicRegion {
 	region := &models.GeographicRegion{
-		ID:         "contract-test-region-" + name,
+		ID:         uuid.New().String(),
 		Name:       name,
 		RegionType: regionType,
 	}

@@ -855,3 +855,129 @@ func TestAdminHandler_RequireSuperuser_DBRecheck(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Pagination Boundary Edge-Case Tests
+// =============================================================================
+
+func TestAdminHandler_ListUsers_PaginationEdgeCases(t *testing.T) {
+	suite := setupAdminTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@admintest.com'")
+
+	superuser := suite.createTestUser("pagination_super", true, false)
+	defer suite.cleanup(superuser.ID)
+
+	makeSuperuserClaims := func() *middleware.Claims {
+		return &middleware.Claims{
+			UserID:      superuser.ID,
+			Email:       superuser.Email,
+			IsSuperuser: true,
+		}
+	}
+
+	tests := []struct {
+		name          string
+		query         string
+		expectStatus  int
+		expectPage    float64
+		expectLimit   float64
+	}{
+		{"negative page defaults to 1", "page=-5", http.StatusOK, 1, 20},
+		{"negative limit defaults to 20", "limit=-10", http.StatusOK, 1, 20},
+		{"zero page defaults to 1", "page=0", http.StatusOK, 1, 20},
+		{"zero limit defaults to 20", "limit=0", http.StatusOK, 1, 20},
+		{"non-numeric page defaults to 1", "page=abc", http.StatusOK, 1, 20},
+		{"non-numeric limit defaults to 20", "limit=xyz", http.StatusOK, 1, 20},
+		{"very large page succeeds with empty results", "page=999999", http.StatusOK, 999999, 20},
+		{"limit over 100 defaults to 20", "limit=500", http.StatusOK, 1, 20},
+		{"limit at boundary 100 succeeds", "limit=100", http.StatusOK, 1, 100},
+		{"float page defaults to 1", "page=1.5", http.StatusOK, 1, 20},
+		{"float limit defaults to 20", "limit=2.5", http.StatusOK, 1, 20},
+		{"overflow int page defaults to 1", "page=99999999999999999999", http.StatusOK, 1, 20},
+		{"overflow int limit defaults to 20", "limit=99999999999999999999", http.StatusOK, 1, 20},
+		{"page with special chars defaults to 1", "page=%27DROP+TABLE", http.StatusOK, 1, 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/admin/users?"+tt.query, nil)
+			claims := makeSuperuserClaims()
+			ctx := middleware.ContextWithUser(req.Context(), claims)
+			req = req.WithContext(ctx)
+
+			rec := httptest.NewRecorder()
+			suite.handler.ListUsers(rec, req)
+
+			if rec.Code != tt.expectStatus {
+				t.Fatalf("Expected status %d, got %d: %s", tt.expectStatus, rec.Code, rec.Body.String())
+			}
+
+			if tt.expectStatus == http.StatusOK {
+				var body map[string]interface{}
+				_ = json.NewDecoder(rec.Body).Decode(&body)
+
+				if page, ok := body["page"].(float64); ok {
+					if page != tt.expectPage {
+						t.Errorf("Expected page %v, got %v", tt.expectPage, page)
+					}
+				}
+
+				if limit, ok := body["limit"].(float64); ok {
+					if limit != tt.expectLimit {
+						t.Errorf("Expected limit %v, got %v", tt.expectLimit, limit)
+					}
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// GetUser Edge-Case Tests
+// =============================================================================
+
+func TestAdminHandler_GetUser_MalformedID(t *testing.T) {
+	suite := setupAdminTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@admintest.com'")
+
+	superuser := suite.createTestUser("getuser_malformed_super", true, false)
+	defer suite.cleanup(superuser.ID)
+
+	tests := []struct {
+		name       string
+		id         string
+		wantStatus int
+	}{
+		{"empty ID", "", http.StatusBadRequest},
+		{"whitespace ID", "   ", http.StatusNotFound},
+		{"SQL injection", "' OR '1'='1", http.StatusNotFound},
+		{"very long string", string(make([]byte, 500)), http.StatusNotFound},
+		{"non-existent valid UUID", "00000000-0000-0000-0000-000000000000", http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/v1/admin/users/test", nil)
+			q := req.URL.Query()
+			q.Set("id", tt.id)
+			req.URL.RawQuery = q.Encode()
+
+			claims := &middleware.Claims{
+				UserID:      superuser.ID,
+				Email:       superuser.Email,
+				IsSuperuser: true,
+			}
+			ctx := middleware.ContextWithUser(req.Context(), claims)
+			req = req.WithContext(ctx)
+
+			rec := httptest.NewRecorder()
+			suite.handler.GetUser(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("Expected status %d, got %d: %s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

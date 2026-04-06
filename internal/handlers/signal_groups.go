@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -56,7 +57,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate request - require region_id, name, and encrypted payload
-	if req.RegionID == nil || *req.RegionID == "" || req.Name == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
+	if req.RegionID == nil || *req.RegionID == "" || strings.TrimSpace(req.Name) == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "Community ID, group name, encrypted payload, IV, and wrapped keys are required")
 		return
 	}

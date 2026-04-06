@@ -5,9 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 )
+
+// uuidRegex matches standard UUID format (8-4-4-4-12 hex digits).
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// isValidUUID returns true if s is a valid UUID v4 format string.
+func isValidUUID(s string) bool {
+	return uuidRegex.MatchString(s)
+}
 
 // Sentinel errors for configuration-level issues (no runtime err variable available).
 var (

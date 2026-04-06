@@ -310,6 +310,11 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	regionID := parts[0]
 
+	if !isValidUUID(regionID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid community ID format")
+		return
+	}
+
 	// Check for membership-requests sub-route
 	if len(parts) >= 2 && parts[1] == "membership-requests" {
 		q := req.URL.Query()
@@ -439,6 +444,11 @@ func (r *Router) handleSignalGroupByID(w http.ResponseWriter, req *http.Request)
 
 	groupID := parts[0]
 
+	if !isValidUUID(groupID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid signal group ID format")
+		return
+	}
+
 	// Check for secret-proposals sub-route
 	if len(parts) >= 2 && parts[1] == "secret-proposals" {
 		q := req.URL.Query()
@@ -477,6 +487,11 @@ func (r *Router) handleSecretProposal(w http.ResponseWriter, req *http.Request) 
 	}
 
 	proposalID := parts[0]
+
+	if !isValidUUID(proposalID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
+		return
+	}
 
 	// Check for vote sub-route
 	if len(parts) >= 2 && parts[1] == "vote" {
@@ -530,6 +545,11 @@ func (r *Router) handleEncryptedSecretByID(w http.ResponseWriter, req *http.Requ
 
 	secretID := parts[0]
 
+	if !isValidUUID(secretID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid secret ID format")
+		return
+	}
+
 	// Check for finalize sub-route
 	if len(parts) >= 2 && parts[1] == "finalize" {
 		q := req.URL.Query()
@@ -555,6 +575,11 @@ func (r *Router) handleVouchStatus(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if !isValidUUID(path) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid user ID format")
+		return
+	}
+
 	q := req.URL.Query()
 	q.Set("user_id", path)
 	req.URL.RawQuery = q.Encode()
@@ -572,6 +597,14 @@ func (r *Router) handleAdminUserByID(w http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(req.URL.Path, "/api/v1/admin/users/")
 	if path == "" {
 		writeError(w, http.StatusBadRequest, "missing_id", "User ID required")
+		return
+	}
+
+	// Extract the user ID (first path segment)
+	adminParts := strings.SplitN(path, "/", 2)
+	adminUserID := adminParts[0]
+	if !isValidUUID(adminUserID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid user ID format")
 		return
 	}
 
@@ -667,6 +700,11 @@ func (r *Router) handleMembershipRequestByID(w http.ResponseWriter, req *http.Re
 	parts := strings.Split(path, "/")
 	requestID := parts[0]
 
+	if !isValidUUID(requestID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid request ID format")
+		return
+	}
+
 	// Check for vote sub-route
 	if len(parts) >= 2 && parts[1] == "vote" {
 		q := req.URL.Query()
@@ -707,6 +745,11 @@ func (r *Router) handleInvitationByID(w http.ResponseWriter, req *http.Request) 
 	parts := strings.Split(path, "/")
 	invitationID := parts[0]
 
+	if !isValidUUID(invitationID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid invitation ID format")
+		return
+	}
+
 	// Check for respond sub-route
 	if len(parts) >= 2 && parts[1] == "respond" {
 		q := req.URL.Query()
@@ -735,6 +778,11 @@ func (r *Router) handleBlocklistProposal(w http.ResponseWriter, req *http.Reques
 	}
 
 	proposalID := parts[0]
+
+	if !isValidUUID(proposalID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
+		return
+	}
 
 	// Check for vote sub-route
 	if len(parts) >= 2 && parts[1] == "vote" {
@@ -795,6 +843,11 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 
 	parts := strings.Split(path, "/")
 	schoolID := parts[0]
+
+	if !isValidUUID(schoolID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid school ID format")
+		return
+	}
 
 	// Sub-routes
 	if len(parts) >= 2 {
@@ -922,6 +975,11 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 	parts := strings.Split(path, "/")
 	districtID := parts[0]
 
+	if !isValidUUID(districtID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid district ID format")
+		return
+	}
+
 	// Sub-routes
 	if len(parts) >= 2 && parts[1] == "members" {
 		q := req.URL.Query()
@@ -998,6 +1056,11 @@ func (r *Router) handleDeletionProposal(w http.ResponseWriter, req *http.Request
 	}
 
 	proposalID := parts[0]
+
+	if !isValidUUID(proposalID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
+		return
+	}
 
 	// Check for vote sub-route
 	if len(parts) >= 2 && parts[1] == "vote" {
@@ -1079,6 +1142,11 @@ func (r *Router) handleReportByID(w http.ResponseWriter, req *http.Request) {
 	}
 
 	reportID := parts[0]
+
+	if !isValidUUID(reportID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid report ID format")
+		return
+	}
 
 	// Check for resolve sub-route
 	if len(parts) >= 2 && parts[1] == "resolve" {
@@ -1183,6 +1251,11 @@ func (r *Router) handleMeshtasticChannelByID(w http.ResponseWriter, req *http.Re
 	}
 
 	channelID := parts[0]
+
+	if !isValidUUID(channelID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid channel ID format")
+		return
+	}
 
 	// Check for secret-proposals sub-route
 	if len(parts) >= 2 && parts[1] == "secret-proposals" {

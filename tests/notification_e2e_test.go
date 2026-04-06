@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/handlers"
@@ -316,10 +317,10 @@ func (s *NotificationE2ETestSuite) createUser(id, email, username string, postca
 }
 
 // createRegion creates a region directly in the database
-func (s *NotificationE2ETestSuite) createRegion(id, name string, parentID *string) *models.GeographicRegion {
+func (s *NotificationE2ETestSuite) createRegion(_, name string, parentID *string) *models.GeographicRegion {
 	ctx := context.Background()
 	region := &models.GeographicRegion{
-		ID:             id,
+		ID:             uuid.New().String(),
 		Name:           name,
 		RegionType:     models.RegionTypeNeighborhood,
 		ParentRegionID: parentID,
