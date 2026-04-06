@@ -57,8 +57,8 @@ async function renderGroupDetail(container, group) {
     const authenticated = isAuthenticated();
     const currentUser = getUser();
     const userIsSuperuser = isSuperuser();
-    const isMember = group.is_member || false;
-    const isAdmin = group.is_admin || false;
+    const isMember = group.is_user_member || false;
+    const isAdmin = group.is_user_admin || false;
     const isTrusted = group.is_trusted || false;
     const tags = group.topic_tags || [];
     const memberCount = group.member_count || 0;
