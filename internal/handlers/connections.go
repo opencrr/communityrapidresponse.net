@@ -674,6 +674,216 @@ func (h *ConnectionHandler) ListChatProposals(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// ShareResource handles POST /api/v1/connections/{id}/shared-resources
+func (h *ConnectionHandler) ShareResource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	proposerGroupID := r.URL.Query().Get("proposer_group_id")
+	if proposerGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_proposer_group", "proposer_group_id query parameter required")
+		return
+	}
+
+	// Verify user is admin of the owning group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), proposerGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check admin status", "connection", "share_resource")
+		return
+	}
+	if !isAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of the owning group")
+		return
+	}
+
+	var req models.ShareResourceRequest
+	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+	if req.ResourceID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "resource_id is required")
+		return
+	}
+	if req.Visibility == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "visibility is required")
+		return
+	}
+	if req.Visibility != "admin_only" && req.Visibility != "all_members" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "visibility must be admin_only or all_members")
+		return
+	}
+
+	shared, err := h.connectionRepo.ShareResource(r.Context(), connectionID, proposerGroupID, &req)
+	if err != nil {
+		if errors.Is(err, database.ErrNotConnectionMember) {
+			writeError(w, http.StatusForbidden, "not_member", "Group is not a member of this connection")
+			return
+		}
+		if errors.Is(err, database.ErrResourceNotInGroup) {
+			writeError(w, http.StatusBadRequest, "resource_not_in_group", "Resource does not belong to the specified group")
+			return
+		}
+		if errors.Is(err, database.ErrAlreadyShared) {
+			writeError(w, http.StatusConflict, "already_shared", "Resource is already shared in this connection")
+			return
+		}
+		writeServerError(w, r, err, "Failed to share resource", "connection", "share_resource")
+		return
+	}
+
+	resourceType := "connection_shared_resource"
+	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionResourceShared,
+		&resourceType, &shared.ID, map[string]interface{}{
+			"connection_id": connectionID,
+			"resource_id":   req.ResourceID,
+			"group_id":      proposerGroupID,
+			"visibility":    req.Visibility,
+		}), models.AuditActionConnectionResourceShared)
+
+	writeJSON(w, http.StatusCreated, shared)
+}
+
+// UnshareResource handles DELETE /api/v1/connections/{id}/shared-resources/{rid}
+func (h *ConnectionHandler) UnshareResource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	resourceID := r.URL.Query().Get("resource_id")
+	if resourceID == "" {
+		writeError(w, http.StatusBadRequest, "missing_resource_id", "Resource ID required")
+		return
+	}
+
+	// Look up the shared resource to find the owning group
+	sharedResources, err := h.connectionRepo.ListConnectionResources(r.Context(), connectionID, true)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to look up shared resource", "connection", "unshare_resource")
+		return
+	}
+
+	var owningGroupID string
+	for _, sr := range sharedResources {
+		if sr.ResourceID == resourceID {
+			owningGroupID = sr.SharedByGroupID
+			break
+		}
+	}
+	if owningGroupID == "" {
+		writeError(w, http.StatusNotFound, "not_found", "Shared resource not found")
+		return
+	}
+
+	// Verify user is admin of the owning group
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), owningGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check admin status", "connection", "unshare_resource")
+		return
+	}
+	if !isAdmin {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of the owning group")
+		return
+	}
+
+	err = h.connectionRepo.UnshareResource(r.Context(), connectionID, resourceID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Shared resource not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to unshare resource", "connection", "unshare_resource")
+		return
+	}
+
+	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionResourceUnshared,
+		nil, nil, map[string]interface{}{
+			"connection_id": connectionID,
+			"resource_id":   resourceID,
+			"group_id":      owningGroupID,
+		}), models.AuditActionConnectionResourceUnshared)
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Resource unshared successfully"})
+}
+
+// ListConnectionResources handles GET /api/v1/connections/{id}/shared-resources
+func (h *ConnectionHandler) ListConnectionResources(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := r.URL.Query().Get("id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	// Get connection to verify access
+	connection, err := h.connectionRepo.GetConnection(r.Context(), connectionID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Connection not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get connection", "connection", "list_resources")
+		return
+	}
+
+	// Check if user is a member of any connected group and whether they're admin of any
+	hasAccess := false
+	isAdminOfAny := false
+	for _, member := range connection.MemberGroups {
+		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
+		if adminErr != nil {
+			writeServerError(w, r, adminErr, "Failed to check admin status", "connection", "list_resources")
+			return
+		}
+		if isAdmin {
+			hasAccess = true
+			isAdminOfAny = true
+			break
+		}
+	}
+
+	if !hasAccess {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		return
+	}
+
+	resources, err := h.connectionRepo.ListConnectionResources(r.Context(), connectionID, isAdminOfAny)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list shared resources", "connection", "list_resources")
+		return
+	}
+
+	if resources == nil {
+		resources = []models.ConnectionSharedResourceWithDetails{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"shared_resources": resources,
+	})
+}
+
 // ListPendingProposals handles GET /api/v1/connection-proposals
 func (h *ConnectionHandler) ListPendingProposals(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())

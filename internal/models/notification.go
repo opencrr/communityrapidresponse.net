@@ -155,7 +155,9 @@ const (
 	AuditActionConnectionLeft             = "connection_left"
 	AuditActionConnectionChatProposed     = "connection_chat_proposed"
 	AuditActionConnectionChatVoted        = "connection_chat_voted"
-	AuditActionConnectionChatApproved     = "connection_chat_approved"
+	AuditActionConnectionChatApproved         = "connection_chat_approved"
+	AuditActionConnectionResourceShared       = "connection_resource_shared"
+	AuditActionConnectionResourceUnshared     = "connection_resource_unshared"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

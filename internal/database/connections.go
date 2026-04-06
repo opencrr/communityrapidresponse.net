@@ -21,6 +21,8 @@ var (
 	ErrAlreadyResponded           = errors.New("group has already responded to this proposal")
 	ErrProposalNotPending         = errors.New("proposal is not pending")
 	ErrGroupNotInProposal         = errors.New("group is not part of this proposal")
+	ErrAlreadyShared              = errors.New("resource already shared in this connection")
+	ErrResourceNotInGroup         = errors.New("resource does not belong to the specified group")
 )
 
 // ConnectionRepository handles connection database operations.
@@ -1188,4 +1190,121 @@ func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sq
 		votes = append(votes, v)
 	}
 	return votes, rows.Err()
+}
+
+// =============================================================================
+// Connection Shared Resources
+// =============================================================================
+
+// ShareResource shares a group resource into a connection.
+func (r *ConnectionRepository) ShareResource(ctx context.Context, connectionID, groupID string, req *models.ShareResourceRequest) (*models.ConnectionSharedResource, error) {
+	// Verify group is a member of the connection
+	isMember, err := r.isConnectionMember(ctx, connectionID, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("check connection membership: %w", err)
+	}
+	if !isMember {
+		return nil, ErrNotConnectionMember
+	}
+
+	// Verify the resource belongs to the group
+	var resourceGroupID string
+	err = r.db.QueryRowContext(ctx,
+		"SELECT group_id FROM group_resources WHERE id = ?",
+		req.ResourceID,
+	).Scan(&resourceGroupID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrResourceNotInGroup
+		}
+		return nil, fmt.Errorf("check resource ownership: %w", err)
+	}
+	if resourceGroupID != groupID {
+		return nil, ErrResourceNotInGroup
+	}
+
+	shareID := uuid.New().String()
+	now := time.Now().UTC()
+
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO connection_shared_resources (id, resource_id, connection_id, shared_by_group_id, visibility, shared_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		shareID, req.ResourceID, connectionID, groupID, req.Visibility, now,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "uk_csr") {
+			return nil, ErrAlreadyShared
+		}
+		return nil, fmt.Errorf("share resource: %w", err)
+	}
+
+	return &models.ConnectionSharedResource{
+		ID:              shareID,
+		ResourceID:      req.ResourceID,
+		ConnectionID:    connectionID,
+		SharedByGroupID: groupID,
+		Visibility:      req.Visibility,
+		SharedAt:        now,
+	}, nil
+}
+
+// UnshareResource removes a shared resource from a connection.
+func (r *ConnectionRepository) UnshareResource(ctx context.Context, connectionID, resourceID string) error {
+	result, err := r.db.ExecContext(ctx,
+		"DELETE FROM connection_shared_resources WHERE connection_id = ? AND resource_id = ?",
+		connectionID, resourceID,
+	)
+	if err != nil {
+		return fmt.Errorf("unshare resource: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrConnectionNotFound
+	}
+	return nil
+}
+
+// ListConnectionResources returns shared resources for a connection, filtered by visibility.
+func (r *ConnectionRepository) ListConnectionResources(ctx context.Context, connectionID string, isAdmin bool) ([]models.ConnectionSharedResourceWithDetails, error) {
+	query := `
+		SELECT csr.id, csr.resource_id, csr.connection_id, csr.shared_by_group_id,
+			csr.visibility, csr.shared_at,
+			gr.title, gr.url, gr.description,
+			g.name AS group_name
+		FROM connection_shared_resources csr
+		JOIN group_resources gr ON csr.resource_id = gr.id
+		JOIN ` + "`groups`" + ` g ON csr.shared_by_group_id = g.id
+		WHERE csr.connection_id = ?
+	`
+	var args []interface{}
+	args = append(args, connectionID)
+
+	if !isAdmin {
+		query += " AND csr.visibility = 'all_members'"
+	}
+	query += " ORDER BY csr.shared_at DESC"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list connection resources: %w", err)
+	}
+	defer rows.Close()
+
+	var resources []models.ConnectionSharedResourceWithDetails
+	for rows.Next() {
+		var resource models.ConnectionSharedResourceWithDetails
+		if scanErr := rows.Scan(
+			&resource.ID, &resource.ResourceID, &resource.ConnectionID,
+			&resource.SharedByGroupID, &resource.Visibility, &resource.SharedAt,
+			&resource.Title, &resource.URL, &resource.Description,
+			&resource.GroupName,
+		); scanErr != nil {
+			return nil, fmt.Errorf("scan shared resource: %w", scanErr)
+		}
+		resources = append(resources, resource)
+	}
+	return resources, rows.Err()
 }

@@ -1575,6 +1575,31 @@ func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
+	// POST/GET/DELETE /api/v1/connections/{id}/shared-resources[/{rid}]
+	if len(parts) >= 2 && parts[1] == "shared-resources" {
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/connections/{id}/shared-resources/{rid}
+			q := req.URL.Query()
+			q.Set("resource_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.connections.UnshareResource)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.connections.ShareResource)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.connections.ListConnectionResources)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
 	// GET /api/v1/connections/{id}/signal-groups
 	if len(parts) >= 2 && parts[1] == "signal-groups" {
 		if req.Method == http.MethodGet {

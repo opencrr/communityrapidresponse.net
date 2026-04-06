@@ -305,6 +305,31 @@ type ProposeConnectionChatRequest struct {
 	AccessLevel string `json:"access_level" validate:"required,oneof=admin_only all_members"`
 }
 
+// ConnectionSharedResource represents a group resource shared into a connection.
+type ConnectionSharedResource struct {
+	ID              string    `json:"id" db:"id"`
+	ResourceID      string    `json:"resource_id" db:"resource_id"`
+	ConnectionID    string    `json:"connection_id" db:"connection_id"`
+	SharedByGroupID string    `json:"shared_by_group_id" db:"shared_by_group_id"`
+	Visibility      string    `json:"visibility" db:"visibility"`
+	SharedAt        time.Time `json:"shared_at" db:"shared_at"`
+}
+
+// ConnectionSharedResourceWithDetails includes the resource content.
+type ConnectionSharedResourceWithDetails struct {
+	ConnectionSharedResource
+	Title       string  `json:"title" db:"title"`
+	URL         string  `json:"url" db:"url"`
+	Description *string `json:"description" db:"description"`
+	GroupName   string  `json:"group_name" db:"group_name"`
+}
+
+// ShareResourceRequest is the request for sharing a resource into a connection.
+type ShareResourceRequest struct {
+	ResourceID string `json:"resource_id" validate:"required"`
+	Visibility string `json:"visibility" validate:"required,oneof=admin_only all_members"`
+}
+
 // TopicBoardPosting represents a group's presence on the topic board.
 type TopicBoardPosting struct {
 	ID              string    `json:"id" db:"id"`

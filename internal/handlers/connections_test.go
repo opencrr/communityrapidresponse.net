@@ -162,6 +162,7 @@ func (s *ConnectionTestSuite) claimsForUser(user *models.User) *middleware.Claim
 func (s *ConnectionTestSuite) cleanup(userIDs, regionIDs, groupIDs, connectionIDs []string) {
 	ctx := context.Background()
 	for _, id := range connectionIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_shared_resources WHERE connection_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_chat_proposal_votes WHERE proposal_id IN (SELECT id FROM connection_chat_proposals WHERE connection_id = ?)", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_chat_proposals WHERE connection_id = ?", id)
@@ -175,6 +176,8 @@ func (s *ConnectionTestSuite) cleanup(userIDs, regionIDs, groupIDs, connectionID
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposals WHERE connection_id IS NULL")
 
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_shared_resources WHERE shared_by_group_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_blocks WHERE blocker_group_id = ? OR blocked_group_id = ?", id, id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_topic_tags WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", id)
@@ -721,5 +724,262 @@ func TestConnectionHandler_ListConnectionSignalGroups(t *testing.T) {
 	}
 	if len(signalGroups) != 1 {
 		t.Errorf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+}
+
+// --- Shared Resource Tests ---
+
+func (s *ConnectionTestSuite) createTestResource(groupID, userID, title string) *models.GroupResource {
+	ctx := context.Background()
+	req := &models.CreateResourceRequest{
+		Title:      title,
+		URL:        "https://example.com/" + title,
+		AccessTier: "member",
+	}
+	resource, err := s.groupRepo.CreateResource(ctx, groupID, userID, req)
+	if err != nil {
+		s.t.Fatalf("Failed to create test resource: %v", err)
+	}
+	return resource
+}
+
+func (s *ConnectionTestSuite) formConnection(groupAID, groupBID string) string {
+	ctx := context.Background()
+	proposal, err := s.connectionRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	if err != nil {
+		s.t.Fatalf("Failed to propose connection: %v", err)
+	}
+	result, err := s.connectionRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	if err != nil {
+		s.t.Fatalf("Failed to accept proposal: %v", err)
+	}
+	if result.ConnectionID == nil {
+		s.t.Fatal("Expected connection to be formed")
+	}
+	return *result.ConnectionID
+}
+
+func TestConnectionHandler_ShareResource_Success(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_share_res_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Share Res Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Share Res A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Share Res B", user.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	resource := s.createTestResource(groupA.ID, user.ID, "Shared Resource")
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	body, _ := json.Marshal(models.ShareResourceRequest{
+		ResourceID: resource.ID,
+		Visibility: "all_members",
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ShareResource(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var result models.ConnectionSharedResource
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if result.ResourceID != resource.ID {
+		t.Errorf("Expected resource_id=%s, got %s", resource.ID, result.ResourceID)
+	}
+	if result.Visibility != "all_members" {
+		t.Errorf("Expected visibility=all_members, got %s", result.Visibility)
+	}
+}
+
+func TestConnectionHandler_ShareResource_Duplicate(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_share_dup_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Share Dup Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Share Dup A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Share Dup B", user.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	resource := s.createTestResource(groupA.ID, user.ID, "Dup Resource")
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	// Share once
+	_, err := s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: resource.ID,
+		Visibility: "admin_only",
+	})
+	if err != nil {
+		t.Fatalf("First share failed: %v", err)
+	}
+
+	// Attempt duplicate via handler
+	body, _ := json.Marshal(models.ShareResourceRequest{
+		ResourceID: resource.ID,
+		Visibility: "admin_only",
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ShareResource(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("Expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_ShareResource_NonMemberRejected(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	admin := s.createTestUser("conn_share_nm_admin", 1, false)
+	admin.VouchVerified = true
+	outsider := s.createTestUser("conn_share_nm_outsider", 1, false)
+	outsider.VouchVerified = true
+	region := s.createTestRegion("Conn Share NM Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Share NM A", admin.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Share NM B", admin.ID, []string{region.ID})
+	outsiderGroup := s.createTestGroup("Group Share NM Out", outsider.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	resource := s.createTestResource(outsiderGroup.ID, outsider.ID, "NM Resource")
+	defer s.cleanup([]string{admin.ID, outsider.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID, outsiderGroup.ID}, []string{connectionID})
+
+	body, _ := json.Marshal(models.ShareResourceRequest{
+		ResourceID: resource.ID,
+		Visibility: "all_members",
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID+"&proposer_group_id="+outsiderGroup.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(outsider))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ShareResource(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("Expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_UnshareResource_Success(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_unshare_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Unshare Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Unshare A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Unshare B", user.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	resource := s.createTestResource(groupA.ID, user.ID, "Unshare Resource")
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	// Share first
+	_, err := s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: resource.ID,
+		Visibility: "all_members",
+	})
+	if err != nil {
+		t.Fatalf("Share failed: %v", err)
+	}
+
+	// Unshare via handler
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/v1/connections/"+connectionID+"/shared-resources/"+resource.ID+"?id="+connectionID+"&resource_id="+resource.ID,
+		nil)
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.UnshareResource(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify it's gone
+	resources, err := s.connectionRepo.ListConnectionResources(context.Background(), connectionID, true)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Errorf("Expected 0 resources after unshare, got %d", len(resources))
+	}
+}
+
+func TestConnectionHandler_ListConnectionResources_VisibilityFiltering(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	adminUser := s.createTestUser("conn_list_res_admin", 1, false)
+	adminUser.VouchVerified = true
+	region := s.createTestRegion("Conn List Res Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group List Res A", adminUser.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group List Res B", adminUser.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	adminResource := s.createTestResource(groupA.ID, adminUser.ID, "Admin Only Resource")
+	memberResource := s.createTestResource(groupA.ID, adminUser.ID, "All Members Resource")
+	defer s.cleanup([]string{adminUser.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	// Share both resources
+	_, err := s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: adminResource.ID,
+		Visibility: "admin_only",
+	})
+	if err != nil {
+		t.Fatalf("Share admin resource failed: %v", err)
+	}
+	_, err = s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: memberResource.ID,
+		Visibility: "all_members",
+	})
+	if err != nil {
+		t.Fatalf("Share member resource failed: %v", err)
+	}
+
+	// Admin should see both
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID, nil)
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminUser))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ListConnectionResources(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	resources, ok := response["shared_resources"].([]interface{})
+	if !ok {
+		t.Fatal("Expected shared_resources array in response")
+	}
+	if len(resources) != 2 {
+		t.Errorf("Admin should see 2 resources, got %d", len(resources))
+	}
+
+	// Test repo-level visibility filtering directly (non-admin sees only all_members)
+	nonAdminResources, err := s.connectionRepo.ListConnectionResources(context.Background(), connectionID, false)
+	if err != nil {
+		t.Fatalf("ListConnectionResources (non-admin) failed: %v", err)
+	}
+	if len(nonAdminResources) != 1 {
+		t.Errorf("Non-admin should see 1 resource, got %d", len(nonAdminResources))
+	}
+	if len(nonAdminResources) > 0 && nonAdminResources[0].Visibility != "all_members" {
+		t.Errorf("Non-admin resource should be all_members, got %s", nonAdminResources[0].Visibility)
 	}
 }
