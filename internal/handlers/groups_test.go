@@ -114,6 +114,22 @@ func (s *GroupTestSuite) createTestUser(username string, tier models.Verificatio
 	return user
 }
 
+func (s *GroupTestSuite) createPostcardVerifiedUser(username string) *models.User {
+	ctx := context.Background()
+	user := &models.User{
+		Username:         username,
+		Email:            username + "@test.com",
+		PasswordHash:     "hashedpassword",
+		VerificationTier: models.TierPostcard,
+		PostcardVerified: true,
+	}
+	err := s.userRepo.Create(ctx, user)
+	if err != nil {
+		s.t.Fatalf("Failed to create postcard-verified test user: %v", err)
+	}
+	return user
+}
+
 func (s *GroupTestSuite) createTestRegion(name string, regionType models.RegionType, parentID *string) *models.GeographicRegion {
 	ctx := context.Background()
 	region := &models.GeographicRegion{
@@ -175,8 +191,7 @@ func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 func TestGroupHandler_Create_Success(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
-	user := suite.createTestUser("grpcreate_ok", models.TierVouched, false)
-	user.VouchVerified = true
+	user := suite.createPostcardVerifiedUser("grpcreate_ok")
 	region := suite.createTestRegion("GrpTestRegion1", models.RegionTypeCity, nil)
 
 	// Make user a member of the region
@@ -250,8 +265,7 @@ func TestGroupHandler_Create_UnverifiedUser(t *testing.T) {
 func TestGroupHandler_Create_MissingName(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
-	user := suite.createTestUser("grpcreate_noname", models.TierVouched, false)
-	user.VouchVerified = true
+	user := suite.createPostcardVerifiedUser("grpcreate_noname")
 	region := suite.createTestRegion("GrpTestRegion3", models.RegionTypeCity, nil)
 
 	ctx := context.Background()
@@ -283,8 +297,7 @@ func TestGroupHandler_Create_MissingName(t *testing.T) {
 func TestGroupHandler_Create_NoRegionIDs(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
-	user := suite.createTestUser("grpcreate_noregion", models.TierVouched, false)
-	user.VouchVerified = true
+	user := suite.createPostcardVerifiedUser("grpcreate_noregion")
 
 	defer suite.cleanup([]string{user.ID}, nil, nil)
 
@@ -312,8 +325,7 @@ func TestGroupHandler_Create_NoRegionIDs(t *testing.T) {
 func TestGroupHandler_Create_NotRegionMember(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
-	user := suite.createTestUser("grpcreate_notmember", models.TierVouched, false)
-	user.VouchVerified = true
+	user := suite.createPostcardVerifiedUser("grpcreate_notmember")
 	region := suite.createTestRegion("GrpTestRegion4", models.RegionTypeCity, nil)
 	// Deliberately NOT adding user to region
 
@@ -3328,5 +3340,278 @@ func TestGroupHandler_TopicBoard_RemovePosting(t *testing.T) {
 	_, err := suite.groupRepo.GetPosting(ctx, group.ID)
 	if err == nil {
 		t.Error("Expected posting to be removed")
+	}
+}
+
+// --- Verification Simplification Tests ---
+
+func TestGroupHandler_Create_PostcardVerifiedSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createPostcardVerifiedUser("grpcreate_pcard_ok")
+	region := suite.createTestRegion("GrpPcardRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, false)
+
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, nil)
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupRequest{
+		Name:       "Postcard Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var created models.Group
+	_ = json.NewDecoder(rec.Body).Decode(&created)
+	if created.ID == "" {
+		t.Error("Expected group ID in response")
+	}
+
+	suite.cleanup(nil, nil, []string{created.ID})
+}
+
+func TestGroupHandler_Create_VouchOnlyCannotCreate(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpcreate_vouchonly", models.TierVouched, false)
+	user.VouchVerified = true
+	// PostcardVerified is false by default
+	region := suite.createTestRegion("GrpVouchOnlyRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, false)
+
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, nil)
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupRequest{
+		Name:       "Should Fail",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.Create(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for vouch-only user, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_ListMembers_AddressVerifiedVisible(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	// Create postcard-verified user (will show address_verified = true)
+	admin := suite.createPostcardVerifiedUser("grpmem_addrvis_admin")
+	member := suite.createPostcardVerifiedUser("grpmem_addrvis_member")
+	region := suite.createTestRegion("GrpAddrVisRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Address Visible Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// show_address_verification defaults to true
+	err = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// Member (non-admin) lists members
+	claims := suite.claimsForUser(member)
+
+	req := httptest.NewRequest("GET", "/groups/"+group.ID+"/members", nil)
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListMembers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string][]models.GroupMemberWithUser
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	members := result["members"]
+	if len(members) != 2 {
+		t.Fatalf("Expected 2 members, got %d", len(members))
+	}
+
+	// Both members are postcard-verified, so address_verified should be true
+	for _, m := range members {
+		if !m.AddressVerified {
+			t.Errorf("Expected address_verified=true for user %s, got false", m.Username)
+		}
+	}
+}
+
+func TestGroupHandler_ListMembers_AddressVerifiedHidden(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createPostcardVerifiedUser("grpmem_addrhid_admin")
+	member := suite.createPostcardVerifiedUser("grpmem_addrhid_member")
+	region := suite.createTestRegion("GrpAddrHidRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Address Hidden Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Disable show_address_verification
+	showFalse := false
+	err = suite.groupRepo.Update(ctx, group.ID, &models.UpdateGroupRequest{
+		ShowAddressVerification: &showFalse,
+	})
+	if err != nil {
+		t.Fatalf("Failed to update group: %v", err)
+	}
+
+	err = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// Non-admin member lists members -- address_verified should be hidden
+	claims := suite.claimsForUser(member)
+
+	req := httptest.NewRequest("GET", "/groups/"+group.ID+"/members", nil)
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListMembers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string][]models.GroupMemberWithUser
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	members := result["members"]
+	if len(members) != 2 {
+		t.Fatalf("Expected 2 members, got %d", len(members))
+	}
+
+	// address_verified should be false for all members since setting is off and caller is non-admin
+	for _, m := range members {
+		if m.AddressVerified {
+			t.Errorf("Expected address_verified=false for user %s when setting is off, got true", m.Username)
+		}
+	}
+}
+
+func TestGroupHandler_ListMembers_AddressVerifiedVisibleToAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createPostcardVerifiedUser("grpmem_addradm_admin")
+	member := suite.createPostcardVerifiedUser("grpmem_addradm_member")
+	region := suite.createTestRegion("GrpAddrAdmRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Address Admin Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Disable show_address_verification
+	showFalse := false
+	err = suite.groupRepo.Update(ctx, group.ID, &models.UpdateGroupRequest{
+		ShowAddressVerification: &showFalse,
+	})
+	if err != nil {
+		t.Fatalf("Failed to update group: %v", err)
+	}
+
+	err = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// Admin lists members -- should still see address_verified even with setting off
+	claims := suite.claimsForUser(admin)
+
+	req := httptest.NewRequest("GET", "/groups/"+group.ID+"/members", nil)
+	q := req.URL.Query()
+	q.Set("id", group.ID)
+	req.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListMembers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string][]models.GroupMemberWithUser
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	members := result["members"]
+	if len(members) != 2 {
+		t.Fatalf("Expected 2 members, got %d", len(members))
+	}
+
+	// Admin should see the real address_verified values (both true since postcard-verified)
+	for _, m := range members {
+		if !m.AddressVerified {
+			t.Errorf("Expected address_verified=true for admin view of user %s, got false", m.Username)
+		}
 	}
 }

@@ -92,8 +92,8 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.VouchVerified {
-		writeError(w, http.StatusForbidden, "forbidden", "Vouch verification required to create groups")
+	if !claims.PostcardVerified {
+		writeError(w, http.StatusForbidden, "verification_required", "Address verification required to create groups")
 		return
 	}
 
@@ -369,6 +369,21 @@ func (h *GroupHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 	if members == nil {
 		members = []models.GroupMemberWithUser{}
+	}
+
+	// Hide address_verified field if the group setting is off and caller is not an admin
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", "list_members")
+		return
+	}
+	if !group.ShowAddressVerification {
+		isAdmin, _ := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+		if !isAdmin && !claims.IsSuperuser {
+			for i := range members {
+				members[i].AddressVerified = false
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
