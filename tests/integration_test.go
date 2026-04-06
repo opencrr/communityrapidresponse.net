@@ -134,7 +134,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

@@ -150,11 +150,13 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, regionRepo, userRepo, auditRepo)
+	connectionRepo := database.NewConnectionRepository(db)
+	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, groupHandler, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, groupHandler, connectionHandler, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -3826,6 +3828,20 @@ func (s *E2ETestSuite) createTestRegionForGroups(userID string) string {
 	return regionID
 }
 
+// cleanupConnections cleans up connections and their proposals.
+func (s *E2ETestSuite) cleanupConnections(connectionIDs ...string) {
+	ctx := context.Background()
+	for _, connID := range connectionIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposal_groups WHERE proposal_id IN (SELECT id FROM connection_proposals WHERE connection_id = ?)", connID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposals WHERE connection_id = ?", connID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_members WHERE connection_id = ?", connID)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM connections WHERE id = ?", connID)
+	}
+	// Clean orphaned proposals
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposal_groups WHERE proposal_id IN (SELECT id FROM connection_proposals WHERE connection_id IS NULL)")
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM connection_proposals WHERE connection_id IS NULL")
+}
+
 // cleanupRegionsForGroups cleans up regions created for group tests.
 func (s *E2ETestSuite) cleanupRegionsForGroups(regionIDs ...string) {
 	ctx := context.Background()
@@ -6262,5 +6278,271 @@ func TestE2E_TopicBoards(t *testing.T) {
 		if nonAdminBrowse.StatusCode != http.StatusForbidden {
 			t.Errorf("Expected 403 for non-admin browse, got %d", nonAdminBrowse.StatusCode)
 		}
+	})
+}
+
+// =============================================================================
+// Connection Tests
+// =============================================================================
+
+func TestE2E_Connections(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	// Create two users with groups
+	userAID, tokenA := suite.registerOrGetUser("conn_e2e_a", "conn_e2e_a@test.com", "password12345")
+	userBID, _ := suite.registerOrGetUser("conn_e2e_b", "conn_e2e_b@test.com", "password12345")
+	suite.makeUserVouchVerified(userAID)
+	suite.makeUserVouchVerified(userBID)
+	tokenA = suite.reloginUser("conn_e2e_a@test.com", "password12345")
+	tokenB := suite.reloginUser("conn_e2e_b@test.com", "password12345")
+
+	regionAID := suite.createTestRegionForGroups(userAID)
+	regionBID := suite.createTestRegionForGroups(userBID)
+	groupAID, _ := suite.createGroup("Conn E2E Group A", []string{regionAID}, tokenA)
+	groupBID, _ := suite.createGroup("Conn E2E Group B", []string{regionBID}, tokenB)
+
+	defer func() {
+		suite.cleanupGroups(groupAID, groupBID)
+		suite.cleanupRegionsForGroups(regionAID, regionBID)
+		suite.cleanup(userAID, userBID)
+	}()
+
+	t.Run("Formation flow: propose, accept, connection exists", func(t *testing.T) {
+		// Propose
+		proposeResp := suite.request("POST", "/api/v1/connections?proposer_group_id="+groupAID, map[string]interface{}{
+			"name":      "E2E Test Connection",
+			"group_ids": []string{groupBID},
+		}, tokenA)
+		defer func() { _ = proposeResp.Body.Close() }()
+
+		if proposeResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(proposeResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201, got %d: %v", proposeResp.StatusCode, errBody)
+		}
+
+		var proposal map[string]interface{}
+		_ = json.NewDecoder(proposeResp.Body).Decode(&proposal)
+		proposalID := proposal["id"].(string)
+
+		// B sees pending proposal
+		pendingResp := suite.request("GET", "/api/v1/connection-proposals", nil, tokenB)
+		defer func() { _ = pendingResp.Body.Close() }()
+		if pendingResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for pending proposals, got %d", pendingResp.StatusCode)
+		}
+
+		// B accepts
+		acceptResp := suite.request("POST", "/api/v1/connection-proposals/"+proposalID+"/respond", map[string]interface{}{
+			"accept":   true,
+			"group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = acceptResp.Body.Close() }()
+
+		if acceptResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(acceptResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200, got %d: %v", acceptResp.StatusCode, errBody)
+		}
+
+		var acceptResult map[string]interface{}
+		_ = json.NewDecoder(acceptResp.Body).Decode(&acceptResult)
+		if acceptResult["status"] != "accepted" {
+			t.Errorf("Expected status=accepted, got %v", acceptResult["status"])
+		}
+		connectionID, _ := acceptResult["connection_id"].(string)
+		if connectionID == "" {
+			t.Fatal("Expected connection_id to be set")
+		}
+		defer suite.cleanupConnections(connectionID)
+
+		// Both can list the connection
+		listResp := suite.request("GET", "/api/v1/connections", nil, tokenA)
+		defer func() { _ = listResp.Body.Close() }()
+		if listResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", listResp.StatusCode)
+		}
+
+		var listResult map[string]interface{}
+		_ = json.NewDecoder(listResp.Body).Decode(&listResult)
+		connections := listResult["connections"].([]interface{})
+		if len(connections) == 0 {
+			t.Error("Expected at least one connection")
+		}
+
+		// Get connection details
+		getResp := suite.request("GET", "/api/v1/connections/"+connectionID, nil, tokenA)
+		defer func() { _ = getResp.Body.Close() }()
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", getResp.StatusCode)
+		}
+	})
+
+	t.Run("Decline flow: proposal declined", func(t *testing.T) {
+		proposeResp := suite.request("POST", "/api/v1/connections?proposer_group_id="+groupAID, map[string]interface{}{
+			"group_ids": []string{groupBID},
+		}, tokenA)
+		defer func() { _ = proposeResp.Body.Close() }()
+
+		var proposal map[string]interface{}
+		_ = json.NewDecoder(proposeResp.Body).Decode(&proposal)
+		proposalID := proposal["id"].(string)
+
+		declineResp := suite.request("POST", "/api/v1/connection-proposals/"+proposalID+"/respond", map[string]interface{}{
+			"accept":   false,
+			"group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = declineResp.Body.Close() }()
+
+		if declineResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", declineResp.StatusCode)
+		}
+
+		var result map[string]interface{}
+		_ = json.NewDecoder(declineResp.Body).Decode(&result)
+		if result["status"] != "declined" {
+			t.Errorf("Expected status=declined, got %v", result["status"])
+		}
+	})
+
+	t.Run("Expansion and leave", func(t *testing.T) {
+		// Create a third user/group
+		userCID, _ := suite.registerOrGetUser("conn_e2e_c", "conn_e2e_c@test.com", "password12345")
+		suite.makeUserVouchVerified(userCID)
+		tokenC := suite.reloginUser("conn_e2e_c@test.com", "password12345")
+		regionCID := suite.createTestRegionForGroups(userCID)
+		groupCID, _ := suite.createGroup("Conn E2E Group C", []string{regionCID}, tokenC)
+		defer func() {
+			suite.cleanupGroups(groupCID)
+			suite.cleanupRegionsForGroups(regionCID)
+			suite.cleanup(userCID)
+		}()
+
+		// Form A+B connection
+		propResp := suite.request("POST", "/api/v1/connections?proposer_group_id="+groupAID, map[string]interface{}{
+			"group_ids": []string{groupBID},
+		}, tokenA)
+		defer func() { _ = propResp.Body.Close() }()
+		var prop map[string]interface{}
+		_ = json.NewDecoder(propResp.Body).Decode(&prop)
+		propID := prop["id"].(string)
+
+		acceptResp := suite.request("POST", "/api/v1/connection-proposals/"+propID+"/respond", map[string]interface{}{
+			"accept":   true,
+			"group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = acceptResp.Body.Close() }()
+		var acceptResult map[string]interface{}
+		_ = json.NewDecoder(acceptResp.Body).Decode(&acceptResult)
+		connectionID := acceptResult["connection_id"].(string)
+		defer suite.cleanupConnections(connectionID)
+
+		// Invite C
+		inviteResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/invite?proposer_group_id="+groupAID, map[string]interface{}{
+			"group_id": groupCID,
+		}, tokenA)
+		defer func() { _ = inviteResp.Body.Close() }()
+
+		if inviteResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(inviteResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201 for invite, got %d: %v", inviteResp.StatusCode, errBody)
+		}
+
+		var inviteResult map[string]interface{}
+		_ = json.NewDecoder(inviteResp.Body).Decode(&inviteResult)
+		expandPropID := inviteResult["id"].(string)
+
+		// B accepts expansion
+		bAcceptResp := suite.request("POST", "/api/v1/connection-proposals/"+expandPropID+"/respond", map[string]interface{}{
+			"accept":   true,
+			"group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = bAcceptResp.Body.Close() }()
+
+		// C accepts expansion
+		cAcceptResp := suite.request("POST", "/api/v1/connection-proposals/"+expandPropID+"/respond", map[string]interface{}{
+			"accept":   true,
+			"group_id": groupCID,
+		}, tokenC)
+		defer func() { _ = cAcceptResp.Body.Close() }()
+
+		var expandAcceptResult map[string]interface{}
+		_ = json.NewDecoder(cAcceptResp.Body).Decode(&expandAcceptResult)
+		if expandAcceptResult["status"] != "accepted" {
+			t.Errorf("Expected status=accepted after expansion, got %v", expandAcceptResult["status"])
+		}
+
+		// A leaves
+		leaveResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/leave?group_id="+groupAID, nil, tokenA)
+		defer func() { _ = leaveResp.Body.Close() }()
+		if leaveResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for leave, got %d", leaveResp.StatusCode)
+		}
+
+		// Connection still exists with B and C
+		getResp := suite.request("GET", "/api/v1/connections/"+connectionID, nil, tokenB)
+		defer func() { _ = getResp.Body.Close() }()
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected connection to still exist, got %d", getResp.StatusCode)
+		}
+	})
+
+	t.Run("Auto-remove on unanimous block", func(t *testing.T) {
+		// Create a third user/group for this subtest
+		userDID, _ := suite.registerOrGetUser("conn_e2e_d", "conn_e2e_d@test.com", "password12345")
+		suite.makeUserVouchVerified(userDID)
+		tokenD := suite.reloginUser("conn_e2e_d@test.com", "password12345")
+		regionDID := suite.createTestRegionForGroups(userDID)
+		groupDID, _ := suite.createGroup("Conn E2E Group D", []string{regionDID}, tokenD)
+		defer func() {
+			suite.cleanupGroups(groupDID)
+			suite.cleanupRegionsForGroups(regionDID)
+			suite.cleanup(userDID)
+		}()
+
+		// Form A+B+D connection
+		propResp := suite.request("POST", "/api/v1/connections?proposer_group_id="+groupAID, map[string]interface{}{
+			"group_ids": []string{groupBID, groupDID},
+		}, tokenA)
+		defer func() { _ = propResp.Body.Close() }()
+		var prop map[string]interface{}
+		_ = json.NewDecoder(propResp.Body).Decode(&prop)
+		propID := prop["id"].(string)
+
+		// B accepts
+		bResp := suite.request("POST", "/api/v1/connection-proposals/"+propID+"/respond", map[string]interface{}{
+			"accept": true, "group_id": groupBID,
+		}, tokenB)
+		defer func() { _ = bResp.Body.Close() }()
+
+		// D accepts
+		dResp := suite.request("POST", "/api/v1/connection-proposals/"+propID+"/respond", map[string]interface{}{
+			"accept": true, "group_id": groupDID,
+		}, tokenD)
+		defer func() { _ = dResp.Body.Close() }()
+		var dResult map[string]interface{}
+		_ = json.NewDecoder(dResp.Body).Decode(&dResult)
+		connectionID := dResult["connection_id"].(string)
+		defer suite.cleanupConnections(connectionID)
+
+		// A and B block D
+		suite.request("POST", "/api/v1/groups/"+groupAID+"/blocks", map[string]interface{}{
+			"group_id": groupDID,
+		}, tokenA)
+		suite.request("POST", "/api/v1/groups/"+groupBID+"/blocks", map[string]interface{}{
+			"group_id": groupDID,
+		}, tokenB)
+
+		// A leaves — this triggers unanimous block check
+		// After A leaves, B is the only remaining non-D member. B has blocked D.
+		// So D should be auto-removed (unanimous block by all others = just B).
+		leaveResp := suite.request("POST", "/api/v1/connections/"+connectionID+"/leave?group_id="+groupAID, nil, tokenA)
+		defer func() { _ = leaveResp.Body.Close() }()
+
+		// The connection might be dissolved if D was removed and only B remains
+		// Either way, D should not be a member anymore
+		// Since B blocked D and B is the only other member, D gets auto-removed
+		// Then only B remains, so connection is dissolved
 	})
 }

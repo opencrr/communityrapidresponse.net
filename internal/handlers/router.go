@@ -30,6 +30,7 @@ type Router struct {
 	secretUpdates       *SecretUpdateHandler
 	meshtastic          *MeshtasticHandler
 	groups              *GroupHandler
+	connections         *ConnectionHandler
 	jwtAuth            *middleware.JWTAuth
 	rateLimiter        services.RateLimiter
 	rateLimitConfig    *RateLimitOptions
@@ -69,6 +70,7 @@ func NewRouter(
 	secretUpdates *SecretUpdateHandler,
 	meshtastic *MeshtasticHandler,
 	groups *GroupHandler,
+	connections *ConnectionHandler,
 	jwtAuth *middleware.JWTAuth,
 	rateLimiter services.RateLimiter,
 	rateLimitConfig *RateLimitOptions,
@@ -93,6 +95,7 @@ func NewRouter(
 		secretUpdates:       secretUpdates,
 		meshtastic:          meshtastic,
 		groups:              groups,
+		connections:         connections,
 		jwtAuth:            jwtAuth,
 		rateLimiter:        rateLimiter,
 		rateLimitConfig:    rateLimitConfig,
@@ -168,6 +171,14 @@ func (r *Router) Setup() http.Handler {
 		r.mux.HandleFunc("/api/v1/group-invitations", r.authenticated(r.methodHandler(http.MethodGet, r.groups.ListMyInvitations)))
 		r.mux.HandleFunc("/api/v1/group-invitations/", r.handleGroupInvitationByID)
 		r.mux.HandleFunc("/api/v1/topic-board", r.authenticated(r.methodHandler(http.MethodGet, r.groups.BrowsePostings)))
+	}
+
+	// Connection routes (nil-safe for tests that don't need connections)
+	if r.connections != nil {
+		r.mux.HandleFunc("/api/v1/connections", r.handleConnections)
+		r.mux.HandleFunc("/api/v1/connections/", r.handleConnectionByID)
+		r.mux.HandleFunc("/api/v1/connection-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.connections.ListPendingProposals)))
+		r.mux.HandleFunc("/api/v1/connection-proposals/", r.handleConnectionProposalByID)
 	}
 
 	// School routes (all authenticated)
@@ -1494,6 +1505,89 @@ func (r *Router) handleGroupInvitationByID(w http.ResponseWriter, req *http.Requ
 
 		if req.Method == http.MethodPost {
 			r.authenticated(r.groups.RespondToInvitation)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
+}
+
+// handleConnections handles /api/v1/connections
+func (r *Router) handleConnections(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodPost:
+		r.authenticated(r.connections.ProposeConnection)(w, req)
+	case http.MethodGet:
+		r.authenticated(r.connections.ListMyConnections)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleConnectionByID handles /api/v1/connections/{id} and sub-routes
+func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connections/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	connectionID := parts[0]
+
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	req.URL.RawQuery = q.Encode()
+
+	// POST /api/v1/connections/{id}/invite
+	if len(parts) >= 2 && parts[1] == "invite" {
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.InviteToConnection)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// POST /api/v1/connections/{id}/leave
+	if len(parts) >= 2 && parts[1] == "leave" {
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.LeaveConnection)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// GET /api/v1/connections/{id}
+	if req.Method == http.MethodGet {
+		r.authenticated(r.connections.GetConnection)(w, req)
+		return
+	}
+
+	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+}
+
+// handleConnectionProposalByID handles /api/v1/connection-proposals/{id}/respond
+func (r *Router) handleConnectionProposalByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connection-proposals/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	proposalID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "respond" {
+		q := req.URL.Query()
+		q.Set("id", proposalID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.RespondToProposal)(w, req)
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")

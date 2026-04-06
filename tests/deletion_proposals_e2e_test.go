@@ -126,7 +126,7 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	// Create router with deletion proposals wired in
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

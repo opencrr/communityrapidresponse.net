@@ -125,7 +125,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

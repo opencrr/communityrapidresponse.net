@@ -148,6 +148,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		nil, // secretUpdateHandler
 		nil, // meshtasticHandler
 		nil, // groupHandler
+		nil, // connectionHandler
 		jwtAuth,
 		rateLimiter,
 		nil,           // rateLimitConfig
