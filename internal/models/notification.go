@@ -141,6 +141,9 @@ const (
 	AuditActionGroupMemberAdded           = "group_member_added"
 	AuditActionGroupTrustVouchCreated        = "group_trust_vouch_created"
 	AuditActionGroupSignalGroupCreated       = "group_signal_group_created"
+	AuditActionGroupResourceCreated          = "group_resource_created"
+	AuditActionGroupResourceUpdated          = "group_resource_updated"
+	AuditActionGroupResourceDeleted          = "group_resource_deleted"
 
 	// Account lockout
 	AuditActionAccountLocked            = "account_locked"

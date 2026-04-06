@@ -5845,3 +5845,165 @@ func TestE2E_GroupBrowsing(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_GroupResources(t *testing.T) {
+	suite := SetupE2ETest(t)
+
+	t.Run("CRUD resource links with access tier filtering", func(t *testing.T) {
+		password := "testpassword123!"
+		ctx := context.Background()
+
+		// Setup admin user + graduated group
+		adminID := suite.registerOrGetUserID("gres_a", "gres_a@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserVouchVerified(adminID)
+		adminToken := suite.reloginUser("gres_a@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		groupID, _ := suite.createGroup("Resource Test Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		// Graduate the group
+		gradUserB, gradUserC := suite.graduateGroup(groupID, adminToken, regionID, "gres")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		// --- Create resource (admin) ---
+		createResp := suite.request("POST", "/api/v1/groups/"+groupID+"/resources", map[string]interface{}{
+			"title":       "Community Wiki",
+			"url":         "https://wiki.example.com",
+			"description": "Our knowledge base",
+			"access_tier": "member",
+		}, adminToken)
+		defer func() { _ = createResp.Body.Close() }()
+
+		if createResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(createResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201, got %d: %v", createResp.StatusCode, errBody)
+		}
+
+		var createdResource map[string]interface{}
+		_ = json.NewDecoder(createResp.Body).Decode(&createdResource)
+		resourceID := createdResource["id"].(string)
+
+		if createdResource["title"] != "Community Wiki" {
+			t.Errorf("Expected title 'Community Wiki', got %v", createdResource["title"])
+		}
+
+		// Create an admin-only resource
+		adminOnlyResp := suite.request("POST", "/api/v1/groups/"+groupID+"/resources", map[string]interface{}{
+			"title":       "Admin Docs",
+			"url":         "https://admin.example.com",
+			"access_tier": "admin_only",
+		}, adminToken)
+		defer func() { _ = adminOnlyResp.Body.Close() }()
+		if adminOnlyResp.StatusCode != http.StatusCreated {
+			t.Fatalf("Expected 201 for admin-only resource, got %d", adminOnlyResp.StatusCode)
+		}
+
+		// --- List resources as member (should see member but not admin_only) ---
+		memberID := suite.registerOrGetUserID("gres_m", "gres_m@test.com", password)
+		defer suite.cleanup(memberID)
+		suite.disableMFA(memberID)
+		suite.makeUserVouchVerified(memberID)
+		memberToken := suite.reloginUser("gres_m@test.com", password)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			memberID, regionID)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, memberID, false, false)
+
+		listResp := suite.request("GET", "/api/v1/groups/"+groupID+"/resources", nil, memberToken)
+		defer func() { _ = listResp.Body.Close() }()
+
+		if listResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", listResp.StatusCode)
+		}
+
+		var listBody map[string]interface{}
+		_ = json.NewDecoder(listResp.Body).Decode(&listBody)
+		resources := listBody["resources"].([]interface{})
+
+		// Member should see the member-tier resource but NOT the admin_only one
+		if len(resources) != 1 {
+			t.Fatalf("Expected 1 resource for member, got %d", len(resources))
+		}
+		firstResource := resources[0].(map[string]interface{})
+		if firstResource["title"] != "Community Wiki" {
+			t.Errorf("Expected member to see 'Community Wiki', got %v", firstResource["title"])
+		}
+
+		// Admin should see both
+		adminListResp := suite.request("GET", "/api/v1/groups/"+groupID+"/resources", nil, adminToken)
+		defer func() { _ = adminListResp.Body.Close() }()
+
+		var adminListBody map[string]interface{}
+		_ = json.NewDecoder(adminListResp.Body).Decode(&adminListBody)
+		adminResources := adminListBody["resources"].([]interface{})
+		if len(adminResources) != 2 {
+			t.Fatalf("Expected 2 resources for admin, got %d", len(adminResources))
+		}
+
+		// --- Update resource (admin) ---
+		updateResp := suite.request("PUT", "/api/v1/groups/"+groupID+"/resources/"+resourceID, map[string]interface{}{
+			"title": "Updated Wiki",
+		}, adminToken)
+		defer func() { _ = updateResp.Body.Close() }()
+
+		if updateResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(updateResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for update, got %d: %v", updateResp.StatusCode, errBody)
+		}
+
+		// --- Delete resource (admin) ---
+		deleteResp := suite.request("DELETE", "/api/v1/groups/"+groupID+"/resources/"+resourceID, nil, adminToken)
+		defer func() { _ = deleteResp.Body.Close() }()
+
+		if deleteResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 for delete, got %d", deleteResp.StatusCode)
+		}
+
+		// Verify deleted
+		afterDeleteResp := suite.request("GET", "/api/v1/groups/"+groupID+"/resources", nil, adminToken)
+		defer func() { _ = afterDeleteResp.Body.Close() }()
+		var afterDeleteBody map[string]interface{}
+		_ = json.NewDecoder(afterDeleteResp.Body).Decode(&afterDeleteBody)
+		afterDeleteResources := afterDeleteBody["resources"].([]interface{})
+		if len(afterDeleteResources) != 1 {
+			t.Fatalf("Expected 1 resource after delete, got %d", len(afterDeleteResources))
+		}
+
+		// --- Non-admin cannot create/update/delete ---
+		nonAdminCreateResp := suite.request("POST", "/api/v1/groups/"+groupID+"/resources", map[string]interface{}{
+			"title":      "Should Fail",
+			"url":        "https://fail.example.com",
+			"access_tier": "member",
+		}, memberToken)
+		defer func() { _ = nonAdminCreateResp.Body.Close() }()
+		if nonAdminCreateResp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin create, got %d", nonAdminCreateResp.StatusCode)
+		}
+
+		// Get remaining resource ID for update/delete test
+		remainingResource := afterDeleteResources[0].(map[string]interface{})
+		remainingID := remainingResource["id"].(string)
+
+		nonAdminUpdateResp := suite.request("PUT", "/api/v1/groups/"+groupID+"/resources/"+remainingID, map[string]interface{}{
+			"title": "Should Fail",
+		}, memberToken)
+		defer func() { _ = nonAdminUpdateResp.Body.Close() }()
+		if nonAdminUpdateResp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin update, got %d", nonAdminUpdateResp.StatusCode)
+		}
+
+		nonAdminDeleteResp := suite.request("DELETE", "/api/v1/groups/"+groupID+"/resources/"+remainingID, nil, memberToken)
+		defer func() { _ = nonAdminDeleteResp.Body.Close() }()
+		if nonAdminDeleteResp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for non-admin delete, got %d", nonAdminDeleteResp.StatusCode)
+		}
+	})
+}

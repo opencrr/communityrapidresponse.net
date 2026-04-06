@@ -27,6 +27,7 @@ var (
 	ErrGroupAlreadyMember       = errors.New("user is already a member")
 	ErrNotTrustedOrAdmin        = errors.New("user is not trusted or admin in this group")
 	ErrSelfVouch                = errors.New("cannot vouch for yourself")
+	ErrResourceNotFound         = errors.New("resource not found")
 )
 
 // GroupRepository handles group database operations
@@ -1351,4 +1352,140 @@ func UserMeetsAccessTier(
 	default:
 		return false
 	}
+}
+
+// =============================================================================
+// Group Resources
+// =============================================================================
+
+// CreateResource creates a new resource link for a group.
+func (r *GroupRepository) CreateResource(ctx context.Context, groupID, createdBy string, req *models.CreateResourceRequest) (*models.GroupResource, error) {
+	resourceID := uuid.New().String()
+
+	var description *string
+	if req.Description != "" {
+		description = &req.Description
+	}
+
+	query := `
+		INSERT INTO group_resources (id, group_id, title, url, description, access_tier, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := r.db.ExecContext(ctx, query,
+		resourceID, groupID, req.Title, req.URL, description, req.AccessTier, createdBy,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert group resource: %w", err)
+	}
+
+	return r.GetResource(ctx, resourceID)
+}
+
+// GetResource retrieves a single resource by ID.
+func (r *GroupRepository) GetResource(ctx context.Context, id string) (*models.GroupResource, error) {
+	query := `
+		SELECT id, group_id, title, url, description, access_tier, created_by, created_at, updated_at
+		FROM group_resources
+		WHERE id = ?
+	`
+	var resource models.GroupResource
+	err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&resource.ID, &resource.GroupID, &resource.Title, &resource.URL,
+		&resource.Description, &resource.AccessTier, &resource.CreatedBy,
+		&resource.CreatedAt, &resource.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrResourceNotFound
+		}
+		return nil, fmt.Errorf("get group resource: %w", err)
+	}
+	return &resource, nil
+}
+
+// ListResources returns all resources for a group, ordered by created_at.
+func (r *GroupRepository) ListResources(ctx context.Context, groupID string) ([]models.GroupResource, error) {
+	query := `
+		SELECT id, group_id, title, url, description, access_tier, created_by, created_at, updated_at
+		FROM group_resources
+		WHERE group_id = ?
+		ORDER BY created_at, id
+	`
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list group resources: %w", err)
+	}
+	defer rows.Close()
+
+	var resources []models.GroupResource
+	for rows.Next() {
+		var resource models.GroupResource
+		if err := rows.Scan(
+			&resource.ID, &resource.GroupID, &resource.Title, &resource.URL,
+			&resource.Description, &resource.AccessTier, &resource.CreatedBy,
+			&resource.CreatedAt, &resource.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan group resource: %w", err)
+		}
+		resources = append(resources, resource)
+	}
+	return resources, rows.Err()
+}
+
+// UpdateResource updates a resource's fields. Only non-nil fields are updated.
+func (r *GroupRepository) UpdateResource(ctx context.Context, id string, req *models.UpdateResourceRequest) error {
+	var setClauses []string
+	var args []interface{}
+
+	if req.Title != nil {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, *req.Title)
+	}
+	if req.URL != nil {
+		setClauses = append(setClauses, "url = ?")
+		args = append(args, *req.URL)
+	}
+	if req.Description != nil {
+		setClauses = append(setClauses, "description = ?")
+		args = append(args, *req.Description)
+	}
+	if req.AccessTier != nil {
+		setClauses = append(setClauses, "access_tier = ?")
+		args = append(args, *req.AccessTier)
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	args = append(args, id)
+	query := "UPDATE group_resources SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update group resource: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update group resource rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrResourceNotFound
+	}
+	return nil
+}
+
+// DeleteResource deletes a resource by ID.
+func (r *GroupRepository) DeleteResource(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, "DELETE FROM group_resources WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete group resource: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete group resource rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrResourceNotFound
+	}
+	return nil
 }

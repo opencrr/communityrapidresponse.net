@@ -1084,3 +1084,314 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 		"signal_groups": filteredGroups,
 	})
 }
+
+// CreateResource handles POST /api/v1/groups/:id/resources
+func (h *GroupHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Check group exists
+	_, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", "create_resource")
+		return
+	}
+
+	// Check user is admin
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "create_resource")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	var req models.CreateResourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate title
+	if req.Title == "" || len(req.Title) > 255 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Title must be between 1 and 255 characters")
+		return
+	}
+
+	// Validate URL
+	if req.URL == "" || len(req.URL) > 2048 {
+		writeError(w, http.StatusBadRequest, "validation_error", "URL must be between 1 and 2048 characters")
+		return
+	}
+
+	// Validate description length
+	if len(req.Description) > 500 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Description must be at most 500 characters")
+		return
+	}
+
+	// Validate access tier
+	accessTier := models.AccessTier(req.AccessTier)
+	switch accessTier {
+	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
+		return
+	}
+
+	resource, err := h.groupRepo.CreateResource(r.Context(), groupID, claims.UserID, &req)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to create resource", "group", "create_resource")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupResourceCreated, &resourceType, &groupID, map[string]interface{}{
+			"resource_id":   resource.ID,
+			"resource_title": resource.Title,
+			"access_tier":   string(resource.AccessTier),
+		}), "group_resource_created")
+	}
+
+	writeJSON(w, http.StatusCreated, resource)
+}
+
+// ListResources handles GET /api/v1/groups/:id/resources
+func (h *GroupHandler) ListResources(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	// Get all resources for this group
+	allResources, err := h.groupRepo.ListResources(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list resources", "group", "list_resources")
+		return
+	}
+
+	// Get user's membership info for access tier filtering
+	memberInfo, err := h.groupRepo.GetMember(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get membership info", "group", "list_resources")
+		return
+	}
+
+	// Determine if user is a verified resident in any of the group's regions
+	isVerifiedResident := false
+	regions, err := h.groupRepo.GetRegions(r.Context(), groupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group regions", "group", "list_resources")
+		return
+	}
+	for _, region := range regions {
+		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		if regionErr != nil {
+			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_resources")
+			return
+		}
+		if inRegion {
+			isVerifiedResident = true
+			break
+		}
+	}
+
+	// Filter resources by access tier
+	var filteredResources []models.GroupResource
+	for _, resource := range allResources {
+		if claims.IsSuperuser || database.UserMeetsAccessTier(resource.AccessTier, true, isVerifiedResident, memberInfo) {
+			filteredResources = append(filteredResources, resource)
+		}
+	}
+
+	if filteredResources == nil {
+		filteredResources = []models.GroupResource{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"resources": filteredResources,
+	})
+}
+
+// UpdateResource handles PUT /api/v1/groups/:id/resources/:rid
+func (h *GroupHandler) UpdateResource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	resourceID := getPathParam(r, "rid")
+	if resourceID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Resource ID required")
+		return
+	}
+
+	// Check user is admin
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "update_resource")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	// Verify the resource belongs to this group
+	existingResource, err := h.groupRepo.GetResource(r.Context(), resourceID)
+	if errors.Is(err, database.ErrResourceNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get resource", "group", "update_resource")
+		return
+	}
+	if existingResource.GroupID != groupID {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+
+	var req models.UpdateResourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	// Validate fields if present
+	if req.Title != nil && (*req.Title == "" || len(*req.Title) > 255) {
+		writeError(w, http.StatusBadRequest, "validation_error", "Title must be between 1 and 255 characters")
+		return
+	}
+	if req.URL != nil && (*req.URL == "" || len(*req.URL) > 2048) {
+		writeError(w, http.StatusBadRequest, "validation_error", "URL must be between 1 and 2048 characters")
+		return
+	}
+	if req.Description != nil && len(*req.Description) > 500 {
+		writeError(w, http.StatusBadRequest, "validation_error", "Description must be at most 500 characters")
+		return
+	}
+	if req.AccessTier != nil {
+		tier := models.AccessTier(*req.AccessTier)
+		switch tier {
+		case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
+			return
+		}
+	}
+
+	if err := h.groupRepo.UpdateResource(r.Context(), resourceID, &req); err != nil {
+		writeServerError(w, r, err, "Failed to update resource", "group", "update_resource")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupResourceUpdated, &resourceType, &groupID, map[string]interface{}{
+			"resource_id": resourceID,
+		}), "group_resource_updated")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Resource updated",
+	})
+}
+
+// DeleteResource handles DELETE /api/v1/groups/:id/resources/:rid
+func (h *GroupHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	resourceID := getPathParam(r, "rid")
+	if resourceID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Resource ID required")
+		return
+	}
+
+	// Check user is admin
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check permissions", "group", "delete_resource")
+		return
+	}
+	if !isAdmin && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+		return
+	}
+
+	// Verify the resource belongs to this group
+	existingResource, err := h.groupRepo.GetResource(r.Context(), resourceID)
+	if errors.Is(err, database.ErrResourceNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get resource", "group", "delete_resource")
+		return
+	}
+	if existingResource.GroupID != groupID {
+		writeError(w, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+
+	if err := h.groupRepo.DeleteResource(r.Context(), resourceID); err != nil {
+		writeServerError(w, r, err, "Failed to delete resource", "group", "delete_resource")
+		return
+	}
+
+	// Audit log
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupResourceDeleted, &resourceType, &groupID, map[string]interface{}{
+			"resource_id": resourceID,
+		}), "group_resource_deleted")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Resource deleted",
+	})
+}

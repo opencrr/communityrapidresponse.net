@@ -1273,6 +1273,40 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for resources sub-route: /api/v1/groups/{id}/resources[/{rid}]
+	if len(parts) >= 2 && parts[1] == "resources" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/groups/{id}/resources/{rid}
+			q.Set("rid", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			switch req.Method {
+			case http.MethodPut:
+				r.authenticated(r.groups.UpdateResource)(w, req)
+			case http.MethodDelete:
+				r.authenticated(r.groups.DeleteResource)(w, req)
+			default:
+				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			}
+			return
+		}
+
+		// /api/v1/groups/{id}/resources
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateResource)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListResources)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
 	// Check for signal-groups sub-route: /api/v1/groups/{id}/signal-groups
 	if len(parts) >= 2 && parts[1] == "signal-groups" {
 		q := req.URL.Query()

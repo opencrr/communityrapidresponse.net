@@ -144,6 +144,7 @@ func (s *GroupTestSuite) claimsForUser(user *models.User) *middleware.Claims {
 func (s *GroupTestSuite) cleanup(userIDs, regionIDs, groupIDs []string) {
 	ctx := context.Background()
 	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", id)
 		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", id)
@@ -2523,5 +2524,274 @@ func TestGroupHandler_RespondToInvitation_UnverifiedUserCanAccept(t *testing.T) 
 	isMember, _ := suite.groupRepo.IsUserMember(context.Background(), group.ID, unverifiedInvitee.ID)
 	if !isMember {
 		t.Error("Expected unverified invitee to be a member after accepting invitation")
+	}
+}
+
+// =============================================================================
+// Resource Tests
+// =============================================================================
+
+func TestGroupHandler_CreateResource_AdminSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_cr_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpResCreateRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Handler Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	body := models.CreateResourceRequest{
+		Title:       "Test Resource",
+		URL:         "https://resource.example.com",
+		Description: "A helpful link",
+		AccessTier:  "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/resources?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var created models.GroupResource
+	_ = json.NewDecoder(rec.Body).Decode(&created)
+	if created.ID == "" {
+		t.Error("Expected resource ID in response")
+	}
+	if created.Title != "Test Resource" {
+		t.Errorf("Expected title 'Test Resource', got %q", created.Title)
+	}
+}
+
+func TestGroupHandler_CreateResource_NonAdmin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_cr_na_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpres_cr_na_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpResNonAdminRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource NonAdmin Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	// Add member as non-admin
+	_ = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(member)
+	body := models.CreateResourceRequest{
+		Title:      "Should Fail",
+		URL:        "https://fail.example.com",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/resources?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_ListResources_FilteredByAccessTier(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_ls_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpres_ls_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpResListRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource List Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	// Add member as non-admin
+	_ = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+
+	// Create resources with different tiers
+	_, _ = suite.groupRepo.CreateResource(ctx, group.ID, admin.ID, &models.CreateResourceRequest{
+		Title: "Open Resource", URL: "https://open.example.com", AccessTier: "open",
+	})
+	_, _ = suite.groupRepo.CreateResource(ctx, group.ID, admin.ID, &models.CreateResourceRequest{
+		Title: "Member Resource", URL: "https://member.example.com", AccessTier: "member",
+	})
+	_, _ = suite.groupRepo.CreateResource(ctx, group.ID, admin.ID, &models.CreateResourceRequest{
+		Title: "Admin Resource", URL: "https://admin.example.com", AccessTier: "admin_only",
+	})
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// Member should see open + member but NOT admin_only
+	memberClaims := suite.claimsForUser(member)
+	req := httptest.NewRequest("GET", "/resources?id="+group.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), memberClaims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.ListResources(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response map[string][]models.GroupResource
+	_ = json.NewDecoder(rec.Body).Decode(&response)
+
+	resources := response["resources"]
+	if len(resources) != 2 {
+		t.Fatalf("Expected 2 resources for member, got %d", len(resources))
+	}
+
+	for _, r := range resources {
+		if r.AccessTier == models.AccessTierAdminOnly {
+			t.Error("Member should not see admin_only resources")
+		}
+	}
+}
+
+func TestGroupHandler_UpdateResource_AdminSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_upd_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpResUpdateRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Update Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	resource, err := suite.groupRepo.CreateResource(ctx, group.ID, admin.ID, &models.CreateResourceRequest{
+		Title: "Original", URL: "https://orig.example.com", AccessTier: "member",
+	})
+	if err != nil {
+		t.Fatalf("CreateResource failed: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	newTitle := "Updated"
+	updateBody := models.UpdateResourceRequest{Title: &newTitle}
+	bodyBytes, _ := json.Marshal(updateBody)
+
+	req := httptest.NewRequest("PUT", "/resources?id="+group.ID+"&rid="+resource.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.UpdateResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify update
+	updated, _ := suite.groupRepo.GetResource(ctx, resource.ID)
+	if updated.Title != "Updated" {
+		t.Errorf("Expected title 'Updated', got %q", updated.Title)
+	}
+}
+
+func TestGroupHandler_DeleteResource_AdminSuccess(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_del_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpResDeleteRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Delete Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	resource, err := suite.groupRepo.CreateResource(ctx, group.ID, admin.ID, &models.CreateResourceRequest{
+		Title: "To Delete", URL: "https://delete.example.com", AccessTier: "member",
+	})
+	if err != nil {
+		t.Fatalf("CreateResource failed: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	req := httptest.NewRequest("DELETE", "/resources?id="+group.ID+"&rid="+resource.ID, nil)
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify deleted
+	_, err = suite.groupRepo.GetResource(ctx, resource.ID)
+	if err != database.ErrResourceNotFound {
+		t.Errorf("Expected ErrResourceNotFound after delete, got %v", err)
 	}
 }

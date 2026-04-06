@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -42,6 +43,7 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 	ctx := context.Background()
 
 	for _, groupID := range groupIDs {
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_resources WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_trust_vouches WHERE group_id = ?", groupID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_invite_links WHERE group_id = ?", groupID)
@@ -2381,6 +2383,288 @@ func TestGroupRepository_BrowseAll(t *testing.T) {
 		}
 		if !foundDiscoverable {
 			t.Error("Expected discoverable group with open signal group to appear")
+		}
+	})
+}
+
+// =============================================================================
+// Group Resource Tests
+// =============================================================================
+
+func TestGroupRepository_CreateResource(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "res_create")
+	regionID := createGroupTestRegion(t, db, "Resource Create Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Test Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("creates resource with all fields", func(t *testing.T) {
+		req := &models.CreateResourceRequest{
+			Title:       "Community Wiki",
+			URL:         "https://wiki.example.com",
+			Description: "Our shared knowledge base",
+			AccessTier:  "member",
+		}
+
+		resource, err := repo.CreateResource(ctx, group.ID, userID, req)
+		if err != nil {
+			t.Fatalf("CreateResource failed: %v", err)
+		}
+
+		if resource.ID == "" {
+			t.Error("Expected resource ID to be set")
+		}
+		if resource.GroupID != group.ID {
+			t.Errorf("Expected group_id %q, got %q", group.ID, resource.GroupID)
+		}
+		if resource.Title != "Community Wiki" {
+			t.Errorf("Expected title 'Community Wiki', got %q", resource.Title)
+		}
+		if resource.URL != "https://wiki.example.com" {
+			t.Errorf("Expected URL 'https://wiki.example.com', got %q", resource.URL)
+		}
+		if resource.Description == nil || *resource.Description != "Our shared knowledge base" {
+			t.Errorf("Expected description 'Our shared knowledge base', got %v", resource.Description)
+		}
+		if resource.AccessTier != models.AccessTierMember {
+			t.Errorf("Expected access_tier 'member', got %q", resource.AccessTier)
+		}
+		if resource.CreatedBy == nil || *resource.CreatedBy != userID {
+			t.Error("Expected created_by to match creator")
+		}
+	})
+}
+
+func TestGroupRepository_GetResource(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "res_get")
+	regionID := createGroupTestRegion(t, db, "Resource Get Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Get Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	t.Run("returns resource by ID", func(t *testing.T) {
+		created, err := repo.CreateResource(ctx, group.ID, userID, &models.CreateResourceRequest{
+			Title:      "Findable Resource",
+			URL:        "https://find.example.com",
+			AccessTier: "open",
+		})
+		if err != nil {
+			t.Fatalf("CreateResource failed: %v", err)
+		}
+
+		found, err := repo.GetResource(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("GetResource failed: %v", err)
+		}
+		if found.Title != "Findable Resource" {
+			t.Errorf("Expected title 'Findable Resource', got %q", found.Title)
+		}
+	})
+
+	t.Run("returns not found for missing ID", func(t *testing.T) {
+		_, err := repo.GetResource(ctx, "nonexistent-id")
+		if err != ErrResourceNotFound {
+			t.Errorf("Expected ErrResourceNotFound, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_ListResources(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "res_list")
+	regionID := createGroupTestRegion(t, db, "Resource List Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource List Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	// Create multiple resources
+	for i, title := range []string{"First", "Second", "Third"} {
+		_, err := repo.CreateResource(ctx, group.ID, userID, &models.CreateResourceRequest{
+			Title:      title,
+			URL:        "https://example.com/" + strconv.Itoa(i),
+			AccessTier: "member",
+		})
+		if err != nil {
+			t.Fatalf("CreateResource %q failed: %v", title, err)
+		}
+	}
+
+	resources, err := repo.ListResources(ctx, group.ID)
+	if err != nil {
+		t.Fatalf("ListResources failed: %v", err)
+	}
+
+	if len(resources) != 3 {
+		t.Fatalf("Expected 3 resources, got %d", len(resources))
+	}
+
+	// Verify all expected titles are present
+	titleSet := make(map[string]bool)
+	for _, r := range resources {
+		titleSet[r.Title] = true
+	}
+	for _, expected := range []string{"First", "Second", "Third"} {
+		if !titleSet[expected] {
+			t.Errorf("Expected resource with title %q to be present", expected)
+		}
+	}
+}
+
+func TestGroupRepository_UpdateResource(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "res_upd")
+	regionID := createGroupTestRegion(t, db, "Resource Update Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Update Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	created, err := repo.CreateResource(ctx, group.ID, userID, &models.CreateResourceRequest{
+		Title:      "Original Title",
+		URL:        "https://original.example.com",
+		AccessTier: "member",
+	})
+	if err != nil {
+		t.Fatalf("CreateResource failed: %v", err)
+	}
+
+	t.Run("updates individual fields", func(t *testing.T) {
+		newTitle := "Updated Title"
+		newTier := "admin_only"
+		err := repo.UpdateResource(ctx, created.ID, &models.UpdateResourceRequest{
+			Title:      &newTitle,
+			AccessTier: &newTier,
+		})
+		if err != nil {
+			t.Fatalf("UpdateResource failed: %v", err)
+		}
+
+		updated, err := repo.GetResource(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("GetResource after update failed: %v", err)
+		}
+		if updated.Title != "Updated Title" {
+			t.Errorf("Expected title 'Updated Title', got %q", updated.Title)
+		}
+		if updated.AccessTier != models.AccessTierAdminOnly {
+			t.Errorf("Expected access_tier 'admin_only', got %q", updated.AccessTier)
+		}
+		// URL should remain unchanged
+		if updated.URL != "https://original.example.com" {
+			t.Errorf("Expected URL unchanged, got %q", updated.URL)
+		}
+	})
+
+	t.Run("returns not found for missing ID", func(t *testing.T) {
+		newTitle := "Nope"
+		err := repo.UpdateResource(ctx, "nonexistent-id", &models.UpdateResourceRequest{
+			Title: &newTitle,
+		})
+		if err != ErrResourceNotFound {
+			t.Errorf("Expected ErrResourceNotFound, got %v", err)
+		}
+	})
+}
+
+func TestGroupRepository_DeleteResource(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "res_del")
+	regionID := createGroupTestRegion(t, db, "Resource Delete Region")
+
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource Delete Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	created, err := repo.CreateResource(ctx, group.ID, userID, &models.CreateResourceRequest{
+		Title:      "To Delete",
+		URL:        "https://delete.example.com",
+		AccessTier: "member",
+	})
+	if err != nil {
+		t.Fatalf("CreateResource failed: %v", err)
+	}
+
+	t.Run("deletes resource", func(t *testing.T) {
+		err := repo.DeleteResource(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("DeleteResource failed: %v", err)
+		}
+
+		_, err = repo.GetResource(ctx, created.ID)
+		if err != ErrResourceNotFound {
+			t.Errorf("Expected ErrResourceNotFound after delete, got %v", err)
+		}
+	})
+
+	t.Run("returns not found for missing ID", func(t *testing.T) {
+		err := repo.DeleteResource(ctx, "nonexistent-id")
+		if err != ErrResourceNotFound {
+			t.Errorf("Expected ErrResourceNotFound, got %v", err)
 		}
 	})
 }

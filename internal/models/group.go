@@ -170,3 +170,32 @@ type CreateGroupSignalGroupRequest struct {
 	Description string `json:"description" validate:"max=1000"`
 	AccessTier  string `json:"access_tier" validate:"required,oneof=open resident member trusted admin_only"`
 }
+
+// GroupResource represents a resource link attached to a group.
+type GroupResource struct {
+	ID          string     `json:"id" db:"id"`
+	GroupID     string     `json:"group_id" db:"group_id"`
+	Title       string     `json:"title" db:"title"`
+	URL         string     `json:"url" db:"url"`
+	Description *string    `json:"description" db:"description"`
+	AccessTier  AccessTier `json:"access_tier" db:"access_tier"`
+	CreatedBy   *string    `json:"created_by" db:"created_by"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+// CreateResourceRequest is the request body for creating a group resource link.
+type CreateResourceRequest struct {
+	Title       string `json:"title" validate:"required,min=1,max=255"`
+	URL         string `json:"url" validate:"required,max=2048"`
+	Description string `json:"description" validate:"max=500"`
+	AccessTier  string `json:"access_tier" validate:"required,oneof=open resident member trusted admin_only"`
+}
+
+// UpdateResourceRequest is the request body for updating a group resource link.
+type UpdateResourceRequest struct {
+	Title       *string `json:"title" validate:"omitempty,min=1,max=255"`
+	URL         *string `json:"url" validate:"omitempty,max=2048"`
+	Description *string `json:"description" validate:"omitempty,max=500"`
+	AccessTier  *string `json:"access_tier" validate:"omitempty,oneof=open resident member trusted admin_only"`
+}
