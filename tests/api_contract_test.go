@@ -61,11 +61,10 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	jwtConfig := &config.JWTConfig{
@@ -101,7 +100,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		mockPostgrid, mockMapbox, nil,
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
-	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -125,8 +123,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	rateLimiter := services.NewNoOpRateLimiter()
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	router := handlers.NewRouter(

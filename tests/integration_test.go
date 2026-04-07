@@ -69,8 +69,8 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
@@ -117,8 +117,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)

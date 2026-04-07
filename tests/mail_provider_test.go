@@ -65,11 +65,10 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	jwtConfig := &config.JWTConfig{
@@ -117,8 +116,7 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	rateLimiter := services.NewNoOpRateLimiter()
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	router := handlers.NewRouter(

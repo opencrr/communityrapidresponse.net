@@ -116,11 +116,10 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	// Create JWT auth
@@ -181,8 +180,7 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	// Create router (rate limiting disabled for tests)

@@ -61,11 +61,10 @@ func SetupAuthRateLimitE2ETest(t *testing.T) *AuthRateLimitTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	// Create JWT auth
@@ -118,8 +117,7 @@ func SetupAuthRateLimitE2ETest(t *testing.T) *AuthRateLimitTestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	// Create router WITHOUT global rate limiting (pass nil) so only auth rate limits apply

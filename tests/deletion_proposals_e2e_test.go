@@ -66,8 +66,8 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	groupRepo := database.NewSignalGroupRepository(db)
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	deletionProposalRepo := database.NewDeletionProposalRepository(db)
 
@@ -111,8 +111,7 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	// Create deletion proposal handler — the key difference from SetupE2ETest

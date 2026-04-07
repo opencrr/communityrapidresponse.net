@@ -36,7 +36,6 @@ type E2ETestSuite struct {
 	jwtAuth             *middleware.JWTAuth
 	schoolRepo          *database.SchoolRepository
 	districtRepo        *database.SchoolDistrictRepository
-	schoolVouchRepo     *database.SchoolVouchRepository
 	encryptedSecretRepo *database.EncryptedSecretRepository
 	encryptionKeyRepo   *database.EncryptionKeyRepository
 	meshtasticRepo      *database.MeshtasticChannelRepository
@@ -78,7 +77,6 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
@@ -138,8 +136,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, encryptedSecretRepo,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
@@ -170,7 +167,6 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		jwtAuth:             jwtAuth,
 		schoolRepo:          schoolRepo,
 		districtRepo:        districtRepo,
-		schoolVouchRepo:     schoolVouchRepo,
 		encryptedSecretRepo: encryptedSecretRepo,
 		encryptionKeyRepo:   encryptionKeyRepo,
 		meshtasticRepo:      meshtasticChannelRepo,
