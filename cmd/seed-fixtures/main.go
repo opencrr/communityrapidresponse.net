@@ -16,17 +16,20 @@ import (
 // Deterministic IDs for cross-referencing between fixtures.
 const (
 	// Users
-	userAlice = "user-alice"
-	userBob   = "user-bob"
-	userCarol = "user-carol"
-	userDave  = "user-dave"
-	userEve   = "user-eve"
-	userFrank = "user-frank"
-	userGrace = "user-grace"
-	userHeidi = "user-heidi"
-	userIvan  = "user-ivan"
-	userJudy  = "user-judy"
-	userKarl  = "user-karl"
+	userAlice  = "user-alice"
+	userBob    = "user-bob"
+	userCarol  = "user-carol"
+	userDave   = "user-dave"
+	userEve    = "user-eve"
+	userFrank  = "user-frank"
+	userGrace  = "user-grace"
+	userHeidi  = "user-heidi"
+	userIvan   = "user-ivan"
+	userJudy   = "user-judy"
+	userKarl   = "user-karl"
+	userLiam   = "user-liam"
+	userMaya   = "user-maya"
+	userNoah   = "user-noah"
 
 	// Regions
 	regionWashington     = "region-washington"
@@ -99,6 +102,9 @@ func main() {
 		{userIvan, "ivan", "ivan@test.com", 1, false, true, false},
 		{userJudy, "judy", "judy@test.com", 0, false, false, false},
 		{userKarl, "karl", "karl@test.com", 2, true, true, false},
+		{userLiam, "liam", "liam@test.com", 0, false, false, false},
+		{userMaya, "maya", "maya@test.com", 0, false, false, false},
+		{userNoah, "noah", "noah@test.com", 0, false, false, false},
 	}
 
 	for _, u := range users {
@@ -379,6 +385,11 @@ func main() {
 		// Open Community Hub
 		{groupOpenHub, userBob, true, true},
 		{groupOpenHub, userDave, false, false},
+		// Unverified users in open/discoverable groups
+		{groupOpenHub, userLiam, false, false},     // Liam joined Open Community Hub
+		{groupOpenHub, userMaya, false, false},      // Maya joined Open Community Hub
+		{groupSeattleMA, userLiam, false, false},    // Liam also joined Seattle MA
+		{groupPortlandMA, userNoah, false, false},   // Noah joined Portland MA
 	}
 
 	for _, m := range members {
@@ -735,8 +746,11 @@ func printSummary() {
 	fmt.Println("  grace    (tier 1)            - member of Portland MA")
 	fmt.Println("  heidi    (tier 2)            - admin of Chicago Disaster Prep")
 	fmt.Println("  ivan     (tier 1)            - member of Chicago Disaster Prep")
-	fmt.Println("  judy     (tier 0)            - unverified user")
+	fmt.Println("  judy     (tier 0)            - unverified, no groups")
 	fmt.Println("  karl     (tier 2)            - admin of The Secret Society")
+	fmt.Println("  liam     (tier 0)            - unverified, member of Open Hub + Seattle MA")
+	fmt.Println("  maya     (tier 0)            - unverified, member of Open Hub")
+	fmt.Println("  noah     (tier 0)            - unverified, member of Portland MA")
 	fmt.Println()
 	fmt.Println("Groups (show_address_verification: T=address verification enabled):")
 	fmt.Println("  Seattle Mutual Aid       (active, listed, discoverable, T)")
