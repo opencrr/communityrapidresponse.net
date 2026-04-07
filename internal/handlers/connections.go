@@ -57,14 +57,14 @@ func (h *ConnectionHandler) ProposeConnection(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Verify user is admin of proposer group
-	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), proposerGroupID, claims.UserID)
+	// Any member can propose connections (acceptance still requires consensus)
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), proposerGroupID, claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check admin status", "connection", "propose")
+		writeServerError(w, r, err, "Failed to check membership", "connection", "propose")
 		return
 	}
-	if !isAdmin {
-		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of the proposing group")
+	if !isMember {
+		writeError(w, http.StatusForbidden, "forbidden", "Must be a member of the proposing group")
 		return
 	}
 

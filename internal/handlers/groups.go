@@ -636,13 +636,14 @@ func (h *GroupHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	// Any member can invite others (invitees still need to be accepted through the normal process)
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invitation")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+	if !isMember && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
 		return
 	}
 
@@ -669,12 +670,12 @@ func (h *GroupHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Check if target user is already a member
-	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, req.UserID)
+	targetIsMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, req.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to check membership", "group", "create_invitation")
 		return
 	}
-	if isMember {
+	if targetIsMember {
 		writeError(w, http.StatusConflict, "already_member", "User is already a member of this group")
 		return
 	}
@@ -1129,14 +1130,14 @@ func (h *GroupHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check user is admin
-	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
+	// Check user is a member (any member can propose resources)
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_resource")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
+	if !isMember && !claims.IsSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
 		return
 	}
 
