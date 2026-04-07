@@ -60,6 +60,7 @@ func (r *GroupRepository) Create(ctx context.Context, req *models.CreateGroupReq
 		Description: description,
 		Status:      models.GroupStatusProvisional,
 		Visibility:  models.GroupVisibilityUnlisted,
+		SchoolID:    req.SchoolID,
 		CreatedBy:   &creatorID,
 		CreatedAt:   now,
 	}
@@ -67,12 +68,12 @@ func (r *GroupRepository) Create(ctx context.Context, req *models.CreateGroupReq
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
 		// Insert the group (created_at and updated_at have DEFAULT CURRENT_TIMESTAMP)
 		groupQuery := `
-			INSERT INTO ` + "`groups`" + ` (id, name, description, status, visibility, created_by)
-			VALUES (?, ?, ?, ?, ?, ?)
+			INSERT INTO ` + "`groups`" + ` (id, name, description, status, visibility, school_id, created_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`
 		_, err := tx.ExecContext(ctx, groupQuery,
 			group.ID, group.Name, group.Description,
-			group.Status, group.Visibility,
+			group.Status, group.Visibility, group.SchoolID,
 			group.CreatedBy,
 		)
 		if err != nil {
@@ -134,7 +135,7 @@ func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group
 	query := `
 		SELECT id, name, description, status, visibility, founding_threshold,
 			trusted_vouch_threshold, discoverable_by_unverified, show_address_verification,
-			created_by, created_at, updated_at, graduated_at
+			school_id, created_by, created_at, updated_at, graduated_at
 		FROM ` + "`groups`" + `
 		WHERE id = ?
 	`
@@ -144,12 +145,41 @@ func (r *GroupRepository) GetByID(ctx context.Context, id string) (*models.Group
 		&group.ID, &group.Name, &group.Description,
 		&group.Status, &group.Visibility, &group.FoundingThreshold,
 		&group.TrustedVouchThreshold, &group.DiscoverableByUnverified,
-		&group.ShowAddressVerification,
+		&group.ShowAddressVerification, &group.SchoolID,
 		&group.CreatedBy, &group.CreatedAt, &group.UpdatedAt, &group.GraduatedAt,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrGroupNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return group, nil
+}
+
+// GetBySchoolID retrieves the group linked to a school, or nil if none exists.
+func (r *GroupRepository) GetBySchoolID(ctx context.Context, schoolID string) (*models.Group, error) {
+	query := `
+		SELECT id, name, description, status, visibility, founding_threshold,
+			trusted_vouch_threshold, discoverable_by_unverified, show_address_verification,
+			school_id, created_by, created_at, updated_at, graduated_at
+		FROM ` + "`groups`" + `
+		WHERE school_id = ?
+	`
+
+	group := &models.Group{}
+	err := r.db.QueryRowContext(ctx, query, schoolID).Scan(
+		&group.ID, &group.Name, &group.Description,
+		&group.Status, &group.Visibility, &group.FoundingThreshold,
+		&group.TrustedVouchThreshold, &group.DiscoverableByUnverified,
+		&group.ShowAddressVerification, &group.SchoolID,
+		&group.CreatedBy, &group.CreatedAt, &group.UpdatedAt, &group.GraduatedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -227,7 +257,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
 			g.trusted_vouch_threshold, g.discoverable_by_unverified, g.show_address_verification,
-			g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.school_id, g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count,
 			gm.is_admin
@@ -250,7 +280,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
 			&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
-			&gwd.ShowAddressVerification,
+			&gwd.ShowAddressVerification, &gwd.SchoolID,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 			&gwd.IsUserAdmin,
@@ -281,7 +311,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
 			g.trusted_vouch_threshold, g.discoverable_by_unverified, g.show_address_verification,
-			g.created_by, g.created_at, g.updated_at, g.graduated_at,
+			g.school_id, g.created_by, g.created_at, g.updated_at, g.graduated_at,
 			(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 			(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count
 		FROM ` + "`groups`" + ` g
@@ -305,7 +335,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 			&gwd.ID, &gwd.Name, &gwd.Description,
 			&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
 			&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
-			&gwd.ShowAddressVerification,
+			&gwd.ShowAddressVerification, &gwd.SchoolID,
 			&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 			&gwd.MemberCount, &gwd.AdminCount,
 		)
@@ -333,7 +363,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 const groupBrowseColumns = `
 	g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
 	g.trusted_vouch_threshold, g.discoverable_by_unverified, g.show_address_verification,
-	g.created_by, g.created_at, g.updated_at, g.graduated_at,
+	g.school_id, g.created_by, g.created_at, g.updated_at, g.graduated_at,
 	(SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
 	(SELECT SUM(CASE WHEN is_admin = TRUE THEN 1 ELSE 0 END) FROM group_members WHERE group_id = g.id) as admin_count
 `
@@ -345,7 +375,7 @@ func scanBrowseGroup(rows *sql.Rows) (models.GroupWithDetails, error) {
 		&gwd.ID, &gwd.Name, &gwd.Description,
 		&gwd.Status, &gwd.Visibility, &gwd.FoundingThreshold,
 		&gwd.TrustedVouchThreshold, &gwd.DiscoverableByUnverified,
-		&gwd.ShowAddressVerification,
+		&gwd.ShowAddressVerification, &gwd.SchoolID,
 		&gwd.CreatedBy, &gwd.CreatedAt, &gwd.UpdatedAt, &gwd.GraduatedAt,
 		&gwd.MemberCount, &gwd.AdminCount,
 	)
@@ -1552,7 +1582,7 @@ func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string)
 	query := `
 		SELECT g.id, g.name, g.description, g.status, g.visibility, g.founding_threshold,
 			g.trusted_vouch_threshold, g.discoverable_by_unverified, g.show_address_verification,
-			g.created_by, g.created_at, g.updated_at, g.graduated_at
+			g.school_id, g.created_by, g.created_at, g.updated_at, g.graduated_at
 		FROM group_blocks gb
 		JOIN ` + "`groups`" + ` g ON g.id = gb.blocked_group_id
 		WHERE gb.blocker_group_id = ?
@@ -1571,7 +1601,7 @@ func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string)
 		err := rows.Scan(
 			&g.ID, &g.Name, &g.Description, &g.Status, &g.Visibility, &g.FoundingThreshold,
 			&g.TrustedVouchThreshold, &g.DiscoverableByUnverified,
-			&g.ShowAddressVerification,
+			&g.ShowAddressVerification, &g.SchoolID,
 			&g.CreatedBy, &g.CreatedAt, &g.UpdatedAt, &g.GraduatedAt,
 		)
 		if err != nil {

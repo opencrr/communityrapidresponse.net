@@ -29,6 +29,7 @@ type Group struct {
 	TrustedVouchThreshold    int             `json:"trusted_vouch_threshold" db:"trusted_vouch_threshold"`
 	DiscoverableByUnverified bool            `json:"discoverable_by_unverified" db:"discoverable_by_unverified"`
 	ShowAddressVerification  bool            `json:"show_address_verification" db:"show_address_verification"`
+	SchoolID          *string         `json:"school_id,omitempty" db:"school_id"`
 	CreatedBy         *string         `json:"created_by" db:"created_by"`
 	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
@@ -71,8 +72,9 @@ type CreateGroupRequest struct {
 	Name        string   `json:"name" validate:"required,min=3,max=255"`
 	Description string   `json:"description" validate:"max=2000"`
 	Visibility  string   `json:"visibility" validate:"required,oneof=listed unlisted"`
-	RegionIDs   []string `json:"region_ids" validate:"required,min=1"`
+	RegionIDs   []string `json:"region_ids" validate:"min=0"`
 	TopicTags   []string `json:"topic_tags" validate:"max=10,dive,max=100"`
+	SchoolID    *string  `json:"school_id,omitempty"`
 }
 
 // UpdateGroupRequest is the request body for updating a group.
