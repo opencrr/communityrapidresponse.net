@@ -1,7 +1,7 @@
 /**
  * Help/FAQ page
  * Provides information about the platform and answers common questions.
- * Uses a tabbed layout: General, Communities, Schools, Meshtastic, Encryption, Signal Safety.
+ * Uses a tabbed layout: Getting Started, Groups, Connections, Verification, Safety & Privacy, Meshtastic.
  */
 
 /**
@@ -20,860 +20,391 @@ export async function render(container) {
                 </div>
 
                 <div class="tabs" id="help-tabs">
-                    <button class="tab tab--active" data-tab="general">General</button>
-                    <button class="tab" data-tab="regions">Communities</button>
-                    <button class="tab" data-tab="schools">Schools</button>
+                    <button class="tab tab--active" data-tab="getting-started">Getting Started</button>
+                    <button class="tab" data-tab="groups">Groups</button>
+                    <button class="tab" data-tab="connections">Connections</button>
+                    <button class="tab" data-tab="verification">Verification</button>
+                    <button class="tab" data-tab="safety">Safety & Privacy</button>
                     <button class="tab" data-tab="meshtastic">Meshtastic</button>
-                    <button class="tab" data-tab="encryption">Encryption</button>
-                    <button class="tab" data-tab="signal-safety">Signal Safety</button>
                 </div>
 
-                <!-- General Tab -->
-                <div class="help-tab-content" id="tab-general">
+                <!-- Getting Started Tab -->
+                <div class="help-tab-content" id="tab-getting-started">
                     <section class="help-section">
-                        <h2>What is Community Rapid Response?</h2>
+                        <h3>What is Community Rapid Response?</h3>
                         <p>
-                            Community Rapid Response is a platform that connects neighbors and
-                            school communities through secure Signal group chats. We help communities
-                            organize by creating geographic-based groups where members have verified
-                            addresses in the area, and school-based groups where members are vouched
-                            for by their peers.
+                            A platform that helps people organize within their communities through
+                            verified Signal group chats. The platform verifies where people live,
+                            but groups are independently organized by their members. Think of it
+                            as infrastructure for organizers, not a network of communities.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>What We Verify (and What We Don't)</h2>
-                        <div class="help-highlight">
-                            <p>
-                                This platform verifies <strong>member residency</strong> (that a person can
-                                receive mail at an address in a geographic area) and <strong>community vouches</strong>
-                                (that existing members recognize a person). It does not verify, endorse, or
-                                guarantee the quality, safety, or leadership of any group.
-                            </p>
-                            <p>
-                                Groups are registered on this platform by their organizers. Group names,
-                                descriptions, and claims are provided by those organizers, not by this platform.
-                                A group appearing here means its members have verified addresses in the area
-                                &mdash; nothing more.
-                            </p>
-                        </div>
+                        <h3>How do I sign up?</h3>
+                        <p>
+                            Create an account with your email and password. Once registered, you
+                            can browse discoverable groups and join open chats immediately.
+                        </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>Privacy & Security</h2>
-                        <div class="help-highlight">
-                            <h3>Your address is not stored in our database</h3>
-                            <p>
-                                When you enter your address &mdash; whether for vouch verification (to
-                                identify your community) or postcard verification (to prove residency)
-                                &mdash; it exists only in our server's memory long enough to process
-                                the request. For vouch requests, your address is geocoded then immediately
-                                discarded. For postcard requests, it is sent to our mailing partner then
-                                discarded. Your address is never written to our database. Even our
-                                administrators cannot retrieve it.
-                            </p>
-                        </div>
-                        <div class="help-card" style="margin: var(--space-4) 0;">
-                            <h3>About Our Mailing Partner</h3>
-                            <p>
-                                We use <a href="https://www.lob.com" target="_blank" rel="noopener">Lob</a>
-                                to deliver verification postcards. When you submit your address, it is sent to
-                                Lob for mail delivery. Lob automatically deletes address data after 90 days,
-                                aligning with our commitment to minimize data retention.
-                            </p>
-                            <p style="margin-top: var(--space-2); margin-bottom: 0;">
-                                <a href="https://www.lob.com/privacy" target="_blank" rel="noopener">
-                                    View Lob's Privacy Policy
-                                </a>
-                            </p>
-                        </div>
-                        <ul class="help-list">
-                            <li>We only store your community membership (e.g., "member of Downtown neighborhood")</li>
-                            <li>All accounts require multi-factor authentication (MFA)</li>
-                            <li>Signal group invite links and Meshtastic channel URLs are end-to-end encrypted &mdash; the server never sees the plaintext</li>
-                            <li>Sensitive data is never sent via email</li>
+                        <h3>How do I find groups?</h3>
+                        <p>
+                            Use the <strong>Discover</strong> page to browse groups in your area.
+                            If a group is set to discoverable, you can see it without address
+                            verification.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>How do I join a group?</h3>
+                        <p>
+                            There are three ways to join a group:
+                        </p>
+                        <ul>
+                            <li>Through an <strong>invite link</strong> shared by an existing member</li>
+                            <li>Through a <strong>direct invitation</strong> from a group admin or member</li>
+                            <li>By <strong>requesting to join</strong> through the group's page</li>
                         </ul>
                     </section>
 
                     <section class="help-section">
-                        <h2>Frequently Asked Questions</h2>
-
-                        <details class="faq-item">
-                            <summary>What is Signal and why do you use it?</summary>
-                            <p>
-                                <a href="https://signal.org" target="_blank" rel="noopener">Signal</a> is a
-                                secure, end-to-end encrypted messaging app. We use Signal groups because they
-                                provide strong privacy protections and are independent of our platform - your
-                                conversations stay private even from us.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Who can see my information?</summary>
-                            <p>
-                                Other verified members in your community or school can see your username.
-                                Community admins can see your email for coordination purposes. No one can
-                                see your physical address because we don't store it.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How do I become an admin?</summary>
-                            <p>
-                                <strong>For communities:</strong> First, get vouched by community members
-                                to gain read-only access. Then, request postcard verification to prove your
-                                address. Once you have both vouch and postcard verification, you automatically
-                                gain admin rights for your community.
-                            </p>
-                            <p>
-                                <strong>For schools:</strong> Join a school and receive enough vouches from
-                                verified school members. In bootstrap mode (fewer than 3 admins), you need
-                                3 vouches; otherwise, 2 vouches are sufficient.
-                            </p>
-                        </details>
+                        <h3>What is Signal?</h3>
+                        <p>
+                            <strong>Signal</strong> is a free, end-to-end encrypted messaging app.
+                            We use it because messages are private and can't be read by anyone
+                            except participants &mdash; not even Signal's servers. Download it at
+                            <strong>signal.org</strong>. You'll need it to join group chats.
+                        </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>Need More Help?</h2>
+                        <h3>Why Signal?</h3>
                         <p>
-                            If you have questions not answered here, you can:
+                            Unlike regular text messages or many other apps, Signal encrypts all
+                            messages end-to-end. Nobody can read your messages except the people
+                            in the conversation. Group chats, voice calls, and video calls are
+                            all encrypted.
                         </p>
-                        <ul class="help-list">
-                            <li>Reach out to a local admin in your community or school</li>
-                            <li>Contact us at <a href="mailto:help@communityrapidresponse.net">help@communityrapidresponse.net</a></li>
-                            <li>Browse the <a href="https://github.com/opencrr/communityrapidresponse.net" target="_blank" rel="noopener noreferrer">source code on GitHub</a> &mdash; this project is open source under the <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener noreferrer">MIT License</a></li>
-                        </ul>
                     </section>
                 </div>
 
-                <!-- Communities Tab -->
-                <div class="help-tab-content" id="tab-regions" style="display: none;">
+                <!-- Groups Tab -->
+                <div class="help-tab-content" id="tab-groups" style="display: none;">
                     <section class="help-section">
-                        <h2>How Community Verification Works</h2>
+                        <h3>What is a group?</h3>
                         <p>
-                            We use a two-step verification system to ensure community members are genuine
-                            neighbors. Vouching comes first to establish community trust, then address
-                            verification proves residency for admin access.
+                            An independent organization created by community members. A group has
+                            its own admins, members, signal chats, and resources. Multiple groups
+                            can operate in the same area with no relationship to each other.
                         </p>
-                        <div class="help-cards">
-                            <div class="help-card">
-                                <h3>Step 1: Vouch Verification</h3>
-                                <p>
-                                    Enter your address to identify your community (your address is used only
-                                    for geocoding and is never stored). Then get vouched for by existing members
-                                    who know you live in the area &mdash; vouchers can be from anywhere in your
-                                    city or county, not just your exact neighborhood. Once vouched, you gain
-                                    <strong>read-only access</strong> to your community's Signal groups.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Step 2: Postcard Verification (optional)</h3>
-                                <p>
-                                    After being vouched, you can request address verification. We mail a postcard
-                                    with a unique code to your address. Enter the code to become a <strong>full
-                                    admin</strong> who can create communities and manage groups.
-                                    <strong>Your address is never stored.</strong>
-                                </p>
-                            </div>
-                        </div>
-                        <p>
-                            <strong>Why vouch first?</strong> Requiring community trust before granting any
-                            Signal group access prevents bad actors from seeing group invite links before
-                            anyone in the community has vetted them. A postcard alone only proves a mailing
-                            address &mdash; a vouch proves a real community connection.
-                        </p>
-                        <div class="help-highlight" style="margin-top: var(--space-4);">
-                            <h3>Signal Group Invite Links Are Encrypted</h3>
-                            <p>
-                                Signal group invite links are protected with end-to-end encryption. The server
-                                never sees the plaintext link &mdash; it is encrypted in your browser before being
-                                sent, and only decrypted in the browsers of members with verified addresses. See the
-                                <strong>Encryption</strong> tab for details.
-                            </p>
-                        </div>
                     </section>
 
                     <section class="help-section">
-                        <h2>Geographic Hierarchy</h2>
+                        <h3>How do I create a group?</h3>
                         <p>
-                            Communities are organized in a hierarchy from broad to specific:
+                            You need <strong>address verification</strong> first (see the
+                            Verification tab). Then use the "Create Group" button. Your group
+                            starts in a <strong>provisional state</strong> until enough members
+                            join (default: 3). All founding members become co-admins.
                         </p>
-                        <ul class="help-list">
-                            <li><strong>State</strong> - Top-level boundary</li>
-                            <li><strong>County</strong> - County/district within a state</li>
-                            <li><strong>City/Town</strong> - Municipal boundary</li>
-                            <li><strong>Locality</strong> - Borough/sub-city (optional, e.g., Brooklyn in NYC)</li>
-                            <li><strong>Neighborhood</strong> - Most specific level</li>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>What is a provisional group?</h3>
+                        <p>
+                            A new group that hasn't reached its founding threshold yet.
+                            Provisional groups are unlisted and can't create signal chats.
+                            Share invite links to recruit your first members. Once the threshold
+                            is met, the group graduates to active status.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Group roles</h3>
+                        <ul>
+                            <li>
+                                <strong>Admin</strong> &mdash; Can manage the group, create signal
+                                chats, create invite links, and manage settings. Requires address
+                                verification.
+                            </li>
+                            <li>
+                                <strong>Trusted</strong> &mdash; Earned through vouches from other
+                                trusted members and admins within the group. Can access trusted-tier
+                                content and vouch for other members.
+                            </li>
+                            <li>
+                                <strong>Member</strong> &mdash; Basic membership. Can view
+                                member-tier content, propose resources, invite others, and propose
+                                connections.
+                            </li>
                         </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Access tiers</h3>
                         <p>
-                            When you submit your address for vouch verification, it is geocoded to identify
-                            your community and then immediately discarded. You are assigned to the most
-                            specific community that contains your location.
+                            Each signal chat and resource in a group has an access tier that
+                            controls who can see it:
                         </p>
+                        <ul>
+                            <li><strong>Open</strong> &mdash; Any registered user (if the group is discoverable)</li>
+                            <li><strong>Resident</strong> &mdash; Users with a verified address in the group's area</li>
+                            <li><strong>Member</strong> &mdash; Group members</li>
+                            <li><strong>Trusted</strong> &mdash; Trusted members and admins</li>
+                            <li><strong>Admin only</strong> &mdash; Just the admins</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Listed vs Unlisted</h3>
                         <p>
-                            Vouching works across the hierarchy &mdash; a verified member from one neighborhood
-                            can vouch for someone in a different neighborhood within the same city or county.
-                            This makes it easier to get started, since you don't need to find verified members
-                            in your exact neighborhood. State-level vouching is not allowed.
+                            <strong>Listed</strong> groups appear in browse results.
+                            <strong>Unlisted</strong> groups can only be found through invite links
+                            or direct invitations. Groups choose their own visibility.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <div class="help-highlight">
-                            <h3>Bootstrap Mode for New Communities</h3>
-                            <p>
-                                New communities with fewer than 3 full admins operate in "bootstrap mode" with special rules
-                                to help establish the initial community:
-                            </p>
-                            <ul class="help-list" style="margin-top: var(--space-2);">
-                                <li><strong>3 vouches required</strong> instead of the normal 2</li>
-                                <li><strong>Any community member can vouch</strong> (normally only fully verified admins can vouch)</li>
-                                <li><strong>1-hour cooldown</strong> between vouches from the same person</li>
-                                <li><strong>Exact-region vouching only</strong> &mdash; cross-neighborhood (ancestor-level) vouching is not available</li>
-                            </ul>
-                            <p style="margin-top: var(--space-2); margin-bottom: 0;">
-                                Once your community has 3 or more full admins, normal verification rules apply,
-                                including the ability for vouchers from anywhere in your city or county to vouch.
-                            </p>
-                        </div>
+                        <h3>Resources</h3>
+                        <p>
+                            Groups can share links to external <strong>resources</strong>
+                            (documents, guides, spreadsheets). Each resource has an access tier.
+                            Any member can add resources; admins can edit and delete them.
+                        </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>Community FAQ</h2>
-
-                        <details class="faq-item">
-                            <summary>Why can't I use a PO Box for verification?</summary>
-                            <p>
-                                PO Boxes don't prove residential location - they can be obtained without
-                                living in the area. We need to verify you actually reside in the community
-                                you're joining.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How long does the postcard take to arrive?</summary>
-                            <p>
-                                Postcards typically arrive within 3-5 business days via USPS. The verification
-                                code is valid for 30 days.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>I didn't receive my postcard. What should I do?</summary>
-                            <p>
-                                You can request a new postcard after waiting at least 7 days. Note that you're
-                                limited to 3 verification requests per 30 days to prevent abuse.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How do I find someone to vouch for me?</summary>
-                            <p>
-                                Connect with neighbors through community events, local social media,
-                                or mutual friends. You need 2-3 different members to vouch for you
-                                (3 in bootstrap mode, 2 otherwise). Vouchers can be from anywhere in
-                                your city or county &mdash; they don't need to be in your exact neighborhood.
-                                In bootstrap mode, any community member can vouch (but only within the
-                                exact same community); once the community has 3+ admins, only fully
-                                verified admins can vouch.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What is circular vouching and why isn't it allowed?</summary>
-                            <p>
-                                Circular vouching occurs when two people vouch for each other (A vouches for B,
-                                then B tries to vouch for A). This is not allowed because it could enable two
-                                bad actors to verify each other without legitimate community connections. Each
-                                vouch must come from someone who hasn't received a vouch from you.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How are decisions made about the community?</summary>
-                            <p>
-                                Important actions like updating Signal group links or removing members require
-                                consensus from at least 3 admins. This prevents any single person from making
-                                unilateral decisions.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What is bootstrap mode?</summary>
-                            <p>
-                                Bootstrap mode helps new communities establish their first admins. When a community
-                                has fewer than 3 full admins, the verification requirements are adjusted:
-                                any community member can vouch for others, but 3 vouches are required
-                                instead of 2, there's a 1-hour cooldown between vouches from the same person,
-                                and vouching must be within the exact same community (no cross-neighborhood vouching).
-                                This prevents a single bad actor from quickly verifying fake accounts while still
-                                allowing new communities to grow.
-                            </p>
-                        </details>
+                        <h3>Trust vouching</h3>
+                        <p>
+                            Within a group, trusted members and admins can vouch for other members.
+                            When a member receives enough vouches (set by the group), they're
+                            promoted to <strong>trusted</strong> status. This is separate from
+                            address verification &mdash; it's about community trust within the
+                            group.
+                        </p>
                     </section>
                 </div>
 
-                <!-- Schools Tab -->
-                <div class="help-tab-content" id="tab-schools" style="display: none;">
+                <!-- Connections Tab -->
+                <div class="help-tab-content" id="tab-connections" style="display: none;">
                     <section class="help-section">
-                        <h2>What are Schools?</h2>
+                        <h3>What are connections?</h3>
                         <p>
-                            Schools are communities organized around educational institutions. School data
-                            comes from the National Center for Education Statistics (NCES), which provides
-                            comprehensive information about schools across the United States. Schools operate
-                            independently from geographic communities - you can be part of both local and school
-                            communities simultaneously.
+                            <strong>Connections</strong> link groups together for cross-region
+                            collaboration. A connection is a group of groups &mdash; it can have
+                            two groups or twenty.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>How to Join a School</h2>
-                        <ol class="help-list">
-                            <li>Search for your school by name or state on the Schools page</li>
-                            <li>Click "Join" on your school's page</li>
-                            <li>Your membership starts as "pending" until you are verified</li>
-                            <li>Connect with existing verified members who can vouch for you</li>
-                            <li>Once you receive enough vouches, you become a verified member</li>
-                        </ol>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>School Verification</h2>
+                        <h3>How do connections form?</h3>
                         <p>
-                            School verification is vouch-based (no postcard required). Verified members
-                            of a school vouch for new members to confirm their connection to the school.
-                        </p>
-                        <div class="help-highlight">
-                            <h3>Bootstrap Mode vs Normal Mode</h3>
-                            <ul class="help-list" style="margin-top: var(--space-2);">
-                                <li><strong>Bootstrap mode</strong> (school has fewer than 3 admins): <strong>3 vouches</strong> required, and any verified member can vouch</li>
-                                <li><strong>Normal mode</strong> (school has 3+ admins): <strong>2 vouches</strong> required from admin members</li>
-                            </ul>
-                            <p style="margin-top: var(--space-2); margin-bottom: 0;">
-                                Bootstrap mode helps new school communities grow by lowering the barrier
-                                for vouching while still requiring more vouches for safety.
-                            </p>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>School Districts</h2>
-                        <p>
-                            School districts group multiple schools together by geographic area. Districts
-                            can have their own Signal groups for district-wide communication, separate from
-                            individual school groups. If your school belongs to a district, you may also
-                            have access to district-level groups.
-                        </p>
-                        <p>
-                            District-level Signal groups use the same end-to-end encryption as school and
-                            community groups &mdash; invite links are never stored in plaintext on the server.
+                            Any group member can propose a connection through the
+                            <strong>topic board</strong> on the Connections page. All target groups
+                            must accept for the connection to form.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>School FAQ</h2>
+                        <h3>Topic board</h3>
+                        <p>
+                            Group admins can post a presence on the topic board: topic tags, a
+                            vague region label (like "Pacific Northwest"), and a short description.
+                            Other admins can browse by topic to find groups working on similar
+                            issues. No specific location or group name is revealed until both
+                            sides agree to connect.
+                        </p>
+                    </section>
 
-                        <details class="faq-item">
-                            <summary>How is school data sourced?</summary>
-                            <p>
-                                School and district data comes from the National Center for Education Statistics
-                                (NCES), a part of the U.S. Department of Education. This ensures accurate and
-                                comprehensive coverage of schools across the country.
-                            </p>
-                        </details>
+                    <section class="help-section">
+                        <h3>What can connected groups do?</h3>
+                        <ul>
+                            <li>See each other's group names, descriptions, and regions</li>
+                            <li>Create shared signal chats (requires consensus from all member groups)</li>
+                            <li>Share resource links with each other</li>
+                            <li>All group members can see that a connection exists</li>
+                        </ul>
+                    </section>
 
-                        <details class="faq-item">
-                            <summary>Can I join multiple schools?</summary>
-                            <p>
-                                Yes, you can join as many schools as you like. Each school has its own
-                                independent membership and verification process.
-                            </p>
-                        </details>
+                    <section class="help-section">
+                        <h3>Expanding connections</h3>
+                        <p>
+                            Any member group can invite another group to join an existing
+                            connection. All current member groups must approve.
+                        </p>
+                    </section>
 
-                        <details class="faq-item">
-                            <summary>What is a school district?</summary>
-                            <p>
-                                A school district is an administrative grouping of schools, typically by
-                                geographic area. Districts can be unified (all grade levels), elementary,
-                                or secondary. District-level Signal groups enable communication across
-                                all schools in the district.
-                            </p>
-                        </details>
+                    <section class="help-section">
+                        <h3>Leaving a connection</h3>
+                        <p>
+                            Any group can leave a connection at any time. Their shared resources
+                            are removed.
+                        </p>
+                    </section>
 
-                        <details class="faq-item">
-                            <summary>How do school Signal groups work?</summary>
-                            <p>
-                                School admins can create Signal groups for their school community. Only
-                                verified school members can see the invite links. Schools and districts
-                                can each have up to 5 Signal groups. These are completely independent
-                                from community-based Signal groups.
-                            </p>
-                            <p>
-                                Invite links are end-to-end encrypted, just like community groups &mdash;
-                                the server never sees the plaintext. See the <strong>Encryption</strong>
-                                tab for details.
-                            </p>
-                        </details>
+                    <section class="help-section">
+                        <h3>Blocking</h3>
+                        <p>
+                            Groups can block other groups. Blocking prevents new connections and
+                            hides topic board postings, but doesn't remove either group from
+                            existing shared connections.
+                        </p>
+                    </section>
+                </div>
 
-                        <details class="faq-item">
-                            <summary>Do I need postcard verification for schools?</summary>
-                            <p>
-                                No. School verification is entirely vouch-based. You just need other verified
-                                school members to vouch for you. Postcard verification is only used for
-                                geographic community verification.
-                            </p>
-                        </details>
+                <!-- Verification Tab -->
+                <div class="help-tab-content" id="tab-verification" style="display: none;">
+                    <section class="help-section">
+                        <h3>What is address verification?</h3>
+                        <p>
+                            The platform can verify that you live at a specific address by mailing
+                            a postcard with a verification code. This proves residency, nothing
+                            more.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Who needs it?</h3>
+                        <p>
+                            Only people who want to <strong>create groups</strong> or become
+                            <strong>group admins</strong>. Regular members and trusted members
+                            don't need address verification.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>What does verification prove?</h3>
+                        <p>
+                            That you live where you say you live. Period. It does <strong>not</strong>
+                            verify:
+                        </p>
+                        <ul>
+                            <li>The quality, safety, or leadership of any group</li>
+                            <li>Your character or trustworthiness</li>
+                            <li>That any group you create is "official" or "endorsed"</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>What about group-level trust?</h3>
+                        <p>
+                            Trust within a group is handled by the group's own vouch system, not
+                            by address verification. A group's admins decide who to trust.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Your address is never stored</h3>
+                        <p>
+                            When you verify, your address is used to mail the postcard and then
+                            immediately discarded. It is never written to our database. We only
+                            record which geographic region you verified in.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Moving?</h3>
+                        <p>
+                            Verify at your new address anytime. You can remove your old verified
+                            region from your Profile page.
+                        </p>
+                    </section>
+                </div>
+
+                <!-- Safety & Privacy Tab -->
+                <div class="help-tab-content" id="tab-safety" style="display: none;">
+                    <section class="help-section">
+                        <h3>Your privacy</h3>
+                        <ul>
+                            <li>Addresses are never stored &mdash; used only for postcard mailing, then discarded</li>
+                            <li>Signal invite links are encrypted end-to-end &mdash; only group members can see them</li>
+                            <li>The platform doesn't track which Signal groups you join</li>
+                            <li>Group membership is visible to other group members, not to the public</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Signal safety tips</h3>
+                        <ul>
+                            <li>Set disappearing messages in sensitive chats</li>
+                            <li>Use a registration lock PIN in Signal settings</li>
+                            <li>Be cautious about sharing personal information even in encrypted chats</li>
+                            <li>Remember that anyone in a Signal group can see all messages and member phone numbers</li>
+                            <li>Consider using a secondary phone number for activism (Google Voice, etc.)</li>
+                        </ul>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>What we don't endorse</h3>
+                        <p>
+                            This platform verifies member residency. It does not verify, endorse,
+                            or guarantee the quality, safety, or leadership of any group. Group
+                            names, descriptions, and claims are provided by the group's organizers,
+                            not by this platform.
+                        </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Encryption</h3>
+                        <p>
+                            Signal invite links and sensitive data are encrypted using envelope
+                            encryption (RSA + AES-256-GCM). Only authorized group members can
+                            decrypt them.
+                        </p>
                     </section>
                 </div>
 
                 <!-- Meshtastic Tab -->
                 <div class="help-tab-content" id="tab-meshtastic" style="display: none;">
                     <section class="help-section">
-                        <h2>What is Meshtastic?</h2>
+                        <h3>What is Meshtastic?</h3>
                         <p>
-                            <a href="https://meshtastic.org" target="_blank" rel="noopener">Meshtastic</a> is
-                            an open-source mesh networking project that uses affordable LoRa radios to create
-                            long-range, off-grid communication networks. Unlike cellular or Wi-Fi, Meshtastic
-                            works without any internet infrastructure &mdash; messages hop between radios to
-                            reach their destination.
+                            <strong>Meshtastic</strong> is an open-source project that turns
+                            inexpensive radios into mesh communication devices. Messages hop
+                            between radios to extend range, and the network works without
+                            internet or cell service.
                         </p>
+                    </section>
+
+                    <section class="help-section">
+                        <h3>Why Meshtastic?</h3>
                         <p>
-                            Meshtastic complements Signal by providing a communication fallback when internet
-                            and cellular networks are unavailable. This is especially valuable during natural
-                            disasters, power outages, or in remote areas with no cell coverage.
+                            In emergencies, cell towers and internet can go down. Meshtastic
+                            provides a backup communication channel that works when nothing else
+                            does. It's useful for disaster prep, search and rescue, and community
+                            resilience.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>How Meshtastic Channels Work</h2>
-                        <div class="help-cards">
-                            <div class="help-card">
-                                <h3>Channel URLs</h3>
-                                <p>
-                                    Each Meshtastic channel is configured via a URL that encodes the channel
-                                    name, encryption key, radio settings, and region. Community admins share
-                                    these URLs so members can join the same mesh channel.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>QR Codes</h3>
-                                <p>
-                                    Channel URLs are displayed as scannable QR codes. Open the Meshtastic app
-                                    on your phone, scan the QR code, and your radio will be configured
-                                    automatically.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Channel Details</h3>
-                                <p>
-                                    Each channel displays its parsed settings: encryption type and strength,
-                                    modem preset (range vs speed), radio region, and hop limit. This helps
-                                    you understand the channel's configuration at a glance.
-                                </p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>End-to-End Encryption</h2>
-                        <div class="help-highlight">
-                            <h3>Channel URLs Are Encrypted</h3>
-                            <p>
-                                Meshtastic channel URLs (like Signal group invite links) are stored using
-                                end-to-end encryption. The server never sees the plaintext URL &mdash;
-                                it is encrypted in your browser before being sent, and only decrypted
-                                in the browsers of members with verified addresses.
-                            </p>
-                        </div>
-                        <ul class="help-list">
-                            <li>Each user has a unique encryption keypair generated in their browser</li>
-                            <li>Secrets are encrypted with a random key (DEK), and the DEK is wrapped for each member's public key</li>
-                            <li>Even server administrators and superusers cannot decrypt channel URLs</li>
-                            <li>If you reset your password, community members automatically re-encrypt secrets for your new key when they log in</li>
-                        </ul>
-                        <p style="margin-top: var(--space-3);">
-                            For a detailed explanation of how encryption works, see the <strong>Encryption</strong> tab.
-                        </p>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Meshtastic FAQ</h2>
-
-                        <details class="faq-item">
-                            <summary>What hardware do I need?</summary>
-                            <p>
-                                You need a Meshtastic-compatible LoRa radio (such as a Heltec V3 or LilyGo
-                                T-Beam) and a phone with the
-                                <a href="https://meshtastic.org/docs/software" target="_blank" rel="noopener">Meshtastic app</a>.
-                                Radios typically cost $20&ndash;$50 and communicate over license-free radio
-                                frequencies.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How far can Meshtastic radios reach?</summary>
-                            <p>
-                                Range depends on terrain and antenna placement. Line-of-sight range can be
-                                several miles (or tens of miles with elevated antennas). In urban areas,
-                                expect 1&ndash;3 miles between nodes. The mesh network extends range by
-                                hopping messages through intermediate radios.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Is Meshtastic encrypted?</summary>
-                            <p>
-                                Yes. Meshtastic channels use AES-256 encryption by default. Each channel
-                                has its own encryption key (PSK). The platform shows you the encryption
-                                type and warns if a channel uses weak or default keys.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How do I scan a channel QR code?</summary>
-                            <p>
-                                Open the Meshtastic app on your phone, go to the channel settings, and
-                                use the "Scan QR Code" option. The app will configure your radio with
-                                the correct channel name, encryption key, and radio settings automatically.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Can I be in multiple Meshtastic channels?</summary>
-                            <p>
-                                Yes. Most Meshtastic radios support up to 8 channels simultaneously. Your
-                                community may have separate channels for different purposes (e.g., general
-                                chat, emergency alerts).
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What are security warnings about?</summary>
-                            <p>
-                                The platform analyzes each channel's encryption key and warns about insecure
-                                configurations: channels using the default key (which anyone can read),
-                                channels with no encryption, or channels using weaker AES-128 keys. Admins
-                                should use strong, unique AES-256 keys for community channels.
-                            </p>
-                        </details>
-                    </section>
-                </div>
-
-                <!-- Encryption Tab -->
-                <div class="help-tab-content" id="tab-encryption" style="display: none;">
-                    <section class="help-section">
-                        <h2>How Your Data Is Protected</h2>
-                        <div class="help-highlight">
-                            <h3>Secrets Never Stored in Plaintext</h3>
-                            <p>
-                                Signal group invite links and Meshtastic channel URLs are never stored in
-                                plaintext on the server. They are encrypted in your browser before being sent,
-                                and only decrypted in the browsers of verified members. Server administrators
-                                and superusers cannot decrypt these secrets.
-                            </p>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>How It Works</h2>
-                        <div class="help-cards">
-                            <div class="help-card">
-                                <h3>Your Keypair</h3>
-                                <p>
-                                    When you register, an RSA-OAEP 2048-bit keypair is generated in your
-                                    browser. Your private key never leaves your device unencrypted. Your
-                                    public key is shared with the server so other members can encrypt secrets
-                                    for you.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Envelope Encryption</h3>
-                                <p>
-                                    Each secret (such as a Signal invite link) is encrypted with a random
-                                    AES-256-GCM key called a DEK (data encryption key). The DEK is then
-                                    wrapped separately for each verified member using their public key.
-                                    Only your private key can unwrap your copy of the DEK and decrypt the
-                                    secret.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Key Backup</h3>
-                                <p>
-                                    Your private key is wrapped with a key derived from your password
-                                    (PBKDF2, 600,000 iterations) and stored on the server as a backup.
-                                    When you log in on a new device, your key backup is restored
-                                    automatically &mdash; no manual key transfer needed.
-                                </p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>What Happens When You Reset Your Password</h2>
-                        <div class="help-highlight">
-                            <ul class="help-list">
-                                <li>Your old keypair is destroyed and a new one is generated</li>
-                                <li>Existing secrets are temporarily inaccessible until other members re-encrypt them for your new key</li>
-                                <li>Re-encryption happens automatically when other members log in &mdash; no action is required from anyone</li>
-                                <li>Just log in and secrets will become available as community members come online</li>
-                            </ul>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Updating Secrets</h2>
+                        <h3>How does it work with groups?</h3>
                         <p>
-                            Updating a Signal group invite link or Meshtastic channel URL requires approval
-                            from 3 admins (a consensus proposal). Once approved, the proposer encrypts
-                            the new secret for all current verified members. Members are notified to log
-                            in and view the updated link.
+                            Groups can create Meshtastic channels alongside their Signal chats.
+                            Channel URLs are shared with the same access tier system &mdash; some
+                            channels might be open to all, others restricted to trusted members.
                         </p>
                     </section>
 
                     <section class="help-section">
-                        <h2>Encryption FAQ</h2>
-
-                        <details class="faq-item">
-                            <summary>Can the server read my Signal invite links?</summary>
-                            <p>
-                                No. Invite links are encrypted in your browser before being sent to the
-                                server. The server only stores ciphertext that it cannot decrypt.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What if I lose access to my device?</summary>
-                            <p>
-                                Log in on a new device with your password. Your key backup is stored on
-                                the server (encrypted with a key derived from your password) and is restored
-                                automatically when you log in.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Why can't superusers see invite links?</summary>
-                            <p>
-                                Superusers are intentionally excluded from encryption keys. This prevents
-                                centralized access to secrets and ensures that only verified members of a
-                                community or school can decrypt invite links.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What happens if a member is removed?</summary>
-                            <p>
-                                A removed member loses access to future secrets. However, they may still
-                                have decrypted copies of secrets they accessed before removal. Admins should
-                                rotate existing secrets via an update proposal after removing a member.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Do I need to do anything for encryption to work?</summary>
-                            <p>
-                                No. Encryption is fully automatic. Your keypair is generated at registration
-                                and your key backup is maintained whenever you log in. Secrets are encrypted
-                                and decrypted transparently in your browser.
-                            </p>
-                        </details>
-                    </section>
-                </div>
-
-                <!-- Signal Safety Tab -->
-                <div class="help-tab-content" id="tab-signal-safety" style="display: none;">
-                    <section class="help-section">
-                        <h2>Understanding Signal's Security</h2>
-                        <p>
-                            Signal uses <strong>end-to-end encryption</strong>, which means messages are
-                            encrypted on your device and can only be decrypted by the intended recipients.
-                            Signal (the company) cannot read your messages, and neither can we.
-                        </p>
-                        <p>
-                            However, there is an important limitation: <strong>anyone already in a group can
-                            read, screenshot, or forward messages</strong>. Encryption protects data in transit
-                            and at rest on Signal's servers, but it does not prevent someone with access to a
-                            device in the group from seeing the conversation.
-                        </p>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Protect Your Account</h2>
-                        <div class="help-cards">
-                            <div class="help-card">
-                                <h3>Set a Signal PIN</h3>
-                                <p>
-                                    Protects your account registration and prevents someone from re-registering
-                                    your phone number. Go to Settings > Account > Signal PIN.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Enable Registration Lock</h3>
-                                <p>
-                                    Prevents someone from registering your phone number on a new device without
-                                    your PIN. Go to Settings > Account > Registration Lock.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Use App Lock</h3>
-                                <p>
-                                    Enable biometric or passcode lock so a lost or stolen phone can't be used
-                                    to access your chats. Go to Settings > Privacy > App Lock.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Hide Lock Screen Previews</h3>
-                                <p>
-                                    Configure Signal to hide message content in lock screen notifications.
-                                    Go to Settings > Notifications > Show > "No name or message."
-                                </p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Protect Your Identity</h2>
-                        <div class="help-highlight">
-                            <h3>Group Members May See Your Phone Number</h3>
-                            <p>
-                                Depending on your privacy settings, other group members may be able to see
-                                your phone number. Review and adjust your settings to control this.
-                            </p>
-                        </div>
-                        <ul class="help-list">
-                            <li>
-                                Use a <strong>Signal username</strong> for discovery instead of sharing your
-                                phone number directly
-                            </li>
-                            <li>
-                                <strong>Phone number privacy:</strong> Go to Settings > Privacy > Phone Number
-                                and set "Who can find me by my number" to "Nobody"
-                            </li>
-                            <li>
-                                <strong>Profile name:</strong> Choose carefully — your profile name is visible
-                                to everyone in groups you join. Avoid using your full legal name if privacy is
-                                a concern
-                            </li>
+                        <h3>Getting started</h3>
+                        <ul>
+                            <li>You need a Meshtastic-compatible radio (starting around $25-35)</li>
+                            <li>Download the Meshtastic app for your phone</li>
+                            <li>Flash the firmware onto the radio</li>
+                            <li>Join channels shared by your group</li>
+                            <li>See <strong>meshtastic.org</strong> for full setup guides</li>
                         </ul>
                     </section>
 
                     <section class="help-section">
-                        <h2>Safe Practices in Group Chats</h2>
-                        <ul class="help-list">
-                            <li>Enable <strong>disappearing messages</strong> — we recommend 1 week as a default timer</li>
-                            <li>Don't share sensitive personal info (home address, daily routine, financial details)</li>
-                            <li>Be cautious of links — verify with the sender through another channel if something looks suspicious</li>
-                            <li>Don't forward group invite links outside the platform</li>
-                            <li>Remember: anyone in the group can screenshot or forward messages</li>
-                            <li>If you see something concerning, report it to a community or school admin</li>
+                        <h3>Limitations</h3>
+                        <ul>
+                            <li>Meshtastic is for short text messages, not voice or video</li>
+                            <li>Range depends on terrain and radio power (typically 1-5 miles per hop, more with line of sight)</li>
+                            <li>Messages are not end-to-end encrypted by default (use encrypted channels for sensitive comms)</li>
                         </ul>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Recognizing Threats</h2>
-                        <div class="help-cards">
-                            <div class="help-card">
-                                <h3>Social Engineering</h3>
-                                <p>
-                                    People may pose as trusted figures (admins, neighbors, school staff) to extract
-                                    personal information. Verify identities through known channels before sharing
-                                    anything sensitive.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Phishing Links</h3>
-                                <p>
-                                    Suspicious links designed to steal credentials or install malware. Long-press
-                                    or hover to preview URLs before clicking. Legitimate services won't ask for
-                                    your password via group chat.
-                                </p>
-                            </div>
-                            <div class="help-card">
-                                <h3>Impersonation</h3>
-                                <p>
-                                    Someone using a similar name or photo as a known community member. If a message
-                                    seems out of character, verify through the platform or a separate trusted channel.
-                                </p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>If Something Goes Wrong</h2>
-                        <div class="help-highlight">
-                            <ul class="help-list">
-                                <li>
-                                    <strong>Suspect a bad actor in a group:</strong> Report to community or school
-                                    admins immediately
-                                </li>
-                                <li>
-                                    <strong>Admins can help:</strong> The platform's consensus-based removal process
-                                    can blacklist malicious users from groups
-                                </li>
-                                <li>
-                                    <strong>Account may be compromised:</strong> Change your Signal PIN, enable
-                                    Registration Lock, and notify your community admins
-                                </li>
-                                <li>
-                                    <strong>Unwanted messages from a group member:</strong> Use Signal's block
-                                    feature and report to admins
-                                </li>
-                            </ul>
-                        </div>
-                    </section>
-
-                    <section class="help-section">
-                        <h2>Signal Safety FAQ</h2>
-
-                        <details class="faq-item">
-                            <summary>Can group admins read my private messages?</summary>
-                            <p>
-                                No. Group messages and 1:1 messages are completely separate. No one on this
-                                platform can see your private conversations.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Should I enable disappearing messages?</summary>
-                            <p>
-                                Yes, it's strongly recommended. Disappearing messages limit exposure if a device
-                                is compromised. You can set timers from 30 seconds to 4 weeks. We recommend
-                                1 week as a good default.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>Can someone who was removed from a group still see old messages?</summary>
-                            <p>
-                                Messages they already received remain on their device, but they won't receive
-                                new messages. This is why disappearing messages are important.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What if I change my phone number?</summary>
-                            <p>
-                                Use Signal's built-in "Change Number" feature (Settings > Account > Change Phone
-                                Number) rather than creating a new account. This preserves your group memberships
-                                and contacts.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>How do I verify I'm talking to the right person?</summary>
-                            <p>
-                                Signal has a "Safety Number" feature for 1:1 conversations. Tap a contact's name
-                                > "View Safety Number" and compare with them in person or via a trusted channel.
-                            </p>
-                        </details>
-
-                        <details class="faq-item">
-                            <summary>What's the difference between blocking and reporting?</summary>
-                            <p>
-                                Blocking prevents a user from contacting you on Signal. Reporting to community
-                                admins through this platform triggers the consensus-based review process that
-                                can remove them from groups.
-                            </p>
-                        </details>
                     </section>
                 </div>
             </div>
