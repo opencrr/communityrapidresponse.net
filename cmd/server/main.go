@@ -223,7 +223,6 @@ func main() {
 
 	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
-	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, encryptedSecretRepo, regionRepo, auditRepo)
 	verificationHandler := handlers.NewVerificationHandler(
 		db,
 		verificationRepo,
@@ -269,11 +268,8 @@ func main() {
 		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
 	)
 
-	// Initialize meshtastic channel repository and handler
+	// Initialize meshtastic channel repository
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	meshtasticHandler := handlers.NewMeshtasticHandler(
-		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
-	)
 
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
@@ -285,13 +281,6 @@ func main() {
 
 	// Initialize encryption handler
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
-
-	// Initialize secret update handler
-	secretUpdateHandler := handlers.NewSecretUpdateHandler(
-		db, secretUpdateProposalRepo, encryptedSecretRepo, encryptionKeyRepo,
-		regionRepo, schoolRepo, signalGroupRepo, meshtasticChannelRepo,
-		auditRepo, &cfg.Consensus,
-	)
 
 	// Wire status cache to handlers for immediate cache eviction on privilege changes
 	adminHandler.SetStatusCache(statusCache)
@@ -305,7 +294,6 @@ func main() {
 	verificationHandler.SetNotificationService(notificationService)
 	blocklistProposalHandler.SetNotificationService(notificationService)
 	membershipHandler.SetNotificationService(notificationService)
-	secretUpdateHandler.SetNotificationService(notificationService)
 	encryptionHandler.SetNotificationService(notificationService)
 
 	// Setup CSRF protection
@@ -337,7 +325,6 @@ func main() {
 		authHandler,
 		mfaHandler,
 		regionHandler,
-		signalGroupHandler,
 		verificationHandler,
 		adminHandler,
 		membershipHandler,
@@ -346,8 +333,6 @@ func main() {
 		schoolHandler,
 		userReportHandler,
 		encryptionHandler,
-		secretUpdateHandler,
-		meshtasticHandler,
 		groupHandler,
 		connectionHandler,
 		jwtAuth,

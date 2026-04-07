@@ -116,9 +116,6 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		db, groupRepo, encryptedSecretRepo, regionRepo, auditRepo,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler (use test encryption key)
@@ -145,9 +142,6 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
-	meshtasticHandler := handlers.NewMeshtasticHandler(
-		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
-	)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	connectionRepo := database.NewConnectionRepository(db)
@@ -155,8 +149,8 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, groupHandler, connectionHandler, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, groupHandler, connectionHandler, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

@@ -89,9 +89,6 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 		false, 30,
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	mfaConfig := &config.MFAConfig{
@@ -124,8 +121,8 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	}
 
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

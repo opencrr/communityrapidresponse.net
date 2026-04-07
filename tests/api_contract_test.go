@@ -103,9 +103,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		db, groupRepo, encryptedSecretRepo, regionRepo, nil,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	mfaConfig := &config.MFAConfig{
@@ -136,7 +133,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		authHandler,
 		mfaHandler,
 		regionHandler,
-		signalGroupHandler,
 		verificationHandler,
 		adminHandler,
 		membershipHandler,
@@ -145,8 +141,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		schoolHandler,
 		nil, // userReportHandler
 		nil, // encryptionHandler
-		nil, // secretUpdateHandler
-		nil, // meshtasticHandler
 		nil, // groupHandler
 		nil, // connectionHandler
 		jwtAuth,

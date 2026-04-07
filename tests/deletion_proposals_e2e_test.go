@@ -92,9 +92,6 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 		false, 30,
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 	mfaConfig := &config.MFAConfig{
 		EncryptionKey: "01234567890123456789012345678901",
@@ -125,8 +122,8 @@ func SetupDeletionE2ETest(t *testing.T) *DeletionE2ETestSuite {
 
 	// Create router with deletion proposals wired in
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, deletionProposalHandler, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

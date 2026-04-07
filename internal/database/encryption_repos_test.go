@@ -763,52 +763,6 @@ func TestMeshtasticChannelRepository_GetByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestMeshtasticChannelRepository_ListByRegion(t *testing.T) {
-	db := testDB(t)
-	repo := NewMeshtasticChannelRepository(db)
-	ctx := context.Background()
-
-	user := encCreateUser(t, db, "mc_list")
-	region := encCreateRegion(t, db, user.ID, "Meshtastic List Region")
-
-	defer func() {
-		_, _ = db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE region_id = ?", region.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", user.ID)
-	}()
-
-	// Create 2 active channels and 1 inactive
-	_ = repo.Create(ctx, &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Alpha Channel", CreatedBy: strPtr(user.ID),
-	})
-	_ = repo.Create(ctx, &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Beta Channel", CreatedBy: strPtr(user.ID),
-	})
-	inactive := &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Inactive Channel", CreatedBy: strPtr(user.ID),
-	}
-	_ = repo.Create(ctx, inactive)
-	_ = repo.Deactivate(ctx, inactive.ID)
-
-	channels, err := repo.ListByRegion(ctx, region.ID)
-	if err != nil {
-		t.Fatalf("Failed to list by region: %v", err)
-	}
-	if len(channels) != 2 {
-		t.Errorf("Expected 2 active channels, got %d", len(channels))
-	}
-
-	// Verify alphabetical ordering
-	if len(channels) >= 2 {
-		if channels[0].ChannelName != "Alpha Channel" {
-			t.Errorf("Expected first channel 'Alpha Channel', got '%s'", channels[0].ChannelName)
-		}
-		if channels[1].ChannelName != "Beta Channel" {
-			t.Errorf("Expected second channel 'Beta Channel', got '%s'", channels[1].ChannelName)
-		}
-	}
-}
-
 func TestMeshtasticChannelRepository_Update(t *testing.T) {
 	db := testDB(t)
 	repo := NewMeshtasticChannelRepository(db)
@@ -892,41 +846,6 @@ func TestMeshtasticChannelRepository_Deactivate(t *testing.T) {
 	}
 	if retrieved.IsActive {
 		t.Error("Expected channel to be inactive")
-	}
-}
-
-func TestMeshtasticChannelRepository_CountByRegion(t *testing.T) {
-	db := testDB(t)
-	repo := NewMeshtasticChannelRepository(db)
-	ctx := context.Background()
-
-	user := encCreateUser(t, db, "mc_count")
-	region := encCreateRegion(t, db, user.ID, "Meshtastic Count Region")
-
-	defer func() {
-		_, _ = db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE region_id = ?", region.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", user.ID)
-	}()
-
-	_ = repo.Create(ctx, &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Ch1", CreatedBy: strPtr(user.ID),
-	})
-	_ = repo.Create(ctx, &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Ch2", CreatedBy: strPtr(user.ID),
-	})
-	inactive := &models.MeshtasticChannel{
-		RegionID: strPtr(region.ID), ChannelName: "Ch3", CreatedBy: strPtr(user.ID),
-	}
-	_ = repo.Create(ctx, inactive)
-	_ = repo.Deactivate(ctx, inactive.ID)
-
-	count, err := repo.CountByRegion(ctx, region.ID)
-	if err != nil {
-		t.Fatalf("Failed to count: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("Expected 2, got %d", count)
 	}
 }
 

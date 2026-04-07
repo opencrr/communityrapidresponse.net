@@ -95,7 +95,6 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(nil, groupRepo, nil, regionRepo, nil)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	mfaConfig := &config.MFAConfig{
@@ -123,8 +122,8 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	)
 
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler,
-		verificationHandler, adminHandler, membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, rateLimiter, nil, nil,
+		authHandler, mfaHandler, regionHandler,
+		verificationHandler, adminHandler, membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, rateLimiter, nil, nil,
 		[]string{"*"}, nil,
 	)
 

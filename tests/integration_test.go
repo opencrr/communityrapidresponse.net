@@ -74,8 +74,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	auditRepo := database.NewAuditRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
-	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-
 	// Create JWT auth
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
@@ -97,9 +95,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		db, groupRepo, encryptedSecretRepo, regionRepo, auditRepo,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler (use test encryption key)
@@ -126,15 +121,12 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		userRepo, auditRepo, nil, consensusConfig, false, 0,
 	)
 
-	meshtasticHandler := handlers.NewMeshtasticHandler(
-		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
-	)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, meshtasticHandler, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

@@ -158,10 +158,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	verificationHandler.SetNotificationService(notificationService)
 
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
-
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler
@@ -191,8 +187,8 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 
 	// Create router
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

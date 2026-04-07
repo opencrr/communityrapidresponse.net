@@ -89,9 +89,6 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler
@@ -130,8 +127,8 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 
 	// Create router WITH rate limiting enabled
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

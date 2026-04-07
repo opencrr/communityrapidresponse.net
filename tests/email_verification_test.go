@@ -159,9 +159,6 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler (use test encryption key)
@@ -190,8 +187,8 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
