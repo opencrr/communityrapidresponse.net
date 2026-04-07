@@ -1010,3 +1010,15 @@ help:
     @echo "  just list-pending-school-vouches   - List users pending school verification"
     @echo ""
     @just --list
+
+# =============================================================================
+# Frontend Tests (Playwright)
+# =============================================================================
+
+# Run Playwright frontend tests (requires dev-full running)
+test-frontend:
+    npx playwright test
+
+# Run Playwright frontend tests with UI
+test-frontend-ui:
+    npx playwright test --ui
