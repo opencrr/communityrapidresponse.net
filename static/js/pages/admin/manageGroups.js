@@ -10,7 +10,7 @@ import {
     updateGroup,
 } from '../../api/signalGroups.js';
 import { createSecretProposal } from '../../api/secretProposals.js';
-import { createDeletionProposal } from '../../api/deletions.js';
+import { deleteGroup as deleteGroupV2 } from '../../api/groups.js';
 import { getAdminRegions } from '../../api/regions.js';
 import { getPublicKeys } from '../../api/encryption.js';
 import { ApiError } from '../../api/client.js';
@@ -575,26 +575,21 @@ async function handleUpdateLink(groupId, scopeParams) {
  * @param {string} groupId - Group ID
  */
 async function handleDeleteGroup(groupId) {
-    const reason = await modal.prompt({
-        title: 'Propose Signal Group Deletion',
-        message: 'This will create a deletion proposal that requires approval from other admins. Please provide a reason:',
-        placeholder: 'Reason for deletion...',
-        confirmLabel: 'Propose Deletion',
+    const confirmed = await modal.confirm({
+        title: 'Delete Signal Group',
+        message: 'Are you sure you want to delete this Signal group? This action cannot be undone.',
+        confirmLabel: 'Delete',
         confirmType: 'danger',
     });
 
-    if (!reason) return;
+    if (!confirmed) return;
 
     try {
-        await createDeletionProposal({
-            asset_type: 'signal_group',
-            asset_id: groupId,
-            reason: reason,
-        });
-        toast.success('Deletion proposal created. Other admins will vote on it.');
+        await deleteGroupV2(groupId);
+        toast.success('Signal group deleted.');
         await loadGroups(document.getElementById('main'));
     } catch (error) {
-        let errorMessage = 'Failed to create deletion proposal.';
+        let errorMessage = 'Failed to delete group.';
         if (error instanceof ApiError && error.message) {
             errorMessage = error.message;
         }

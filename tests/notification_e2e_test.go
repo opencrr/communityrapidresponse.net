@@ -31,7 +31,6 @@ type NotificationE2ETestSuite struct {
 	verifyRepo          *database.VerificationRepository
 	vouchRepo           *database.VouchRepository
 	groupRepo           *database.SignalGroupRepository
-	membershipRepo      *database.MembershipRepository
 	notificationQueue   *database.DatabaseQueue
 	notificationService *services.NotificationService
 	emailTracker        *emailTracker
@@ -122,7 +121,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -157,7 +155,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	)
 	verificationHandler.SetNotificationService(notificationService)
 
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler
@@ -167,18 +164,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-	membershipHandler.SetNotificationService(notificationService)
-
-	// Create blocklist proposal handler
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	schoolHandler := handlers.NewSchoolHandler(
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
@@ -187,7 +172,7 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	// Create router
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		schoolHandler, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -224,7 +209,6 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 		verifyRepo:          verifyRepo,
 		vouchRepo:           vouchRepo,
 		groupRepo:           groupRepo,
-		membershipRepo:      membershipRepo,
 		notificationQueue:   notificationQueue,
 		notificationService: notificationService,
 		emailTracker:        emailTracker,
@@ -890,142 +874,6 @@ func TestE2E_Worker_RecoversFromFailures(t *testing.T) {
 
 	if status != string(models.NotificationStatusQueued) {
 		t.Errorf("Expected status 'queued' after retry, got '%s'", status)
-	}
-}
-
-// =============================================================================
-// E2E Tests: Sub-Region Invitation Notifications
-// =============================================================================
-
-func TestE2E_SubRegionInvitation_TriggersNotification(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create parent region
-	parentRegion := suite.createRegion("e2e-parent-invite-region", "Parent Region", nil)
-
-	// Create sub-region with parent
-	subRegion := suite.createRegion("e2e-sub-invite-region", "Sub Region", &parentRegion.ID)
-
-	// Create admin who will invite
-	adminToken, admin := suite.createUser("e2e-invite-admin", "inviteadmin@e2e.test", "InviteAdmin", true, true, false)
-	suite.addUserToRegion(admin.ID, parentRegion.ID, true)
-	suite.addUserToRegion(admin.ID, subRegion.ID, true)
-
-	// Create user to be invited (member of parent region)
-	_, invitee := suite.createUser("e2e-invitee", "invitee@e2e.test", "invitee", true, false, false)
-	suite.addUserToRegion(invitee.ID, parentRegion.ID, false)
-
-	suite.emailTracker.Reset()
-
-	// Admin invites user to sub-region
-	resp := suite.request("POST", fmt.Sprintf("/api/v1/communities/%s/invitations?id=%s", subRegion.ID, subRegion.ID), map[string]interface{}{
-		"user_id": invitee.ID,
-	}, adminToken)
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		t.Fatalf("Expected status 201, got %d: %v", resp.StatusCode, body)
-	}
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check notification was queued
-	var count int
-	err := suite.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'sub_region_invitation'
-	`, invitee.ID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count notifications: %v", err)
-	}
-
-	if count == 0 {
-		t.Error("Expected sub_region_invitation notification to be queued")
-	}
-
-	// Check email was sent to invitee
-	emails := suite.emailTracker.GetSent()
-	found := false
-	for _, email := range emails {
-		if email.To == invitee.Email {
-			found = true
-			if !contains(email.Subject, "Invited") {
-				t.Errorf("Email subject should mention invitation: %s", email.Subject)
-			}
-			// Verify inviter name is in the email body
-			if !contains(email.Body, "InviteAdmin") {
-				t.Error("Email body should contain inviter's username")
-			}
-		}
-	}
-	if !found {
-		t.Error("Expected email to be sent to invitee")
-	}
-}
-
-func TestE2E_SubRegionInvitation_EmailContent(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create parent and sub-region
-	parentRegion := suite.createRegion("e2e-parent-content-region", "Parent Content Region", nil)
-	subRegion := suite.createRegion("e2e-sub-content-region", "Sub Content Region", &parentRegion.ID)
-
-	// Create admin and invitee
-	adminToken, admin := suite.createUser("e2e-content-admin", "contentadmin@e2e.test", "ContentAdmin", true, true, false)
-	suite.addUserToRegion(admin.ID, parentRegion.ID, true)
-	suite.addUserToRegion(admin.ID, subRegion.ID, true)
-
-	_, invitee := suite.createUser("e2e-content-invitee", "contentinvitee@e2e.test", "contentinvitee", true, false, false)
-	suite.addUserToRegion(invitee.ID, parentRegion.ID, false)
-
-	suite.emailTracker.Reset()
-
-	// Admin invites user
-	resp := suite.request("POST", fmt.Sprintf("/api/v1/communities/%s/invitations?id=%s", subRegion.ID, subRegion.ID), map[string]interface{}{
-		"user_id": invitee.ID,
-	}, adminToken)
-	_ = resp.Body.Close()
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check email content
-	emails := suite.emailTracker.GetSent()
-	for _, email := range emails {
-		if email.To == invitee.Email {
-			// Should NOT contain sensitive data
-			if contains(email.Body, subRegion.ID) {
-				t.Error("Email should NOT contain region ID")
-			}
-			// Should contain login instructions
-			if !contains(email.Body, "log in") && !contains(email.Body, "Log in") {
-				t.Error("Email should instruct user to log in")
-			}
-			// Should mention expiration
-			if !contains(email.Body, "7 days") && !contains(email.Body, "expire") {
-				t.Error("Email should mention invitation expiration")
-			}
-		}
-	}
-
-	// Verify notification was cleaned up (processed)
-	var status string
-	err := suite.db.QueryRowContext(ctx, `
-		SELECT status FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'sub_region_invitation'
-		ORDER BY queued_at DESC LIMIT 1
-	`, invitee.ID).Scan(&status)
-	if err != nil {
-		t.Fatalf("Failed to query notification: %v", err)
-	}
-
-	if status != string(models.NotificationStatusSent) {
-		t.Errorf("Expected notification status 'sent', got '%s'", status)
 	}
 }
 

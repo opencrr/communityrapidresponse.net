@@ -6,8 +6,6 @@
 import { getRegion, updateRegion, deleteRegion, regionToFeature, getRegionMembers } from '../api/regions.js';
 import { getGroupsByRegion } from '../api/signalGroups.js';
 import { listMeshtasticChannels } from '../api/meshtastic.js';
-import { createReport } from '../api/reports.js';
-import { requestMembership } from '../api/membership.js';
 import { initMap, addRegionsLayer, destroyMap, fitToBounds } from '../components/map.js';
 import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
 import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser, getUser } from '../utils/store.js';
@@ -372,39 +370,6 @@ function renderRegionDetail(container, region, childRegions, groups, meshtasticC
         loadMembers(region.id);
     }
 
-    // Bind request membership button
-    const requestMembershipBtn = container.querySelector('#request-membership-btn');
-    if (requestMembershipBtn) {
-        requestMembershipBtn.addEventListener('click', async () => {
-            const confirmed = await modal.confirm({
-                title: `Request to Join ${region.name}?`,
-                message: 'You are requesting to join this sub-region. Admins will review your request and 2 approvals are needed before you are added.',
-            });
-
-            if (!confirmed) return;
-
-            requestMembershipBtn.disabled = true;
-            requestMembershipBtn.classList.add('btn--loading');
-
-            try {
-                await requestMembership(region.id);
-                toast.success('Membership request submitted!');
-                // Re-render to show pending status
-                render(container, { id: region.id });
-            } catch (error) {
-                console.error('Failed to request membership:', error);
-                if (error.status === 409) {
-                    toast.error(error.message || 'You already have a pending request or are already a member.');
-                } else if (error.status === 403) {
-                    toast.error(error.message || 'You must be a member of the parent region first.');
-                } else {
-                    toast.error(error.message || 'Failed to submit request. Please try again.');
-                }
-                requestMembershipBtn.disabled = false;
-                requestMembershipBtn.classList.remove('btn--loading');
-            }
-        });
-    }
 }
 
 /**

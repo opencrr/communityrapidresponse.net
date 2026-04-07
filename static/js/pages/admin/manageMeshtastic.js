@@ -9,7 +9,6 @@ import {
     createMeshtasticChannel,
     updateMeshtasticChannel,
 } from '../../api/meshtastic.js';
-import { createDeletionProposal } from '../../api/deletions.js';
 import { getAdminRegions } from '../../api/regions.js';
 import { getPublicKeys } from '../../api/encryption.js';
 import { ApiError } from '../../api/client.js';
@@ -530,31 +529,8 @@ async function handleEditChannel(channelId) {
  * @param {string} channelId - Channel ID
  */
 async function handleDeleteChannel(channelId) {
-    const reason = await modal.prompt({
-        title: 'Propose Meshtastic Channel Deletion',
-        message: 'This will create a deletion proposal that requires approval from other admins. Please provide a reason:',
-        placeholder: 'Reason for deletion...',
-        confirmLabel: 'Propose Deletion',
-        confirmType: 'danger',
-    });
-
-    if (!reason) return;
-
-    try {
-        await createDeletionProposal({
-            asset_type: 'meshtastic_channel',
-            asset_id: channelId,
-            reason: reason,
-        });
-        toast.success('Deletion proposal created. Other admins will vote on it.');
-        await loadChannels(document.getElementById('main'));
-    } catch (error) {
-        let errorMessage = 'Failed to create deletion proposal.';
-        if (error instanceof ApiError && error.message) {
-            errorMessage = error.message;
-        }
-        toast.error(errorMessage);
-    }
+    // TODO: Implement direct channel deletion via v2 API
+    toast.error('Channel deletion is not yet available in v2.');
 }
 
 /**

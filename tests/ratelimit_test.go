@@ -61,7 +61,6 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -87,7 +86,6 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 		mockPostgrid, mockMapbox, nil,
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler
@@ -97,17 +95,6 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-
-	// Create blocklist proposal handler
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	// Create rate limiter with database backend
 	rateLimiter := services.NewDBRateLimiter(db.DB)
@@ -126,7 +113,7 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	// Create router WITH rate limiting enabled
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
+		schoolHandler, nil, nil, nil, jwtAuth, rateLimiter, rateLimitConfig, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

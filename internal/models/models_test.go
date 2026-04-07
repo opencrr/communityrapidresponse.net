@@ -373,8 +373,6 @@ func TestNotificationTypes(t *testing.T) {
 		NotificationTypeVerificationComplete,
 		NotificationTypeVouchReceived,
 		NotificationTypeVouchComplete,
-		NotificationTypeBlocklistProposal,
-		NotificationTypeDeletionProposal,
 		NotificationTypeInviteLinkProposal,
 	}
 

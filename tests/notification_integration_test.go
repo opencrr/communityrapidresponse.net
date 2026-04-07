@@ -539,7 +539,6 @@ func TestIntegration_NotificationService_AllNotificationTypes(t *testing.T) {
 	user := suite.createTestUser("test-user-types", "types@example.com", "testtypes", true, false)
 	regionID := "test-region-types"
 	voucherID := "test-voucher-1"
-	inviterID := "test-inviter-1"
 
 	// Queue all notification types
 	err := suite.notificationService.QueueVerificationComplete(ctx, user.ID, regionID)
@@ -562,11 +561,6 @@ func TestIntegration_NotificationService_AllNotificationTypes(t *testing.T) {
 		t.Errorf("QueueInviteLinkUpdatedEvent failed: %v", err)
 	}
 
-	err = suite.notificationService.QueueSubRegionInvitation(ctx, user.ID, inviterID, regionID)
-	if err != nil {
-		t.Errorf("QueueSubRegionInvitation failed: %v", err)
-	}
-
 	// Verify all were queued
 	notifications, err := suite.queue.Dequeue(ctx, 100)
 	if err != nil {
@@ -583,112 +577,12 @@ func TestIntegration_NotificationService_AllNotificationTypes(t *testing.T) {
 		models.NotificationTypeVouchReceived,
 		models.NotificationTypeVouchComplete,
 		models.NotificationTypeInviteLinkUpdated,
-		models.NotificationTypeSubRegionInvitation,
 	}
 
 	for _, expected := range expectedTypes {
 		if !types[expected] {
 			t.Errorf("Expected notification type %s not found in queue", expected)
 		}
-	}
-}
-
-func TestIntegration_NotificationService_QueueSubRegionInvitation(t *testing.T) {
-	suite := SetupNotificationTest(t)
-	ctx := context.Background()
-
-	// Create invitee and inviter
-	invitee := suite.createTestUser("test-invitee", "invitee@example.com", "testinvitee", true, false)
-	inviter := suite.createTestUser("test-inviter", "inviter@example.com", "testinviter", true, true)
-	regionID := "test-region-invite"
-
-	err := suite.notificationService.QueueSubRegionInvitation(ctx, invitee.ID, inviter.ID, regionID)
-	if err != nil {
-		t.Fatalf("QueueSubRegionInvitation failed: %v", err)
-	}
-
-	// Verify notification was queued
-	notifications, err := suite.queue.Dequeue(ctx, 10)
-	if err != nil {
-		t.Fatalf("Dequeue failed: %v", err)
-	}
-
-	found := false
-	for _, n := range notifications {
-		if n.NotificationType == models.NotificationTypeSubRegionInvitation && n.UserID == invitee.ID {
-			found = true
-			if n.ResourceID == nil || *n.ResourceID != inviter.ID {
-				t.Errorf("Expected ResourceID %s (inviter ID), got %v", inviter.ID, n.ResourceID)
-			}
-			if n.ResourceType == nil || *n.ResourceType != "membership_invitation" {
-				t.Errorf("Expected ResourceType 'membership_invitation', got %v", n.ResourceType)
-			}
-		}
-	}
-
-	if !found {
-		t.Error("Sub-region invitation notification not found in queue")
-	}
-}
-
-func TestIntegration_NotificationWorker_ProcessesSubRegionInvitation(t *testing.T) {
-	suite := SetupNotificationTest(t)
-	ctx := context.Background()
-
-	// Create invitee and inviter
-	invitee := suite.createTestUser("test-worker-invitee", "workerinvitee@example.com", "workerinvitee", true, false)
-	inviter := suite.createTestUser("test-worker-inviter", "workerinviter@example.com", "InviterUsername", true, true)
-
-	// Create mock email service to track sent emails
-	emailService := &trackingEmailService{sent: make([]string, 0)}
-	templates := services.NewEmailTemplates("Test App", "http://localhost/login")
-
-	cfg := &config.NotificationConfig{
-		WorkerInterval:    time.Second,
-		BatchSize:         50,
-		RateLimitDuration: 24 * time.Hour,
-		RetryFailedAfter:  time.Hour,
-	}
-
-	worker := services.NewNotificationWorker(
-		suite.queue,
-		emailService,
-		templates,
-		suite.userRepo,
-		suite.regionRepo,
-		nil,
-		cfg,
-	)
-
-	// Queue a sub-region invitation notification
-	err := suite.notificationService.QueueSubRegionInvitation(ctx, invitee.ID, inviter.ID, "test-region")
-	if err != nil {
-		t.Fatalf("QueueSubRegionInvitation failed: %v", err)
-	}
-
-	// Start worker in background
-	workerCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	worker.Start(workerCtx)
-
-	// Wait for processing
-	time.Sleep(2 * time.Second)
-
-	// Verify email was sent to the invitee
-	if len(emailService.sent) == 0 {
-		t.Error("Expected email to be sent for sub-region invitation")
-	}
-
-	foundInviteeEmail := false
-	for _, to := range emailService.sent {
-		if to == invitee.Email {
-			foundInviteeEmail = true
-		}
-	}
-
-	if !foundInviteeEmail {
-		t.Errorf("Expected email to be sent to invitee %s, got %v", invitee.Email, emailService.sent)
 	}
 }
 

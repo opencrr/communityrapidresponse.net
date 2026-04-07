@@ -355,14 +355,6 @@ func (w *NotificationWorker) enrichTemplateData(ctx context.Context, n *models.E
 		}
 		data.VoucherName = voucher.Username
 
-	case models.NotificationTypeSubRegionInvitation:
-		// Resource ID is inviter ID
-		inviter, err := w.userLookup.GetByID(ctx, *n.ResourceID)
-		if err != nil {
-			return err
-		}
-		data.InviterName = inviter.Username
-
 	case models.NotificationTypeInviteLinkUpdated:
 		// Resource ID is region ID (for fan-out events) or group ID
 		// We don't include group names in emails for security

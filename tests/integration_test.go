@@ -67,7 +67,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -94,7 +93,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		mockPostgrid, mockMapbox, nil,
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	// Create MFA service and handler (use test encryption key)
@@ -104,17 +102,6 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-
-	// Create blocklist proposal handler
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	schoolHandler := handlers.NewSchoolHandler(
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
@@ -125,7 +112,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, encryptionHandler, nil, nil, jwtAuth, nil, nil, nil,
+		schoolHandler, encryptionHandler, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

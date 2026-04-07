@@ -256,31 +256,3 @@ func TestNotificationService_QueueRekeyingNeededEvent(t *testing.T) {
 	}
 }
 
-func TestNotificationService_QueueSubRegionInvitation(t *testing.T) {
-	ctx := context.Background()
-	queue := newMockQueue()
-	service := NewNotificationService(queue)
-
-	err := service.QueueSubRegionInvitation(ctx, "user-123", "inviter-456", "region-789")
-	if err != nil {
-		t.Fatalf("QueueSubRegionInvitation failed: %v", err)
-	}
-
-	if len(queue.notifications) != 1 {
-		t.Fatalf("Expected 1 notification, got %d", len(queue.notifications))
-	}
-
-	n := queue.notifications[0]
-
-	if n.UserID != "user-123" {
-		t.Errorf("Expected UserID 'user-123', got '%s'", n.UserID)
-	}
-
-	if n.NotificationType != models.NotificationTypeSubRegionInvitation {
-		t.Errorf("Expected notification type 'sub_region_invitation', got '%s'", n.NotificationType)
-	}
-
-	if n.ResourceID == nil || *n.ResourceID != "inviter-456" {
-		t.Errorf("Expected ResourceID 'inviter-456', got '%v'", n.ResourceID)
-	}
-}

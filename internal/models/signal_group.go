@@ -84,10 +84,3 @@ type ProposalUser struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
 }
-
-// ProposalListFilter represents filter options for listing proposals (shared by blocklist, deletion)
-type ProposalListFilter struct {
-	Status        string
-	SignalGroupID string
-	RegionID      string
-}

@@ -26,14 +26,8 @@ import manageMeshtasticPage from './pages/admin/manageMeshtastic.js';
 import manageUsersPage from './pages/admin/manageUsers.js';
 import auditLogsPage from './pages/admin/auditLogs.js';
 import secretProposalsPage from './pages/admin/secretProposals.js';
-import blocklistProposalsPage from './pages/admin/blocklistProposals.js';
-import deletionProposalsPage from './pages/admin/deletionProposals.js';
-import userReportsPage from './pages/admin/userReports.js';
-import blockedAddressesPage from './pages/admin/blockedAddresses.js';
-import membershipRequestsPage from './pages/admin/membershipRequests.js';
 import helpPage from './pages/help.js';
 import aboutPage from './pages/about.js';
-import membershipPage from './pages/membership.js';
 import profilePage from './pages/profile.js';
 import forgotPasswordPage from './pages/forgotPassword.js';
 import resetPasswordPage from './pages/resetPassword.js';
@@ -93,14 +87,8 @@ const routes = [
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },
     { path: '/admin/meshtastic', page: manageMeshtasticPage, auth: true, requiresAdmin: true },
     { path: '/admin/proposals', page: secretProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/blocklist-proposals', page: blocklistProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/deletion-proposals', page: deletionProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/reports', page: userReportsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/membership-requests', page: membershipRequestsPage, auth: true, requiresAdmin: true },
     { path: '/admin/users', page: manageUsersPage, auth: true, requiresSuperuser: true },
-    { path: '/admin/blocked-addresses', page: blockedAddressesPage, auth: true, requiresSuperuser: true },
     { path: '/admin/audit-logs', page: auditLogsPage, auth: true, requiresSuperuser: true },
-    { path: '/membership', page: membershipPage, auth: true },
 ];
 
 let currentPage = null;

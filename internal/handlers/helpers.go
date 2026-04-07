@@ -72,9 +72,6 @@ type NotificationServiceInterface interface {
 	// QueueVouchComplete queues a notification when a user achieves vouch verification
 	QueueVouchComplete(ctx context.Context, userID, regionID string) error
 
-	// QueueSubRegionInvitation queues a notification when a user is invited to a sub-region
-	QueueSubRegionInvitation(ctx context.Context, userID, inviterID, regionID string) error
-
 	// QueueRekeyingNeededEvent queues a fan-out notification for key rotation rekey
 	QueueRekeyingNeededEvent(ctx context.Context, userID string) error
 }

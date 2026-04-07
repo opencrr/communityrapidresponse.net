@@ -64,7 +64,6 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -87,7 +86,6 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 		mockPostgrid, mockMapbox, nil,
 		false, 30,
 	)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	mfaConfig := &config.MFAConfig{
@@ -96,16 +94,6 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	schoolHandler := handlers.NewSchoolHandler(
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
@@ -120,7 +108,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 
 	router := handlers.NewRouter(
 		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
+		schoolHandler, nil, nil, nil, jwtAuth, nil, nil, csrfConfig,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()

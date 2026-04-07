@@ -75,12 +75,6 @@ func main() {
 	secretUpdateProposalRepo := database.NewSecretUpdateProposalRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
-	membershipRepo := database.NewMembershipRepository(db)
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, &cfg.Blocklist)
-	deletionProposalRepo := database.NewDeletionProposalRepository(db)
-
-	// User report repository
-	userReportRepo := database.NewUserReportRepository(db)
 
 	// Encryption key repository
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
@@ -94,12 +88,6 @@ func main() {
 
 	// Start secret proposal expiration worker (runs every hour)
 	secretUpdateProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
-
-	// Start membership request expiration worker (runs every hour)
-	membershipRepo.StartExpirationWorker(context.Background(), time.Hour)
-
-	// Start blocklist proposal expiration worker (runs every hour)
-	blocklistProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
 
 	// Initialize services
 	mailService, err := services.NewMailService(cfg)
@@ -240,16 +228,6 @@ func main() {
 		slog.Info("bootstrap vouch cooldown disabled")
 	}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, auditRepo)
-	membershipHandler := handlers.NewMembershipHandler(db, membershipRepo, regionRepo, userRepo, auditRepo)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		db, blocklistProposalRepo, regionRepo, userRepo, auditRepo,
-		&cfg.Consensus, &cfg.Blocklist,
-	)
-
-	deletionProposalHandler := handlers.NewDeletionProposalHandler(
-		db, deletionProposalRepo, signalGroupRepo, regionRepo, schoolRepo,
-		userRepo, auditRepo, &cfg.Consensus,
-	)
 
 	// Initialize NCES service for lazy-loading district boundaries
 	ncesService := services.NewNCESService()
@@ -266,11 +244,6 @@ func main() {
 		schoolRepo, districtRepo, groupRepo, userRepo, auditRepo, ncesService,
 	)
 
-	// Initialize user report handler
-	userReportHandler := handlers.NewUserReportHandler(
-		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
-	)
-
 	// Initialize connection repository and handler
 	connectionRepo := database.NewConnectionRepository(db)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
@@ -281,15 +254,12 @@ func main() {
 	// Wire status cache to handlers for immediate cache eviction on privilege changes
 	adminHandler.SetStatusCache(statusCache)
 	verificationHandler.SetStatusCache(statusCache)
-	blocklistProposalHandler.SetStatusCache(statusCache)
 
 	// Wire JWT auth to verification handler for issuing fresh tokens after postcard verification
 	verificationHandler.SetJWTAuth(jwtAuth, cfg.Server.SecureCookies)
 
 	// Wire notification service to handlers
 	verificationHandler.SetNotificationService(notificationService)
-	blocklistProposalHandler.SetNotificationService(notificationService)
-	membershipHandler.SetNotificationService(notificationService)
 	encryptionHandler.SetNotificationService(notificationService)
 
 	// Setup CSRF protection
@@ -323,11 +293,7 @@ func main() {
 		regionHandler,
 		verificationHandler,
 		adminHandler,
-		membershipHandler,
-		blocklistProposalHandler,
-		deletionProposalHandler,
 		schoolHandler,
-		userReportHandler,
 		encryptionHandler,
 		groupHandler,
 		connectionHandler,

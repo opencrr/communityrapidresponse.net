@@ -41,8 +41,6 @@ func (t *EmailTemplates) Build(n *models.EmailNotification, data *TemplateData) 
 		return t.buildVouchReceived(data)
 	case models.NotificationTypeVouchComplete:
 		return t.buildVouchComplete(data)
-	case models.NotificationTypeSubRegionInvitation:
-		return t.buildSubRegionInvitation(data)
 	case models.NotificationTypeRekeyingNeeded:
 		return t.buildRekeyingNeeded(data)
 	default:
@@ -212,48 +210,6 @@ Log in to get started:
 </body>
 </html>`,
 		html.EscapeString(regionInfo),
-		html.EscapeString(t.loginURL),
-		html.EscapeString(t.appName))
-
-	return &EmailMessage{
-		To:          data.UserEmail,
-		Subject:     subject,
-		TextContent: textContent,
-		HTMLContent: htmlContent,
-	}
-}
-
-// buildSubRegionInvitation generates email when user is invited to a sub-region
-func (t *EmailTemplates) buildSubRegionInvitation(data *TemplateData) *EmailMessage {
-	subject := fmt.Sprintf("You've Been Invited to a Region - %s", t.appName)
-
-	inviterInfo := "An admin"
-	if data.InviterName != "" {
-		inviterInfo = data.InviterName
-	}
-
-	textContent := fmt.Sprintf(`%s has invited you to join a sub-region in your community.
-
-Log in to view and respond to your invitation:
-%s
-
-Invitations expire after 7 days if not accepted.
-
-- The %s Team`,
-		inviterInfo, t.loginURL, t.appName)
-
-	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"></head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-<h2 style="color: #1976d2;">You've Been Invited!</h2>
-<p><strong>%s</strong> has invited you to join a sub-region in your community.</p>
-<p><a href="%s" style="display: inline-block; background: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">View Invitation</a></p>
-<p style="color: #666; font-size: 14px;"><em>Invitations expire after 7 days if not accepted.</em></p>
-<p>- The %s Team</p>
-</body>
-</html>`,
-		html.EscapeString(inviterInfo),
 		html.EscapeString(t.loginURL),
 		html.EscapeString(t.appName))
 

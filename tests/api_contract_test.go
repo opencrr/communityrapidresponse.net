@@ -61,7 +61,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	vouchRepo := database.NewVouchRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -100,7 +99,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		mockPostgrid, mockMapbox, nil,
 		false, 30, // Bootstrap cooldown disabled for tests
 	)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
 	mfaConfig := &config.MFAConfig{
@@ -109,16 +107,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	rateLimiter := services.NewNoOpRateLimiter()
 
@@ -132,11 +120,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		regionHandler,
 		verificationHandler,
 		adminHandler,
-		membershipHandler,
-		blocklistProposalHandler,
-		nil, // deletionProposalHandler
 		schoolHandler,
-		nil, // userReportHandler
 		nil, // encryptionHandler
 		nil, // groupHandler
 		nil, // connectionHandler

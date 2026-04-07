@@ -13,10 +13,7 @@ const (
 	NotificationTypeVerificationComplete  NotificationType = "verification_complete"
 	NotificationTypeVouchReceived         NotificationType = "vouch_received"
 	NotificationTypeVouchComplete         NotificationType = "vouch_complete"
-	NotificationTypeBlocklistProposal     NotificationType = "blocklist_proposal"
-	NotificationTypeDeletionProposal      NotificationType = "deletion_proposal"
 	NotificationTypeInviteLinkProposal    NotificationType = "invite_link_proposal"
-	NotificationTypeSubRegionInvitation   NotificationType = "sub_region_invitation"
 	NotificationTypeRekeyingNeeded       NotificationType = "rekeying_needed"
 )
 
@@ -91,15 +88,6 @@ const (
 	AuditActionSuperuserUserSearch    = "superuser_user_search"
 	AuditActionSuperuserUserDelete    = "superuser_user_delete"
 
-	// Sub-region membership actions
-	AuditActionSubRegionRequestCreated  = "sub_region_request_created"
-	AuditActionSubRegionRequestVoted    = "sub_region_request_voted"
-	AuditActionSubRegionRequestApproved = "sub_region_request_approved"
-	AuditActionSubRegionRequestExpired  = "sub_region_request_expired"
-	AuditActionSubRegionInviteSent      = "sub_region_invite_sent"
-	AuditActionSubRegionInviteAccepted  = "sub_region_invite_accepted"
-	AuditActionSubRegionInviteDeclined  = "sub_region_invite_declined"
-
 	// Password actions
 	AuditActionPasswordChanged        = "password_changed"
 	AuditActionPasswordResetRequested = "password_reset_requested"
@@ -116,11 +104,6 @@ const (
 
 	// Account deletion
 	AuditActionAccountDeleted = "account_deleted"
-
-	// User reports
-	AuditActionReportCreated           = "report_created"
-	AuditActionReportDismissed         = "report_dismissed"
-	AuditActionReportResolvedBlocklist = "report_resolved_blocklist"
 
 	// Encryption key actions
 	AuditActionEncryptionKeyRotated = "encryption_key_rotated"
