@@ -677,81 +677,6 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 			return
 
-		case "leave":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Leave)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "vouch":
-			// Check for /vouch/pending sub-route
-			if len(parts) >= 3 && parts[2] == "pending" {
-				q := req.URL.Query()
-				q.Set("id", schoolID)
-				req.URL.RawQuery = q.Encode()
-				if req.Method == http.MethodGet {
-					r.authenticated(r.schools.GetPendingVouchRequests)(w, req)
-					return
-				}
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-				return
-			}
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Vouch)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "vouch-status":
-			if len(parts) >= 3 {
-				q := req.URL.Query()
-				q.Set("id", schoolID)
-				q.Set("user_id", parts[2])
-				req.URL.RawQuery = q.Encode()
-				if req.Method == http.MethodGet {
-					r.authenticated(r.schools.GetVouchStatus)(w, req)
-					return
-				}
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-				return
-			}
-			writeError(w, http.StatusBadRequest, "missing_user_id", "User ID required")
-			return
-
-		case "members":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodGet {
-				r.authenticated(r.schools.ListMembers)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "signal-groups":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			switch req.Method {
-			case http.MethodGet:
-				r.authenticated(r.schools.ListSignalGroups)(w, req)
-			case http.MethodPost:
-				r.authenticated(r.schools.CreateSignalGroup)(w, req)
-			default:
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			}
-			return
-
 		case "reports":
 			q := req.URL.Query()
 			q.Set("id", schoolID)
@@ -790,33 +715,6 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 	districtID := parts[0]
 
 	// Sub-routes
-	if len(parts) >= 2 && parts[1] == "members" {
-		q := req.URL.Query()
-		q.Set("id", districtID)
-		req.URL.RawQuery = q.Encode()
-		if req.Method == http.MethodGet {
-			r.authenticated(r.schools.ListDistrictMembers)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	if len(parts) >= 2 && parts[1] == "signal-groups" {
-		q := req.URL.Query()
-		q.Set("id", districtID)
-		req.URL.RawQuery = q.Encode()
-		switch req.Method {
-		case http.MethodGet:
-			r.authenticated(r.schools.ListDistrictSignalGroups)(w, req)
-		case http.MethodPost:
-			r.authenticated(r.schools.CreateDistrictSignalGroup)(w, req)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		}
-		return
-	}
-
 	if len(parts) >= 2 && parts[1] == "reports" {
 		q := req.URL.Query()
 		q.Set("id", districtID)

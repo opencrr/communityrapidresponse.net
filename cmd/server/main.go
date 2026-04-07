@@ -88,7 +88,6 @@ func main() {
 	// School repositories
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 
 	// Start audit log cleanup worker (runs every 24 hours, retains 90 days)
 	auditRepo.StartCleanupWorker(context.Background(), 24*time.Hour, 90*24*time.Hour)
@@ -255,25 +254,22 @@ func main() {
 	// Initialize NCES service for lazy-loading district boundaries
 	ncesService := services.NewNCESService()
 
-	// Initialize school handler
-	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo,
-		signalGroupRepo, encryptedSecretRepo, userRepo, auditRepo,
-		ncesService,
-		&cfg.Consensus, cfg.Bootstrap.CooldownEnabled, cfg.Bootstrap.CooldownMinutes,
-	)
-
-	// Initialize user report handler
-	userReportHandler := handlers.NewUserReportHandler(
-		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
-	)
-
 	// Initialize meshtastic channel repository
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
 	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+
+	// Initialize school handler
+	schoolHandler := handlers.NewSchoolHandler(
+		schoolRepo, districtRepo, groupRepo, userRepo, auditRepo, ncesService,
+	)
+
+	// Initialize user report handler
+	userReportHandler := handlers.NewUserReportHandler(
+		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
+	)
 
 	// Initialize connection repository and handler
 	connectionRepo := database.NewConnectionRepository(db)
