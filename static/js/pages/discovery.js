@@ -58,14 +58,8 @@ export async function render(container) {
         if (createBtn) createBtn.style.display = '';
     }
 
-    // Load browse groups and admin groups in parallel
-    await Promise.all([
-        loadBrowseGroups(),
-        loadAdminGroups(),
-    ]);
-
+    await loadBrowseGroups();
     bindBrowseEvents();
-    bindTopicBoardEvents();
 }
 
 // ---------------------------------------------------------------------------
