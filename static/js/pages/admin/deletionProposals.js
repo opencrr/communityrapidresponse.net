@@ -13,7 +13,10 @@ import {
 import { getAdminRegions } from '../../api/regions.js';
 import { getGroupsByRegion, getAdminGroups } from '../../api/signalGroups.js';
 import { getRegion } from '../../api/regions.js';
-import { getMySchools, getSchoolSignalGroups, getDistrictSignalGroups } from '../../api/schools.js';
+import { getMySchools } from '../../api/schools.js';
+// School signal groups are now managed through the group model
+const getSchoolSignalGroups = async () => ({ groups: [] });
+const getDistrictSignalGroups = async () => ({ groups: [] });
 import { ApiError } from '../../api/client.js';
 import { isAdmin, isSuperuser } from '../../utils/store.js';
 import toast from '../../components/toast.js';

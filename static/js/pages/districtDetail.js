@@ -3,17 +3,12 @@
  * Shows district info, schools list, and signal groups.
  */
 
-import { getDistrict, getDistrictMembers, getDistrictSignalGroups, createDistrictSignalGroup, districtToFeature } from '../api/schools.js';
+import { getDistrict, districtToFeature } from '../api/schools.js';
 import { listMeshtasticChannels } from '../api/meshtastic.js';
-import { createDistrictReport } from '../api/reports.js';
 import { initMap, addRegionsLayer, fitToBounds, destroyMap } from '../components/map.js';
 import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
-import { isAuthenticated, getUser } from '../utils/store.js';
-import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
-import { getPublicKeys } from '../api/encryption.js';
-import { navigate } from '../app.js';
-import toast from '../components/toast.js';
-import modal from '../components/modal.js';
+import { isAuthenticated } from '../utils/store.js';
+import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 
 let districtId = null;
 let districtData = null;
@@ -134,19 +129,6 @@ async function renderDistrictPage(container) {
 
     html += '</section>';
 
-    // Members section (populated async for authenticated users)
-    html += '<div id="members-section"></div>';
-
-    // Signal groups section
-    html += `
-        <section style="margin-bottom: var(--space-8);">
-            <h2 style="margin-bottom: var(--space-4);">District Signal Groups</h2>
-            <div id="district-signal-groups">
-                <div class="loading"><div class="spinner"></div></div>
-            </div>
-        </section>
-    `;
-
     // Meshtastic channels section
     html += `
         <section style="margin-bottom: var(--space-8);">
@@ -165,11 +147,7 @@ async function renderDistrictPage(container) {
         initDistrictMap(district);
     }
 
-    // Load members and signal groups for authenticated users
-    if (isAuthenticated()) {
-        loadMembers(districtId);
-    }
-    await loadSignalGroups();
+    // Load meshtastic channels for authenticated users
     await loadMeshtasticChannels();
 }
 
@@ -196,281 +174,6 @@ function initDistrictMap(district) {
             fitToBounds(map, geojson, { maxZoom: 12 });
         },
     });
-}
-
-/**
- * Load and render district members
- */
-async function loadMembers(districtId) {
-    const section = document.getElementById('members-section');
-    if (!section) return;
-
-    const currentUser = getUser();
-    const showReportButtons = isAuthenticated() && currentUser;
-
-    try {
-        const response = await getDistrictMembers(districtId);
-        const members = response.members || [];
-
-        if (members.length === 0) {
-            section.innerHTML = '';
-            return;
-        }
-
-        section.innerHTML = `
-            <section style="margin-bottom: var(--space-8);">
-                <h2 style="margin-bottom: var(--space-4);">Members (${members.length})</h2>
-                <div class="card">
-                    <div class="card__body">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                            <thead>
-                                <tr style="border-bottom: 2px solid var(--color-gray-200);">
-                                    <th style="padding: var(--space-2) var(--space-3);">Username</th>
-                                    <th style="padding: var(--space-2) var(--space-3);">School</th>
-                                    <th style="padding: var(--space-2) var(--space-3);">Status</th>
-                                    <th style="padding: var(--space-2) var(--space-3);">Role</th>
-                                    ${showReportButtons ? '<th style="padding: var(--space-2) var(--space-3);">Actions</th>' : ''}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${members.map(member => `
-                                    <tr style="border-bottom: 1px solid var(--color-gray-100);">
-                                        <td style="padding: var(--space-2) var(--space-3);">${escapeHtml(member.username)}</td>
-                                        <td style="padding: var(--space-2) var(--space-3);">${escapeHtml(member.school_name)}</td>
-                                        <td style="padding: var(--space-2) var(--space-3);">
-                                            ${member.verification_status === 'verified'
-                                                ? '<span class="badge badge--success">Verified</span>'
-                                                : '<span class="badge badge--warning">Pending</span>'}
-                                        </td>
-                                        <td style="padding: var(--space-2) var(--space-3);">
-                                            ${member.is_admin ? '<span class="badge badge--info">Admin</span>' : 'Member'}
-                                        </td>
-                                        ${showReportButtons ? `
-                                            <td style="padding: var(--space-2) var(--space-3);">
-                                                ${member.user_id !== currentUser?.id ? `
-                                                    <button class="btn btn--sm btn--outline report-member-btn"
-                                                        data-user-id="${member.user_id}"
-                                                        data-username="${escapeHtml(member.username)}">
-                                                        Report
-                                                    </button>
-                                                ` : ''}
-                                            </td>
-                                        ` : ''}
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </section>
-        `;
-
-        // Bind report buttons
-        if (showReportButtons) {
-            section.querySelectorAll('.report-member-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    showReportModal(districtId, btn.dataset.userId, btn.dataset.username);
-                });
-            });
-        }
-    } catch (error) {
-        console.error('Failed to load district members:', error);
-        if (error.status === 403) {
-            section.innerHTML = `
-                <section style="margin-bottom: var(--space-8);">
-                    <h2 style="margin-bottom: var(--space-4);">Members</h2>
-                    <div class="empty-state">
-                        <div class="empty-state__icon">&#x1F512;</div>
-                        <p class="empty-state__description">
-                            You must be a verified member of a school in this district to view members.
-                        </p>
-                    </div>
-                </section>
-            `;
-        }
-    }
-}
-
-/**
- * Show report modal for a district member
- */
-function showReportModal(districtId, userId, username) {
-    const reasons = [
-        { value: 'harassment', label: 'Harassment' },
-        { value: 'spam', label: 'Spam' },
-        { value: 'impersonation', label: 'Impersonation' },
-        { value: 'fraudulent_verification', label: 'Fraudulent Verification' },
-        { value: 'other', label: 'Other' },
-    ];
-
-    modal.showModal({
-        title: `Report ${escapeHtml(username)}`,
-        content: `
-            <div class="form">
-                <div class="form__group">
-                    <label for="report-reason" class="form__label">Reason</label>
-                    <select id="report-reason" class="form__input">
-                        ${reasons.map(r => `<option value="${r.value}">${r.label}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form__group">
-                    <label for="report-details" class="form__label">Details (optional)</label>
-                    <textarea id="report-details" class="form__input form__textarea" rows="3" placeholder="Provide additional details about this report..."></textarea>
-                </div>
-            </div>
-        `,
-        actions: [
-            { label: 'Cancel', type: 'secondary' },
-            {
-                label: 'Submit Report',
-                type: 'danger',
-                closeOnClick: false,
-                onClick: async () => {
-                    const reason = document.getElementById('report-reason')?.value;
-                    const details = document.getElementById('report-details')?.value?.trim() || null;
-
-                    if (!reason) {
-                        toast.error('Please select a reason.');
-                        return;
-                    }
-
-                    try {
-                        await createDistrictReport(districtId, userId, reason, details);
-                        modal.closeModal();
-                        toast.success('Report submitted successfully.');
-                    } catch (error) {
-                        let errorMessage = 'Failed to submit report.';
-                        if (error.data?.message) {
-                            errorMessage = error.data.message;
-                        } else if (error.message) {
-                            errorMessage = error.message;
-                        }
-                        toast.error(errorMessage);
-                    }
-                },
-            },
-        ],
-    });
-}
-
-/**
- * Load and render signal groups
- */
-async function loadSignalGroups() {
-    const groupsContainer = document.getElementById('district-signal-groups');
-    if (!groupsContainer) return;
-
-    if (!isAuthenticated()) {
-        groupsContainer.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state__icon">&#x1F4E1;</div>
-                <p class="empty-state__description">
-                    <a href="/login" data-link>Log in</a> and become a verified member of a school in this district to see signal groups.
-                </p>
-            </div>
-        `;
-        return;
-    }
-
-    try {
-        const response = await getDistrictSignalGroups(districtId);
-        const groups = response.groups || [];
-
-        if (groups.length === 0) {
-            groupsContainer.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state__icon">&#x1F4E1;</div>
-                    <h3 class="empty-state__title">No Signal Groups Yet</h3>
-                    <p class="empty-state__description">
-                        No district-level signal groups have been created yet.
-                    </p>
-                </div>
-            `;
-        } else {
-            // Decrypt invite links
-            const privateKey = await getPrivateKey();
-            const decryptedGroups = await Promise.all(groups.map(async (group) => {
-                let link = null;
-                const secret = group.encrypted_secret;
-                if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
-                    try {
-                        link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
-                    } catch (e) { /* decryption failed */ }
-                }
-                return { ...group, _decryptedLink: link };
-            }));
-
-            let groupsHtml = '<div class="card-list">';
-            for (const group of decryptedGroups) {
-                groupsHtml += `
-                    <div class="card">
-                        <div class="card__body">
-                            <h3 class="card__title">${escapeHtml(group.name)}${group.has_pending_deletion ? '<span class="badge badge--danger" style="margin-left: var(--space-2);">Delete Proposed</span>' : ''}</h3>
-                            ${group.description ? `<p class="card__meta">${escapeHtml(group.description)}</p>` : ''}
-                            ${group._decryptedLink ? `
-                                <a href="${escapeHtml(group._decryptedLink)}" target="_blank" rel="noopener noreferrer" class="btn btn--primary btn--sm" style="margin-top: var(--space-2);">
-                                    Join Signal Group
-                                </a>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            }
-            groupsHtml += '</div>';
-            groupsContainer.innerHTML = groupsHtml;
-        }
-
-        // Add create form for admins (if the API returned can_create flag or if user is admin of a school in district)
-        if (response.can_create) {
-            const formHtml = `
-                <div style="margin-top: var(--space-6); padding: var(--space-4); background: var(--color-gray-50); border-radius: var(--radius-md);">
-                    <h3 style="margin-bottom: var(--space-3);">Create District Signal Group</h3>
-                    <form id="create-district-group-form">
-                        <div class="form-group">
-                            <label class="form-label" for="district-group-name">Group Name</label>
-                            <input type="text" class="form-input" id="district-group-name" required maxlength="255" placeholder="e.g., District Parents Group">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="district-group-link">Signal Invite Link</label>
-                            <input type="url" class="form-input" id="district-group-link" required placeholder="https://signal.group/...">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="district-group-description">Description (optional)</label>
-                            <textarea class="form-input" id="district-group-description" rows="2" placeholder="What is this group for?"></textarea>
-                        </div>
-                        <button type="submit" class="btn btn--primary">Create Group</button>
-                    </form>
-                </div>
-            `;
-            groupsContainer.insertAdjacentHTML('beforeend', formHtml);
-
-            const form = document.getElementById('create-district-group-form');
-            if (form) {
-                form.addEventListener('submit', handleCreateDistrictGroup);
-            }
-        }
-    } catch (error) {
-        console.error('Failed to load district signal groups:', error);
-        if (error.status === 403) {
-            groupsContainer.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state__icon">&#x1F512;</div>
-                    <p class="empty-state__description">
-                        You must be a verified member of a school in this district to view signal groups.
-                    </p>
-                </div>
-            `;
-        } else {
-            groupsContainer.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state__icon">&#x26A0;</div>
-                    <p class="empty-state__description">
-                        Failed to load signal groups. Please try again.
-                    </p>
-                </div>
-            `;
-        }
-    }
 }
 
 /**
@@ -565,62 +268,6 @@ async function loadMeshtasticChannels() {
                     </p>
                 </div>
             `;
-        }
-    }
-}
-
-/**
- * Handle create district signal group form submission
- */
-async function handleCreateDistrictGroup(event) {
-    event.preventDefault();
-
-    const name = document.getElementById('district-group-name')?.value?.trim();
-    const inviteLink = document.getElementById('district-group-link')?.value?.trim();
-    const description = document.getElementById('district-group-description')?.value?.trim();
-
-    if (!name || !inviteLink) {
-        toast.error('Group name and invite link are required.');
-        return;
-    }
-
-    const submitBtn = event.target.querySelector('button[type="submit"]');
-    if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Encrypting & creating...';
-    }
-
-    try {
-        // Fetch public keys for district members and encrypt
-        const publicKeysResponse = await getPublicKeys({ district_id: districtId });
-        const memberKeys = publicKeysResponse.public_keys || [];
-        if (memberKeys.length === 0) {
-            toast.error('No members with encryption keys found. Members need to log in to set up encryption.');
-            if (submitBtn) {
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Create Group';
-            }
-            return;
-        }
-        const encrypted = await encryptForMembers(inviteLink, memberKeys);
-
-        const data = {
-            name,
-            encrypted_payload: encrypted.ciphertext,
-            encryption_iv: encrypted.iv,
-            wrapped_keys: encrypted.wrappedKeys,
-        };
-        if (description) data.description = description;
-
-        await createDistrictSignalGroup(districtId, data);
-        toast.success('District signal group created!');
-        await loadSignalGroups();
-    } catch (error) {
-        console.error('Failed to create district signal group:', error);
-        toast.error(error.message || 'Failed to create signal group.');
-        if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Create Group';
         }
     }
 }

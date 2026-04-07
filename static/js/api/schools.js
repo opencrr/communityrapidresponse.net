@@ -1,5 +1,6 @@
 /**
  * Schools API module
+ * Thin layer for NCES school search and school-to-group linking.
  */
 
 import { get, post, ApiError } from './client.js';
@@ -9,7 +10,6 @@ import { get, post, ApiError } from './client.js';
  * @param {Object} [params] - Query parameters
  * @param {string} [params.query] - Search query (name)
  * @param {string} [params.state] - Filter by state (2-letter code)
- * @param {string} [params.district_id] - Filter by district ID
  * @param {number} [params.page] - Page number (default 1)
  * @param {number} [params.limit] - Results per page (default 20)
  * @returns {Promise<Object>} Search results with schools array and pagination
@@ -29,96 +29,24 @@ export async function searchSchools(params = {}) {
 /**
  * Get a single school by ID
  * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} School details
+ * @returns {Promise<Object>} School details with group_id if linked
  */
 export async function getSchool(schoolId) {
     return await get(`/schools/${schoolId}`);
 }
 
 /**
- * Join a school (creates pending membership)
+ * Join a school (creates or joins the linked group)
  * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} Join response
+ * @returns {Promise<Object>} Join response with group_id
  */
 export async function joinSchool(schoolId) {
     return await post(`/schools/${schoolId}/join`);
 }
 
 /**
- * Leave a school
- * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} Leave response
- */
-export async function leaveSchool(schoolId) {
-    return await post(`/schools/${schoolId}/leave`);
-}
-
-/**
- * Vouch for a school member
- * @param {string} schoolId - School UUID
- * @param {Object} data - Vouch data
- * @param {string} data.user_identifier - Email, username, or user ID
- * @returns {Promise<Object>} Vouch response
- */
-export async function vouchForSchoolMember(schoolId, data) {
-    return await post(`/schools/${schoolId}/vouch`, data);
-}
-
-/**
- * Get pending vouch requests for a school
- * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} Pending vouch users
- */
-export async function getPendingSchoolVouches(schoolId) {
-    return await get(`/schools/${schoolId}/vouch/pending`);
-}
-
-/**
- * Get vouch status for a user in a school
- * @param {string} schoolId - School UUID
- * @param {string} userId - User UUID
- * @returns {Promise<Object>} Vouch status
- */
-export async function getSchoolVouchStatus(schoolId, userId) {
-    return await get(`/schools/${schoolId}/vouch-status/${userId}`);
-}
-
-/**
- * Get members of a school
- * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} Members list
- */
-export async function getSchoolMembers(schoolId) {
-    return await get(`/schools/${schoolId}/members`);
-}
-
-/**
- * Get signal groups for a school
- * @param {string} schoolId - School UUID
- * @returns {Promise<Object>} Signal groups list
- */
-export async function getSchoolSignalGroups(schoolId) {
-    return await get(`/schools/${schoolId}/signal-groups`);
-}
-
-/**
- * Create a signal group for a school (admin only)
- * @param {string} schoolId - School UUID
- * @param {Object} data - Signal group data
- * @param {string} data.name - Group name
- * @param {string} data.encrypted_payload - Encrypted invite link (base64)
- * @param {string} data.encryption_iv - Encryption IV (base64)
- * @param {Array<{user_id: string, wrapped_dek: string}>} data.wrapped_keys - Wrapped DEKs
- * @param {string} [data.description] - Group description
- * @returns {Promise<Object>} Created group
- */
-export async function createSchoolSignalGroup(schoolId, data) {
-    return await post(`/schools/${schoolId}/signal-groups`, data);
-}
-
-/**
- * Get user's schools
- * @returns {Promise<Object>} User's schools list
+ * Get user's school groups
+ * @returns {Promise<Object>} User's school groups list
  */
 export async function getMySchools() {
     try {
@@ -160,34 +88,6 @@ export async function getDistrict(districtId) {
 }
 
 /**
- * Get members of a district (across all schools)
- * @param {string} districtId - District UUID
- * @returns {Promise<Object>} Members list
- */
-export async function getDistrictMembers(districtId) {
-    return await get(`/school-districts/${districtId}/members`);
-}
-
-/**
- * Get signal groups for a district
- * @param {string} districtId - District UUID
- * @returns {Promise<Object>} Signal groups list
- */
-export async function getDistrictSignalGroups(districtId) {
-    return await get(`/school-districts/${districtId}/signal-groups`);
-}
-
-/**
- * Create a signal group for a district
- * @param {string} districtId - District UUID
- * @param {Object} data - Signal group data
- * @returns {Promise<Object>} Created group
- */
-export async function createDistrictSignalGroup(districtId, data) {
-    return await post(`/school-districts/${districtId}/signal-groups`, data);
-}
-
-/**
  * Convert a district object to a GeoJSON Feature for map display
  * @param {Object} district - District with geometry
  * @returns {Object} GeoJSON Feature
@@ -209,18 +109,8 @@ export default {
     searchSchools,
     getSchool,
     joinSchool,
-    leaveSchool,
-    vouchForSchoolMember,
-    getPendingSchoolVouches,
-    getSchoolVouchStatus,
-    getSchoolMembers,
-    getSchoolSignalGroups,
-    createSchoolSignalGroup,
     getMySchools,
     searchDistricts,
     getDistrict,
-    getDistrictMembers,
-    getDistrictSignalGroups,
-    createDistrictSignalGroup,
     districtToFeature,
 };

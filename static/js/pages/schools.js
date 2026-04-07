@@ -1,7 +1,7 @@
 /**
  * School search/browse page
  * Sidebar + map layout mirroring regions.js.
- * Shows user's schools/districts on load, with search below.
+ * Shows user's school groups on load, with search below.
  */
 
 import { searchSchools, getMySchools } from '../api/schools.js';
@@ -54,7 +54,6 @@ export async function render(container) {
         </div>
     `;
 
-    // Initialize map then load user's schools
     initSchoolsMap();
     bindEvents();
 
@@ -83,7 +82,7 @@ function showSearchPrompt() {
 }
 
 /**
- * Load the authenticated user's schools and districts
+ * Load the authenticated user's school groups
  */
 async function loadMySchools() {
     const mySection = document.getElementById('my-schools-section');
@@ -99,45 +98,17 @@ async function loadMySchools() {
             return;
         }
 
-        // Extract unique districts from user's schools
-        const districtMap = {};
-        schools.forEach(school => {
-            if (school.district_name && school.district_id) {
-                districtMap[school.district_id] = school.district_name;
-            }
-        });
-        const districts = Object.entries(districtMap);
-
-        let html = '';
-
-        // Districts section
-        if (districts.length > 0) {
-            html += `
-                <div class="region-list__section">
-                    <h3 style="padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); color: var(--color-gray-500); text-transform: uppercase; letter-spacing: 0.05em;">
-                        My Districts (${districts.length})
-                    </h3>
-                    ${districts.map(([id, name]) => `
-                        <a href="/school-districts/${id}" class="region-item" data-link>
-                            <div class="region-item__name">${escapeHtml(name)}</div>
-                        </a>
-                    `).join('')}
-                </div>
-            `;
-        }
-
-        // Schools section
-        html += `
+        let html = `
             <div class="region-list__section">
                 <h3 style="padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); color: var(--color-gray-500); text-transform: uppercase; letter-spacing: 0.05em;">
                     My Schools (${schools.length})
                 </h3>
                 ${schools.map(school => `
-                    <a href="/schools/${school.id}" class="region-item" data-link>
-                        <div class="region-item__name">${escapeHtml(school.name)}</div>
+                    <a href="/groups/${school.group_id}" class="region-item" data-link>
+                        <div class="region-item__name">${escapeHtml(school.school_name)}</div>
                         <div class="region-item__meta">
                             ${escapeHtml(school.city || '')}${school.city ? ', ' : ''}${escapeHtml(school.state)}
-                            ${school.district_name ? ` &middot; ${escapeHtml(school.district_name)}` : ''}
+                            ${school.member_count ? ` &middot; ${school.member_count} member${school.member_count !== 1 ? 's' : ''}` : ''}
                         </div>
                     </a>
                 `).join('')}
@@ -145,9 +116,6 @@ async function loadMySchools() {
         `;
 
         mySection.innerHTML = html;
-
-        // Plot user's schools on map
-        plotSchoolsOnMap(schools);
 
     } catch (error) {
         console.error('Failed to load my schools:', error);
@@ -330,7 +298,10 @@ function renderResults(response, container) {
                 </h3>
                 ${stateSchools.map(school => `
                     <a href="/schools/${school.id}" class="region-item" data-link data-school-id="${school.id}">
-                        <div class="region-item__name">${escapeHtml(school.name)}</div>
+                        <div class="region-item__name">
+                            ${escapeHtml(school.name)}
+                            ${school.group_id ? '<span class="badge badge--success" style="margin-left: var(--space-2); font-size: 0.7em;">Group</span>' : ''}
+                        </div>
                         <div class="region-item__meta">
                             ${escapeHtml(school.city || '')}${school.city && school.district_name ? ' &middot; ' : ''}${escapeHtml(school.district_name || '')}
                             ${school.member_count ? ` &middot; ${school.member_count} member${school.member_count !== 1 ? 's' : ''}` : ''}
@@ -393,7 +364,10 @@ async function loadMore() {
             link.setAttribute('data-link', '');
             link.setAttribute('data-school-id', school.id);
             link.innerHTML = `
-                <div class="region-item__name">${escapeHtml(school.name)}</div>
+                <div class="region-item__name">
+                    ${escapeHtml(school.name)}
+                    ${school.group_id ? '<span class="badge badge--success" style="margin-left: var(--space-2); font-size: 0.7em;">Group</span>' : ''}
+                </div>
                 <div class="region-item__meta">
                     ${escapeHtml(school.city || '')}${school.city && school.district_name ? ' &middot; ' : ''}${escapeHtml(school.district_name || '')}
                     ${school.member_count ? ` &middot; ${school.member_count} member${school.member_count !== 1 ? 's' : ''}` : ''}
