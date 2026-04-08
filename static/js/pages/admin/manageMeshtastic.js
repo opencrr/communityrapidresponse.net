@@ -9,7 +9,7 @@ import {
     createMeshtasticChannel,
     updateMeshtasticChannel,
 } from '../../api/meshtastic.js';
-import { getAdminRegions } from '../../api/regions.js';
+import { getMyRegions } from '../../api/regions.js';
 import { getPublicKeys } from '../../api/encryption.js';
 import { ApiError } from '../../api/client.js';
 import { isAdmin } from '../../utils/store.js';
@@ -249,7 +249,7 @@ function bindChannelActions() {
 async function showCreateChannelModal(prefill = {}) {
     let regions = [];
     try {
-        regions = await getAdminRegions();
+        regions = await getMyRegions();
     } catch (error) {
         toast.error('Failed to load communities');
         return;

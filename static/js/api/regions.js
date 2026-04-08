@@ -112,15 +112,6 @@ export async function deleteRegion(regionId) {
 }
 
 /**
- * Get members of a region (auth required, caller must be a member)
- * @param {string} regionId - Region UUID
- * @returns {Promise<Object>} Response with members array
- */
-export async function getRegionMembers(regionId) {
-    return await get(`/communities/${regionId}/members`);
-}
-
-/**
  * Get regions the current user is a member of
  * Returns empty array if no regions (handles 404 gracefully)
  * Note: Uses /regions which returns user-scoped results for non-superusers
@@ -129,23 +120,6 @@ export async function getRegionMembers(regionId) {
 export async function getMyRegions() {
     try {
         const response = await get('/communities', { mine: 'true' });
-        return response.regions || response || [];
-    } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
-            return [];
-        }
-        throw error;
-    }
-}
-
-/**
- * Get regions the current user can administer
- * Returns empty array if no regions (handles 404 gracefully)
- * @returns {Promise<Object[]>} Array of regions user can admin
- */
-export async function getAdminRegions() {
-    try {
-        const response = await get('/communities/admin');
         return response.regions || response || [];
     } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
@@ -225,9 +199,7 @@ export default {
     createRegion,
     updateRegion,
     deleteRegion,
-    getRegionMembers,
     getMyRegions,
-    getAdminRegions,
     getAdminBoundary,
     validatePolygon,
     regionToFeature,

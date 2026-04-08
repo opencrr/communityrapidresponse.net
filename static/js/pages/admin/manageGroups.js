@@ -11,7 +11,7 @@ import {
 } from '../../api/signalGroups.js';
 import { createSecretProposal } from '../../api/secretProposals.js';
 import { deleteGroup as deleteGroupV2 } from '../../api/groups.js';
-import { getAdminRegions } from '../../api/regions.js';
+import { getMyRegions } from '../../api/regions.js';
 import { getPublicKeys } from '../../api/encryption.js';
 import { ApiError } from '../../api/client.js';
 import { isAdmin } from '../../utils/store.js';
@@ -231,7 +231,7 @@ function bindGroupActions() {
 async function showCreateGroupModal(preselectedRegionId) {
     let regions = [];
     try {
-        regions = await getAdminRegions();
+        regions = await getMyRegions();
     } catch (error) {
         toast.error('Failed to load communities');
         return;

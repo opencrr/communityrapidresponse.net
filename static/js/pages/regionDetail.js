@@ -3,12 +3,12 @@
  * Shows single region information with map and child regions.
  */
 
-import { getRegion, updateRegion, deleteRegion, regionToFeature, getRegionMembers } from '../api/regions.js';
+import { getRegion, updateRegion, deleteRegion, regionToFeature } from '../api/regions.js';
 import { getGroupsByRegion } from '../api/signalGroups.js';
 import { listMeshtasticChannels } from '../api/meshtastic.js';
 import { initMap, addRegionsLayer, destroyMap, fitToBounds } from '../components/map.js';
 import { renderMeshtasticCardHTML, initMeshtasticCardQR, bindMeshtasticCopyButtons } from '../components/meshtasticCard.js';
-import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser, getUser } from '../utils/store.js';
+import { isAuthenticated, hasReadAccess, isAdmin, isSuperuser } from '../utils/store.js';
 import { getPrivateKey, decryptSecret } from '../crypto/index.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -365,10 +365,6 @@ function renderRegionDetail(container, region, childRegions, groups, meshtasticC
         });
     }
 
-    // Load members list (for authenticated members)
-    if (authenticated && region.is_member) {
-        loadMembers(region.id);
-    }
 
 }
 
@@ -456,143 +452,6 @@ function renderJoinButton(region, authenticated, userHasReadAccess) {
             </div>
         </div>
     `;
-}
-
-/**
- * Load and display region members
- * @param {string} regionId - Region UUID
- */
-async function loadMembers(regionId) {
-    const section = document.getElementById('members-section');
-    if (!section) return;
-
-    const currentUser = getUser();
-    const showReportButtons = isAuthenticated() && currentUser;
-
-    try {
-        const response = await getRegionMembers(regionId);
-        const members = response.members || [];
-
-        if (members.length === 0) {
-            section.innerHTML = '';
-            return;
-        }
-
-        section.innerHTML = `
-            <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-4);">
-                Members (${members.length})
-            </h2>
-            <div class="card">
-                <div class="card__body">
-                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                        <thead>
-                            <tr style="border-bottom: 2px solid var(--color-gray-200);">
-                                <th style="padding: var(--space-2) var(--space-3);">Username</th>
-                                <th style="padding: var(--space-2) var(--space-3);">Role</th>
-                                ${showReportButtons ? '<th style="padding: var(--space-2) var(--space-3);">Actions</th>' : ''}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${members.map(member => `
-                                <tr style="border-bottom: 1px solid var(--color-gray-100);">
-                                    <td style="padding: var(--space-2) var(--space-3);">${escapeHtml(member.username)}</td>
-                                    <td style="padding: var(--space-2) var(--space-3);">${member.is_admin ? '<span class="badge badge--info">Admin</span>' : 'Member'}</td>
-                                    ${showReportButtons ? `
-                                        <td style="padding: var(--space-2) var(--space-3);">
-                                            ${member.id !== currentUser?.id ? `
-                                                <button class="btn btn--sm btn--outline report-member-btn"
-                                                    data-user-id="${member.id}"
-                                                    data-username="${escapeHtml(member.username)}"
-                                                    data-region-id="${regionId}">
-                                                    Report
-                                                </button>
-                                            ` : ''}
-                                        </td>
-                                    ` : ''}
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-
-        // Bind report buttons
-        if (showReportButtons) {
-            section.querySelectorAll('.report-member-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    showReportModal(btn.dataset.regionId, btn.dataset.userId, btn.dataset.username);
-                });
-            });
-        }
-    } catch (error) {
-        console.error('Failed to load members:', error);
-    }
-}
-
-/**
- * Show the report user modal for a region member
- * @param {string} regionId - Region UUID
- * @param {string} userId - User to report
- * @param {string} username - Username for display
- */
-function showReportModal(regionId, userId, username) {
-    const reasons = [
-        { value: 'harassment', label: 'Harassment' },
-        { value: 'spam', label: 'Spam' },
-        { value: 'impersonation', label: 'Impersonation' },
-        { value: 'fraudulent_verification', label: 'Fraudulent Verification' },
-        { value: 'other', label: 'Other' },
-    ];
-
-    modal.showModal({
-        title: `Report ${escapeHtml(username)}`,
-        content: `
-            <div class="form">
-                <div class="form__group">
-                    <label for="report-reason" class="form__label">Reason</label>
-                    <select id="report-reason" class="form__input">
-                        ${reasons.map(r => `<option value="${r.value}">${r.label}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form__group">
-                    <label for="report-details" class="form__label">Details (optional)</label>
-                    <textarea id="report-details" class="form__input form__textarea" rows="3" placeholder="Provide additional details about this report..."></textarea>
-                </div>
-            </div>
-        `,
-        actions: [
-            { label: 'Cancel', type: 'secondary' },
-            {
-                label: 'Submit Report',
-                type: 'danger',
-                closeOnClick: false,
-                onClick: async () => {
-                    const reason = document.getElementById('report-reason')?.value;
-                    const details = document.getElementById('report-details')?.value?.trim() || null;
-
-                    if (!reason) {
-                        toast.error('Please select a reason.');
-                        return;
-                    }
-
-                    try {
-                        await createReport(regionId, userId, reason, details);
-                        modal.closeModal();
-                        toast.success('Report submitted successfully.');
-                    } catch (error) {
-                        let errorMessage = 'Failed to submit report.';
-                        if (error.data?.message) {
-                            errorMessage = error.data.message;
-                        } else if (error.message) {
-                            errorMessage = error.message;
-                        }
-                        toast.error(errorMessage);
-                    }
-                },
-            },
-        ],
-    });
 }
 
 /**
