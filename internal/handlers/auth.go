@@ -216,8 +216,13 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, database.ErrUserAlreadyExists) ||
 			errors.Is(err, database.ErrEmailAlreadyExists) ||
 			errors.Is(err, database.ErrNormalizedEmailAlreadyExists) {
-			// Return the same response as success to prevent account enumeration.
-			// An attacker cannot distinguish between "new account" and "existing account".
+			// Anti-enumeration: same response as success.
+			// Perform a dummy bcrypt comparison so the timing roughly matches
+			// the success path (which already ran bcrypt.GenerateFromPassword).
+			// This prevents an attacker from distinguishing duplicate accounts
+			// via response latency.
+			dummyHash := "$2a$12$000000000000000000000uGWDRhGTsKOQJF5K5CO1MJvVf6bhn6Ey"
+			_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(req.Password))
 			writeJSON(w, http.StatusCreated, models.RegisterResponse{
 				Message: "Registration successful. Please check your email for verification.",
 			})
@@ -509,7 +514,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return user with verification fields and JWT claims for debugging
+	// Return user with verification fields (never expose JWT claims)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user": map[string]interface{}{
 			"id":                    user.ID,
@@ -520,21 +525,12 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 			"vouch_verified":        user.VouchVerified,
 			"is_superuser":          user.IsSuperuser,
 			"email_verified":        user.EmailVerified,
-			"is_blocked":     user.IsBlocked,
-			"block_reason":   user.BlockReason,
+			"is_blocked":            user.IsBlocked,
+			"block_reason":          user.BlockReason,
 			"created_at":            user.CreatedAt,
 			"last_login":            user.LastLogin,
 			"regions":               user.Regions,
 			"authorized_boundaries": user.AuthorizedBoundaries,
-		},
-		"jwt_claims": map[string]interface{}{
-			"user_id":           claims.UserID,
-			"email":             claims.Email,
-			"is_superuser":      claims.IsSuperuser,
-			"postcard_verified": claims.PostcardVerified,
-			"vouch_verified":    claims.VouchVerified,
-			"verification_tier": claims.VerificationTier,
-			"token_type":        claims.TokenType,
 		},
 	})
 }
@@ -543,6 +539,13 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	// Get user from context for audit logging
 	claims := middleware.GetUserFromContext(r.Context())
+
+	// Invalidate all tokens for this user so stolen JWTs cannot be reused
+	if claims != nil && h.userRepo != nil {
+		if err := h.userRepo.InvalidateTokens(r.Context(), claims.UserID); err != nil {
+			slog.WarnContext(r.Context(), "failed to invalidate tokens on logout", "error", err, "user_id", claims.UserID)
+		}
+	}
 
 	// Clear the cookie
 	sameSite := http.SameSiteLaxMode
