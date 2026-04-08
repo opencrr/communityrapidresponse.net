@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
@@ -142,7 +143,33 @@ func TestMapboxService_GeocodeAddress_AddressNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Skip("Skipping - requires URL override capability")
+	svc := &MapboxService{
+		secretToken: "test_token",
+		client:      server.Client(),
+	}
+
+	address := &models.Address{
+		Line1:      "Invalid Address",
+		City:       "Nowhere",
+		State:      "XX",
+		PostalCode: "00000",
+	}
+
+	result, err := svc.geocodeAddressWithURL(
+		context.Background(),
+		server.URL+"/geocoding/v5/mapbox.places/test.json?access_token=test&country=US&types=address",
+		address,
+	)
+
+	if err == nil {
+		t.Error("Expected error for address not found, got nil")
+	}
+	if result != nil {
+		t.Errorf("Expected nil result, got %+v", result)
+	}
+	if !strings.Contains(err.Error(), "no results") {
+		t.Errorf("Expected 'no results' in error, got: %v", err)
+	}
 }
 
 func TestMapboxService_GeocodeAddress_APIError(t *testing.T) {
@@ -152,7 +179,204 @@ func TestMapboxService_GeocodeAddress_APIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Skip("Skipping - requires URL override capability")
+	svc := &MapboxService{
+		secretToken: "test_token",
+		client:      server.Client(),
+	}
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	result, err := svc.geocodeAddressWithURL(
+		context.Background(),
+		server.URL+"/geocoding/v5/mapbox.places/test.json?access_token=test&country=US&types=address",
+		address,
+	)
+
+	if err == nil {
+		t.Error("Expected error for API failure, got nil")
+	}
+	if result != nil {
+		t.Errorf("Expected nil result, got %+v", result)
+	}
+	if !strings.Contains(err.Error(), "API error") {
+		t.Errorf("Expected 'API error' in error, got: %v", err)
+	}
+}
+
+func TestMapboxService_GeocodeAddress_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer server.Close()
+
+	svc := &MapboxService{
+		secretToken: "test_token",
+		client:      server.Client(),
+	}
+
+	address := &models.Address{
+		Line1: "123 Main St",
+		City:  "San Francisco",
+		State: "CA",
+	}
+
+	result, err := svc.geocodeAddressWithURL(
+		context.Background(),
+		server.URL+"/geocoding/v5/mapbox.places/test.json?access_token=test&country=US&types=address",
+		address,
+	)
+
+	if err == nil {
+		t.Error("Expected error for malformed JSON, got nil")
+	}
+	if result != nil {
+		t.Errorf("Expected nil result, got %+v", result)
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("Expected 'failed to parse response' in error, got: %v", err)
+	}
+}
+
+func TestMapboxService_GeocodeAddress_CountyFallback(t *testing.T) {
+	// When no city/place is in the context, BoundaryType should fall back to "county"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]interface{}{
+			"features": []map[string]interface{}{
+				{
+					"id":     "address.123",
+					"center": []float64{-122.0, 40.0},
+					"context": []map[string]interface{}{
+						{
+							"id":   "district.789",
+							"text": "Humboldt County",
+						},
+						{
+							"id":   "region.101",
+							"text": "California",
+						},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	svc := &MapboxService{
+		secretToken: "test_token",
+		client:      server.Client(),
+	}
+
+	address := &models.Address{
+		Line1:      "1000 Highway 101",
+		City:       "",
+		State:      "CA",
+		PostalCode: "95521",
+	}
+
+	result, err := svc.geocodeAddressWithURL(
+		context.Background(),
+		server.URL+"/geocoding/v5/mapbox.places/test.json?access_token=test&country=US&types=address",
+		address,
+	)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.BoundaryType != "county" {
+		t.Errorf("Expected boundary type 'county', got '%s'", result.BoundaryType)
+	}
+	if result.BoundaryName != "Humboldt County" {
+		t.Errorf("Expected boundary name 'Humboldt County', got '%s'", result.BoundaryName)
+	}
+	if result.CountyName != "Humboldt County" {
+		t.Errorf("Expected county name 'Humboldt County', got '%s'", result.CountyName)
+	}
+	if result.BoundaryState != "California" {
+		t.Errorf("Expected boundary state 'California', got '%s'", result.BoundaryState)
+	}
+}
+
+func TestMapboxService_GeocodeAddress_FullHierarchy(t *testing.T) {
+	// Test a geocode result that includes neighborhood, locality, city, county, and state
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]interface{}{
+			"features": []map[string]interface{}{
+				{
+					"id":     "address.456",
+					"center": []float64{-73.95, 40.68},
+					"context": []map[string]interface{}{
+						{
+							"id":   "neighborhood.100",
+							"text": "Williamsburg",
+						},
+						{
+							"id":   "locality.200",
+							"text": "Brooklyn",
+						},
+						{
+							"id":   "place.300",
+							"text": "New York",
+						},
+						{
+							"id":   "district.400",
+							"text": "Kings County",
+						},
+						{
+							"id":   "region.500",
+							"text": "New York",
+						},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	svc := &MapboxService{
+		secretToken: "test_token",
+		client:      server.Client(),
+	}
+
+	result, err := svc.geocodeAddressWithURL(
+		context.Background(),
+		server.URL+"/geocoding/v5/mapbox.places/test.json?access_token=test&country=US&types=address",
+		&models.Address{Line1: "123 Bedford Ave", City: "Brooklyn", State: "NY", PostalCode: "11211"},
+	)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.NeighborhoodName != "Williamsburg" {
+		t.Errorf("Expected neighborhood 'Williamsburg', got '%s'", result.NeighborhoodName)
+	}
+	if result.LocalityName != "Brooklyn" {
+		t.Errorf("Expected locality 'Brooklyn', got '%s'", result.LocalityName)
+	}
+	if result.BoundaryName != "New York" {
+		t.Errorf("Expected boundary name 'New York', got '%s'", result.BoundaryName)
+	}
+	if result.BoundaryType != "city" {
+		t.Errorf("Expected boundary type 'city', got '%s'", result.BoundaryType)
+	}
+	if result.CountyName != "Kings County" {
+		t.Errorf("Expected county 'Kings County', got '%s'", result.CountyName)
+	}
+	if result.BoundaryState != "New York" {
+		t.Errorf("Expected state 'New York', got '%s'", result.BoundaryState)
+	}
 }
 
 func TestGeocodeResult(t *testing.T) {

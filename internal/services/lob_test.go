@@ -628,6 +628,138 @@ func TestLobService_DeliverabilityVariants(t *testing.T) {
 	}
 }
 
+func TestLobService_SendPostcard_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": {"message": "Invalid postcard size"}}`))
+	}))
+	defer server.Close()
+
+	service := NewLobService(&config.LobConfig{
+		APIKey:        "live_api_key",
+		BaseURL:       server.URL,
+		ReturnName:    "Test Org",
+		ReturnLine1:   "123 Test St",
+		ReturnCity:    "Test City",
+		ReturnState:   "CA",
+		ReturnZip:     "94102",
+		ReturnCountry: "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	_, err := service.SendPostcard(context.Background(), address, "ABC123", "REF10")
+	if err == nil {
+		t.Error("Expected error for API failure")
+	}
+	if !strings.Contains(err.Error(), "API error") {
+		t.Errorf("Expected 'API error' in error message, got: %v", err)
+	}
+}
+
+func TestLobService_SendPostcard_InvalidAPIKeyFallback(t *testing.T) {
+	// When Lob returns invalid_api_key or unauthorized, the service falls back to mock mode
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error": {"message": "invalid_api_key"}}`))
+	}))
+	defer server.Close()
+
+	service := NewLobService(&config.LobConfig{
+		APIKey:        "live_api_key",
+		BaseURL:       server.URL,
+		ReturnName:    "Test Org",
+		ReturnLine1:   "123 Test St",
+		ReturnCity:    "Test City",
+		ReturnState:   "CA",
+		ReturnZip:     "94102",
+		ReturnCountry: "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	requestID, err := service.SendPostcard(context.Background(), address, "ABC123", "REF11")
+	if err != nil {
+		t.Fatalf("Expected fallback to mock mode, got error: %v", err)
+	}
+	if requestID != "mock_lob_ABC123" {
+		t.Errorf("Expected mock request ID 'mock_lob_ABC123', got '%s'", requestID)
+	}
+}
+
+func TestLobService_SendPostcard_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer server.Close()
+
+	service := NewLobService(&config.LobConfig{
+		APIKey:        "live_api_key",
+		BaseURL:       server.URL,
+		ReturnName:    "Test Org",
+		ReturnLine1:   "123 Test St",
+		ReturnCity:    "Test City",
+		ReturnState:   "CA",
+		ReturnZip:     "94102",
+		ReturnCountry: "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	_, err := service.SendPostcard(context.Background(), address, "ABC123", "REF12")
+	if err == nil {
+		t.Error("Expected error for malformed JSON response")
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("Expected 'failed to parse response' error, got: %v", err)
+	}
+}
+
+func TestLobService_ValidateAddress_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{broken json`))
+	}))
+	defer server.Close()
+
+	service := NewLobService(&config.LobConfig{
+		APIKey:  "live_api_key",
+		BaseURL: server.URL,
+	})
+
+	address := &models.Address{
+		Line1: "123 Main St",
+		City:  "San Francisco",
+		State: "CA",
+	}
+
+	_, err := service.ValidateAddress(context.Background(), address)
+	if err == nil {
+		t.Error("Expected error for malformed JSON response")
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("Expected 'failed to parse response' error, got: %v", err)
+	}
+}
+
 // =============================================================================
 // Fixture-based tests using real Lob API responses
 // =============================================================================

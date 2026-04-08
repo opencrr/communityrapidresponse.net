@@ -15,6 +15,7 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/mocks"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
+	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
 type verificationTestSuite struct {
@@ -2017,6 +2018,215 @@ func TestVerificationHandler_GetStatus_VouchVerifiedUser(t *testing.T) {
 // =============================================================================
 // RequestPostcardVerification Region Not Found Test
 // =============================================================================
+
+// =============================================================================
+// Full Integration Flow Test - traces data through Postgrid + Mapbox mocks
+// =============================================================================
+
+func TestVerificationHandler_FullFlow_ServiceInteraction(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@fullflowtest.com'")
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE name LIKE '%FullFlow%'")
+
+	user := &models.User{
+		Username:         "fullflowtest",
+		Email:            "user@fullflowtest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	region := suite.createTestRegion("FullFlow Test Region", models.RegionTypeCity, nil, user.ID)
+	defer suite.cleanupRegions(region.ID)
+
+	t.Run("custom mocks trace exact address through service chain", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.mapboxService.Reset()
+
+		// Track which address was validated and sent
+		var validatedAddress *models.Address
+		var sentAddress *models.Address
+		var sentVerificationCode string
+		var geocodedAddress *models.Address
+
+		suite.postgridService.ValidateAddressFunc = func(ctx context.Context, address *models.Address) (*services.AddressValidationResult, error) {
+			validatedAddress = address
+			return &services.AddressValidationResult{
+				IsDeliverable:       true,
+				Deliverability:      "deliverable",
+				IsPOBox:             false,
+				IsCMRA:              false,
+				IsCommercial:        false,
+				AddressType:         "residential",
+				StandardizedAddress: address,
+			}, nil
+		}
+
+		suite.postgridService.SendPostcardFunc = func(ctx context.Context, address *models.Address, verificationCode, postcardRef string) (string, error) {
+			sentAddress = address
+			sentVerificationCode = verificationCode
+			return "postcard_flow_test_001", nil
+		}
+
+		suite.mapboxService.GeocodeAddressFunc = func(ctx context.Context, address *models.Address) (*services.GeocodeResult, error) {
+			geocodedAddress = address
+			return &services.GeocodeResult{
+				Latitude:      37.7749,
+				Longitude:     -122.4194,
+				BoundaryType:  "city",
+				BoundaryName:  "San Francisco",
+				BoundaryState: "California",
+				PlaceID:       "place.test_flow",
+				CountyName:    "San Francisco County",
+			}, nil
+		}
+
+		inputAddress := map[string]string{
+			"line1":       "742 Evergreen Terrace",
+			"city":        "San Francisco",
+			"state":       "CA",
+			"postal_code": "94102",
+		}
+
+		body := map[string]interface{}{
+			"region_id": region.ID,
+			"address":   inputAddress,
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Verify the exact address flowed through ValidateAddress
+		if validatedAddress == nil {
+			t.Fatal("ValidateAddress was not called")
+		}
+		if validatedAddress.Line1 != "742 Evergreen Terrace" {
+			t.Errorf("ValidateAddress received wrong line1: %s", validatedAddress.Line1)
+		}
+
+		// Verify the exact address flowed through GeocodeAddress
+		if geocodedAddress == nil {
+			t.Fatal("GeocodeAddress was not called")
+		}
+		if geocodedAddress.City != "San Francisco" {
+			t.Errorf("GeocodeAddress received wrong city: %s", geocodedAddress.City)
+		}
+
+		// Verify the address flowed through SendPostcard
+		if sentAddress == nil {
+			t.Fatal("SendPostcard was not called")
+		}
+		if sentAddress.Line1 != "742 Evergreen Terrace" {
+			t.Errorf("SendPostcard received wrong line1: %s", sentAddress.Line1)
+		}
+
+		// Verify a verification code was generated
+		if sentVerificationCode == "" {
+			t.Error("SendPostcard received empty verification code")
+		}
+		// Verification codes should be 16 hex chars (8 random bytes)
+		if len(sentVerificationCode) != 16 {
+			t.Errorf("Expected 16-char verification code, got %d chars: %s", len(sentVerificationCode), sentVerificationCode)
+		}
+
+		// Clean up verification request
+		_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE user_id = ?", user.ID)
+
+		// Reset custom functions
+		suite.postgridService.ValidateAddressFunc = nil
+		suite.postgridService.SendPostcardFunc = nil
+		suite.mapboxService.GeocodeAddressFunc = nil
+	})
+
+	t.Run("validate address failure prevents geocode and postcard send", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.mapboxService.Reset()
+
+		geocodeCalled := false
+		sendPostcardCalled := false
+
+		suite.postgridService.ValidateAddressFunc = func(ctx context.Context, address *models.Address) (*services.AddressValidationResult, error) {
+			return nil, fmt.Errorf("postgrid service unavailable")
+		}
+
+		suite.mapboxService.GeocodeAddressFunc = func(ctx context.Context, address *models.Address) (*services.GeocodeResult, error) {
+			geocodeCalled = true
+			return nil, fmt.Errorf("should not be called")
+		}
+
+		suite.postgridService.SendPostcardFunc = func(ctx context.Context, address *models.Address, verificationCode, postcardRef string) (string, error) {
+			sendPostcardCalled = true
+			return "", fmt.Errorf("should not be called")
+		}
+
+		body := map[string]interface{}{
+			"region_id": region.ID,
+			"address": map[string]string{
+				"line1":       "123 Main St",
+				"city":        "San Francisco",
+				"state":       "CA",
+				"postal_code": "94102",
+			},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("Expected status 502, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// Verify the service call chain was short-circuited
+		if geocodeCalled {
+			t.Error("GeocodeAddress should not be called when ValidateAddress fails")
+		}
+		if sendPostcardCalled {
+			t.Error("SendPostcard should not be called when ValidateAddress fails")
+		}
+
+		// Reset custom functions
+		suite.postgridService.ValidateAddressFunc = nil
+		suite.postgridService.SendPostcardFunc = nil
+		suite.mapboxService.GeocodeAddressFunc = nil
+	})
+}
 
 func TestVerificationHandler_RequestPostcardVerification_RegionNotFound(t *testing.T) {
 	suite := setupVerificationTestSuite(t)
