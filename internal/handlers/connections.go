@@ -44,8 +44,8 @@ func (h *ConnectionHandler) ProposeConnection(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if len(req.GroupIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_request", "At least one target group ID is required")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *ConnectionHandler) ProposeConnection(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Validate all target groups exist
+	// Validate all target groups exist and are not blocked
 	for _, targetGroupID := range req.GroupIDs {
 		_, getErr := h.groupRepo.GetByID(r.Context(), targetGroupID)
 		if getErr != nil {
@@ -77,6 +77,27 @@ func (h *ConnectionHandler) ProposeConnection(w http.ResponseWriter, r *http.Req
 				return
 			}
 			writeServerError(w, r, getErr, "Failed to validate target group", "connection", "propose")
+			return
+		}
+
+		// Check if either group has blocked the other
+		blocked, blockErr := h.groupRepo.IsGroupBlocked(r.Context(), targetGroupID, proposerGroupID)
+		if blockErr != nil {
+			writeServerError(w, r, blockErr, "Failed to check block status", "connection", "propose")
+			return
+		}
+		if blocked {
+			writeError(w, http.StatusForbidden, "group_blocked", "Cannot propose connection to a group that has blocked your group")
+			return
+		}
+
+		blockedReverse, blockRevErr := h.groupRepo.IsGroupBlocked(r.Context(), proposerGroupID, targetGroupID)
+		if blockRevErr != nil {
+			writeServerError(w, r, blockRevErr, "Failed to check block status", "connection", "propose")
+			return
+		}
+		if blockedReverse {
+			writeError(w, http.StatusForbidden, "group_blocked", "Cannot propose connection to a blocked group")
 			return
 		}
 	}
@@ -442,16 +463,8 @@ func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.GroupName == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "group_name is required")
-		return
-	}
-	if req.AccessLevel == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "access_level is required")
-		return
-	}
-	if req.AccessLevel != "admin_only" && req.AccessLevel != "all_members" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "access_level must be admin_only or all_members")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -710,16 +723,9 @@ func (h *ConnectionHandler) ShareResource(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
-	if req.ResourceID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "resource_id is required")
-		return
-	}
-	if req.Visibility == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "visibility is required")
-		return
-	}
-	if req.Visibility != "admin_only" && req.Visibility != "all_members" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "visibility must be admin_only or all_members")
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 

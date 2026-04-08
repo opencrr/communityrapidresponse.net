@@ -4,10 +4,58 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
+
+	"github.com/go-playground/validator/v10"
 
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 )
+
+// validate is the shared struct validator instance used by all handlers.
+var validate = validator.New()
+
+// validateStruct validates a struct using go-playground/validator tags.
+// Returns a human-readable error message or empty string if valid.
+func validateStruct(s interface{}) string {
+	err := validate.Struct(s)
+	if err == nil {
+		return ""
+	}
+
+	var validationErrors validator.ValidationErrors
+	if errors.As(err, &validationErrors) {
+		var messages []string
+		for _, fieldErr := range validationErrors {
+			messages = append(messages, formatFieldError(fieldErr))
+		}
+		return strings.Join(messages, "; ")
+	}
+
+	return "Invalid request"
+}
+
+// formatFieldError converts a single field validation error into a readable message.
+func formatFieldError(fe validator.FieldError) string {
+	field := fe.Field()
+	switch fe.Tag() {
+	case "required":
+		return fmt.Sprintf("%s is required", field)
+	case "min":
+		return fmt.Sprintf("%s must be at least %s", field, fe.Param())
+	case "max":
+		return fmt.Sprintf("%s must be at most %s", field, fe.Param())
+	case "oneof":
+		return fmt.Sprintf("%s must be one of: %s", field, fe.Param())
+	case "email":
+		return fmt.Sprintf("%s must be a valid email address", field)
+	case "alphanum":
+		return fmt.Sprintf("%s must contain only letters and numbers", field)
+	default:
+		return fmt.Sprintf("%s failed validation (%s)", field, fe.Tag())
+	}
+}
 
 // Sentinel errors for configuration-level issues (no runtime err variable available).
 var (

@@ -3,12 +3,24 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
+	"github.com/opencrr/communityrapidresponse.net/internal/services"
+)
+
+// Rate limit constants for group operations.
+const (
+	inviteLinkCreateLimit  = 10
+	inviteLinkCreateWindow = 1 * time.Hour
+	joinViaLinkLimit       = 20
+	joinViaLinkWindow      = 1 * time.Hour
 )
 
 // GroupHandler handles group endpoints.
@@ -19,6 +31,7 @@ type GroupHandler struct {
 	regionRepo           *database.RegionRepository
 	userRepo             *database.UserRepository
 	auditRepo            *database.AuditRepository
+	rateLimiter          services.RateLimiter
 }
 
 // NewGroupHandler creates a new group handler.
@@ -38,6 +51,32 @@ func NewGroupHandler(
 		userRepo:             userRepo,
 		auditRepo:            auditRepo,
 	}
+}
+
+// SetRateLimiter sets the rate limiter for group-specific rate limiting.
+func (h *GroupHandler) SetRateLimiter(limiter services.RateLimiter) {
+	h.rateLimiter = limiter
+}
+
+// checkGroupRateLimit checks per-endpoint group rate limits.
+// Returns true if allowed, false if rate-limited (429 already written).
+func (h *GroupHandler) checkGroupRateLimit(w http.ResponseWriter, r *http.Request, action, scopeID string, limit int, window time.Duration) bool {
+	if h.rateLimiter == nil {
+		return true
+	}
+
+	key := fmt.Sprintf("group:%s:%s", action, scopeID)
+	allowed, _, _, err := h.rateLimiter.Allow(r.Context(), key, limit, window)
+	if err != nil {
+		slog.WarnContext(r.Context(), "group rate limit check failed", "key", key, "error", err)
+		return true
+	}
+
+	if !allowed {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests. Please try again later.")
+		return false
+	}
+	return true
 }
 
 // Browse handles GET /api/v1/groups/browse
@@ -106,21 +145,14 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate name
-	if len(req.Name) < 3 || len(req.Name) > 255 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name must be between 3 and 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
 	// Validate at least one region
 	if len(req.RegionIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "At least one region_id is required")
-		return
-	}
-
-	// Validate visibility
-	if req.Visibility != "listed" && req.Visibility != "unlisted" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Visibility must be 'listed' or 'unlisted'")
 		return
 	}
 
@@ -242,9 +274,8 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate name length if provided
-	if req.Name != nil && (len(*req.Name) < 3 || len(*req.Name) > 255) {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name must be between 3 and 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -296,7 +327,13 @@ func (h *GroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !claims.IsSuperuser {
+	// Re-check superuser status from DB (defense-in-depth against stale JWT claims)
+	callerUser, err := h.userRepo.GetByID(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify permissions", "group", "delete_group")
+		return
+	}
+	if !callerUser.IsSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "Only superusers can delete groups")
 		return
 	}
@@ -476,6 +513,11 @@ func (h *GroupHandler) CreateInviteLink(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Rate limit: 10 invite links per group per hour
+	if !h.checkGroupRateLimit(w, r, "create_invite_link", groupID, inviteLinkCreateLimit, inviteLinkCreateWindow) {
+		return
+	}
+
 	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invite_link")
@@ -492,6 +534,11 @@ func (h *GroupHandler) CreateInviteLink(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 			return
 		}
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
 	}
 
 	link, err := h.groupRepo.CreateInviteLink(r.Context(), groupID, claims.UserID, &req)
@@ -557,6 +604,11 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limit: 20 join attempts per user per hour
+	if !h.checkGroupRateLimit(w, r, "join_via_link", claims.UserID, joinViaLinkLimit, joinViaLinkWindow) {
+		return
+	}
+
 	token := getPathParam(r, "token")
 	if token == "" {
 		writeError(w, http.StatusBadRequest, "missing_parameter", "Invite token required")
@@ -581,6 +633,18 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
 		return
 	}
+
+	// Verify the group still exists and is not in a deleted/invalid state
+	group, err := h.groupRepo.GetByID(r.Context(), link.GroupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify group", "group", "join_via_link")
+		return
+	}
+	_ = group // group existence verified; provisional groups allowed for graduation flow
 
 	// Check if user is already a member
 	isMember, err := h.groupRepo.IsUserMember(r.Context(), link.GroupID, claims.UserID)
@@ -980,21 +1044,12 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Validate group_name
-	if req.GroupName == "" || len(req.GroupName) > 255 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name must be between 1 and 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
-	// Validate access_tier
 	accessTier := models.AccessTier(req.AccessTier)
-	switch accessTier {
-	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
-		// valid
-	default:
-		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
-		return
-	}
 
 	var description *string
 	if req.Description != "" {
@@ -1147,31 +1202,8 @@ func (h *GroupHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate title
-	if req.Title == "" || len(req.Title) > 255 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Title must be between 1 and 255 characters")
-		return
-	}
-
-	// Validate URL
-	if req.URL == "" || len(req.URL) > 2048 {
-		writeError(w, http.StatusBadRequest, "validation_error", "URL must be between 1 and 2048 characters")
-		return
-	}
-
-	// Validate description length
-	if len(req.Description) > 500 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Description must be at most 500 characters")
-		return
-	}
-
-	// Validate access tier
-	accessTier := models.AccessTier(req.AccessTier)
-	switch accessTier {
-	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
-		// valid
-	default:
-		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -1310,28 +1342,9 @@ func (h *GroupHandler) UpdateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate fields if present
-	if req.Title != nil && (*req.Title == "" || len(*req.Title) > 255) {
-		writeError(w, http.StatusBadRequest, "validation_error", "Title must be between 1 and 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
-	}
-	if req.URL != nil && (*req.URL == "" || len(*req.URL) > 2048) {
-		writeError(w, http.StatusBadRequest, "validation_error", "URL must be between 1 and 2048 characters")
-		return
-	}
-	if req.Description != nil && len(*req.Description) > 500 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Description must be at most 500 characters")
-		return
-	}
-	if req.AccessTier != nil {
-		tier := models.AccessTier(*req.AccessTier)
-		switch tier {
-		case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
-			// valid
-		default:
-			writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
-			return
-		}
 	}
 
 	if err := h.groupRepo.UpdateResource(r.Context(), resourceID, &req); err != nil {
@@ -1608,27 +1621,8 @@ func (h *GroupHandler) CreateOrUpdatePosting(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Validate description
-	if len(req.Description) < 10 || len(req.Description) > 500 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Description must be between 10 and 500 characters")
-		return
-	}
-
-	// Validate tags
-	if len(req.Tags) == 0 || len(req.Tags) > 5 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Must provide between 1 and 5 tags")
-		return
-	}
-	for _, tag := range req.Tags {
-		if len(tag) < 2 || len(tag) > 100 {
-			writeError(w, http.StatusBadRequest, "validation_error", "Each tag must be between 2 and 100 characters")
-			return
-		}
-	}
-
-	// Validate region label if provided
-	if req.RegionLabel != nil && len(*req.RegionLabel) > 255 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Region label must be at most 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -1846,21 +1840,12 @@ func (h *GroupHandler) CreateMeshtasticChannel(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Validate channel_name
-	if req.ChannelName == "" || len(req.ChannelName) > 255 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Channel name must be between 1 and 255 characters")
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
-	// Validate access_tier
 	accessTier := models.AccessTier(req.AccessTier)
-	switch accessTier {
-	case models.AccessTierOpen, models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
-		// valid
-	default:
-		writeError(w, http.StatusBadRequest, "validation_error", "Invalid access tier; must be one of: open, resident, member, trusted, admin_only")
-		return
-	}
 
 	var description *string
 	if req.Description != "" {

@@ -156,15 +156,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate request
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Username, email, and password are required")
+	// Struct-level validation from tags
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
-	if len(req.Password) < 12 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must be at least 12 characters")
-		return
+	// Username format: letters, numbers, underscores only
+	for _, c := range req.Username {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			writeError(w, http.StatusBadRequest, "validation_error", "Username must contain only letters, numbers, and underscores")
+			return
+		}
 	}
 
 	if len(req.Password) > 128 {
@@ -213,7 +216,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, database.ErrUserAlreadyExists) ||
 			errors.Is(err, database.ErrEmailAlreadyExists) ||
 			errors.Is(err, database.ErrNormalizedEmailAlreadyExists) {
-			writeError(w, http.StatusConflict, "account_exists", "An account with these credentials already exists")
+			// Return the same response as success to prevent account enumeration.
+			// An attacker cannot distinguish between "new account" and "existing account".
+			writeJSON(w, http.StatusCreated, models.RegisterResponse{
+				Message: "Registration successful. Please check your email for verification.",
+			})
 			return
 		}
 		writeServerError(w, r, err, "Failed to create user", "auth", "register")
@@ -414,6 +421,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		SameSite: sameSite,
 		MaxAge:   maxAge,
 	})
+
+	// NOTE: Token is included in response body for programmatic API clients.
+	// Browser clients should use the httpOnly cookie set above as their primary auth mechanism.
 
 	// If email verification required, return different response
 	if emailAction != "" {

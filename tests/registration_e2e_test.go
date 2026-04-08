@@ -330,7 +330,7 @@ func TestE2E_Registration_DuplicateUsername(t *testing.T) {
 	_ = resp.Body.Close()
 	defer suite.cleanup(firstUser.UserID)
 
-	t.Run("rejects duplicate username", func(t *testing.T) {
+	t.Run("returns success for duplicate username to prevent enumeration", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
 			"username": "duplicateuser",
 			"email":    "different@example.com",
@@ -338,15 +338,9 @@ func TestE2E_Registration_DuplicateUsername(t *testing.T) {
 		}, "")
 		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d", resp.StatusCode)
-		}
-
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-
-		if body["error"] != "account_exists" {
-			t.Errorf("Expected error 'account_exists', got '%v'", body["error"])
+		// Anti-enumeration: duplicate accounts return the same response as success
+		if resp.StatusCode != http.StatusCreated {
+			t.Errorf("Expected status 201 (anti-enumeration), got %d", resp.StatusCode)
 		}
 	})
 }
@@ -366,7 +360,7 @@ func TestE2E_Registration_DuplicateEmail(t *testing.T) {
 	_ = resp.Body.Close()
 	defer suite.cleanup(firstUser.UserID)
 
-	t.Run("rejects duplicate email", func(t *testing.T) {
+	t.Run("returns success for duplicate email to prevent enumeration", func(t *testing.T) {
 		resp := suite.request("POST", "/api/v1/auth/register", map[string]string{
 			"username": "seconduser",
 			"email":    "duplicate@example.com",
@@ -374,15 +368,9 @@ func TestE2E_Registration_DuplicateEmail(t *testing.T) {
 		}, "")
 		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d", resp.StatusCode)
-		}
-
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-
-		if body["error"] != "account_exists" {
-			t.Errorf("Expected error 'account_exists', got '%v'", body["error"])
+		// Anti-enumeration: duplicate accounts return the same response as success
+		if resp.StatusCode != http.StatusCreated {
+			t.Errorf("Expected status 201 (anti-enumeration), got %d", resp.StatusCode)
 		}
 	})
 }
