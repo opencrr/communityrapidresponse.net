@@ -24,10 +24,12 @@ const csrfCookieMaxAge = 86400
 // Only unauthenticated/pre-auth endpoints are listed here. Authenticated
 // endpoints like change-password and resend-verification require CSRF
 // as defense-in-depth.
+// csrfExemptPaths are exact paths exempt from CSRF validation.
+// Login, register, and logout are NOT exempt — the frontend sends CSRF
+// tokens on all state-changing requests. Only endpoints that use
+// short-lived bearer tokens (MFA) or one-time tokens (password reset)
+// are exempt, since CSRF protection is redundant there.
 var csrfExemptPaths = map[string]bool{
-	"/api/v1/auth/register":        true,
-	"/api/v1/auth/login":           true,
-	"/api/v1/auth/logout":          true,
 	"/api/v1/auth/forgot-password": true,
 	"/api/v1/auth/reset-password":  true,
 	"/api/v1/auth/verify-email":    true,
