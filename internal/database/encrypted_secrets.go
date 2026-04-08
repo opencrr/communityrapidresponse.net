@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -248,15 +249,26 @@ func (r *EncryptedSecretRepository) GetPendingRekeys(ctx context.Context, member
 	return results, rows.Err()
 }
 
-// SubmitRekey updates a single wrapped key for a target user
+// SubmitRekey updates a single wrapped key for a target user.
+// Only updates rows where rekey_needed is TRUE to prevent replay/overwrite attacks.
 func (r *EncryptedSecretRepository) SubmitRekey(ctx context.Context, secretID, targetUserID, wrappedDEK string) error {
 	query := `
 		UPDATE encrypted_secret_keys
 		SET wrapped_dek = ?, rekey_needed = FALSE, created_at = ?
-		WHERE secret_id = ? AND user_id = ?
+		WHERE secret_id = ? AND user_id = ? AND rekey_needed = TRUE
 	`
-	_, err := r.db.ExecContext(ctx, query, wrappedDEK, time.Now().UTC(), secretID, targetUserID)
-	return err
+	result, err := r.db.ExecContext(ctx, query, wrappedDEK, time.Now().UTC(), secretID, targetUserID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("no pending rekey found for secret %s user %s", secretID, targetUserID)
+	}
+	return nil
 }
 
 // PendingRekey represents a pending re-key operation
