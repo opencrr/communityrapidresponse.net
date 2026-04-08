@@ -168,7 +168,7 @@ func TestAuthHandler_Register(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects duplicate username", func(t *testing.T) {
+	t.Run("returns 201 for duplicate username (anti-enumeration)", func(t *testing.T) {
 		// First registration
 		body1 := map[string]string{
 			"username": "dupetest",
@@ -182,7 +182,7 @@ func TestAuthHandler_Register(t *testing.T) {
 		rec1 := httptest.NewRecorder()
 		handler.Register(rec1, req1)
 
-		// Second registration with same username
+		// Second registration with same username — returns 201 to prevent enumeration
 		body2 := map[string]string{
 			"username": "dupetest",
 			"email":    "dupe2@registertest.com",
@@ -195,8 +195,8 @@ func TestAuthHandler_Register(t *testing.T) {
 		rec2 := httptest.NewRecorder()
 		handler.Register(rec2, req2)
 
-		if rec2.Code != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d", rec2.Code)
+		if rec2.Code != http.StatusCreated {
+			t.Errorf("Expected status 201 (anti-enumeration), got %d", rec2.Code)
 		}
 
 		// Cleanup
@@ -2333,8 +2333,8 @@ func TestAuthHandler_Register_DuplicateEmail(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	handler.Register(rec2, req2)
 
-	if rec2.Code != http.StatusConflict {
-		t.Errorf("Expected status 409 for duplicate email, got %d: %s", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusCreated {
+		t.Errorf("Expected status 201 for duplicate email (anti-enumeration), got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

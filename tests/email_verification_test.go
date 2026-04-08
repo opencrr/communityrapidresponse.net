@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -381,9 +382,11 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Use a sanitized name for usernames (no spaces)
+			safeName := strings.ReplaceAll(tc.name, " ", "_")
 			// Register first user
 			req1 := map[string]string{
-				"username": "normtest1_" + tc.name,
+				"username": "normtest1_" + safeName,
 				"email":    tc.firstEmail,
 				"password": "testpassword123",
 			}
@@ -401,7 +404,7 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 
 			// Try to register second user
 			req2 := map[string]string{
-				"username": "normtest2_" + tc.name,
+				"username": "normtest2_" + safeName,
 				"email":    tc.secondEmail,
 				"password": "testpassword123",
 			}

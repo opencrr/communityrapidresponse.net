@@ -437,7 +437,7 @@ func (r *GroupRepository) BrowseByRegion(ctx context.Context, regionID string, i
 			WHERE gr.region_id = ?
 				AND g.visibility = 'listed'
 				AND g.status = 'active'
-			ORDER BY MD5(CONCAT(id, CURDATE()))
+			ORDER BY MD5(CONCAT(g.id, CURDATE()))
 		`
 	}
 
@@ -479,7 +479,7 @@ func (r *GroupRepository) BrowseAll(ctx context.Context) ([]models.GroupWithDeta
 					AND sg.access_tier = 'open'
 					AND sg.is_active = TRUE
 			)
-		ORDER BY MD5(CONCAT(id, CURDATE()))
+		ORDER BY MD5(CONCAT(g.id, CURDATE()))
 	`
 
 	rows, err := r.db.QueryContext(ctx, query)
@@ -1872,7 +1872,7 @@ func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, b
 				AND t.tag = ?
 				AND gb.id IS NULL
 				AND p.group_id != ?
-			ORDER BY MD5(CONCAT(id, CURDATE()))
+			ORDER BY MD5(CONCAT(p.id, CURDATE()))
 			LIMIT ? OFFSET ?
 		`
 		args = []interface{}{browsingGroupID, topicTag, browsingGroupID, limit, offset}
@@ -1885,7 +1885,7 @@ func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, b
 			WHERE p.is_active = TRUE
 				AND gb.id IS NULL
 				AND p.group_id != ?
-			ORDER BY MD5(CONCAT(id, CURDATE()))
+			ORDER BY MD5(CONCAT(p.id, CURDATE()))
 			LIMIT ? OFFSET ?
 		`
 		args = []interface{}{browsingGroupID, browsingGroupID, limit, offset}
