@@ -1681,3 +1681,395 @@ func TestGenerateVerificationCode_Length(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// RequestPostcardVerification Edge Cases
+// =============================================================================
+
+func TestVerificationHandler_RequestPostcardVerification_InvalidJSON(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@invalidjsontest.com'")
+
+	user := &models.User{
+		Username:         "invalidjsontest",
+		Email:            "user@invalidjsontest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(), "UPDATE users SET vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("invalid JSON body returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader([]byte("not json")))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestVerificationHandler_VerifyCode_InvalidJSON(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@verifyjsontest.com'")
+
+	user := &models.User{
+		Username:         "verifyjsontest",
+		Email:            "user@verifyjsontest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierUnverified,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	defer suite.cleanup(user.ID)
+
+	t.Run("invalid JSON body returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/verify", bytes.NewReader([]byte("not json")))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierUnverified,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.VerifyCode(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestVerificationHandler_GetStatus_PostcardVerifiedUser(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@statuspctest.com'")
+
+	user := &models.User{
+		Username:         "statuspctest",
+		Email:            "user@statuspctest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierPostcard,
+		PostcardVerified: true,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("postcard verified user shows correct tier", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/verification/status", nil)
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierPostcard,
+			PostcardVerified: true,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetStatus(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		postcardVerified, ok := resp["postcard_verified"].(bool)
+		if !ok || !postcardVerified {
+			t.Errorf("Expected postcard_verified = true, got %v", resp["postcard_verified"])
+		}
+
+		vouchVerified, ok := resp["vouch_verified"].(bool)
+		if !ok || !vouchVerified {
+			t.Errorf("Expected vouch_verified = true, got %v", resp["vouch_verified"])
+		}
+	})
+}
+
+// =============================================================================
+// Mapbox Geocode Failure Test
+// =============================================================================
+
+func TestVerificationHandler_RequestPostcardVerification_MapboxFailure(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@mapboxfailtest.com'")
+
+	user := &models.User{
+		Username:         "mapboxfailtest",
+		Email:            "user@mapboxfailtest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("mapbox service failure returns 502", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.mapboxService.Reset()
+		suite.mapboxService.ShouldFail = true
+
+		body := map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "123 Main St",
+				"city":        "San Francisco",
+				"state":       "CA",
+				"postal_code": "94102",
+			},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("Expected status 502, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "geocoding_failed" {
+			t.Errorf("Expected error 'geocoding_failed', got %v", resp["error"])
+		}
+
+		suite.mapboxService.ShouldFail = false
+	})
+}
+
+// =============================================================================
+// Commercial Address Rejection Test
+// =============================================================================
+
+func TestVerificationHandler_RequestPostcardVerification_CommercialAddress(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@commercialtest.com'")
+
+	user := &models.User{
+		Username:         "commercialtest",
+		Email:            "user@commercialtest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("commercial address is rejected", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.postgridService.DefaultIsCommercial = true
+
+		body := map[string]interface{}{
+			"address": map[string]string{
+				"line1":       "100 Business Park Dr",
+				"city":        "San Francisco",
+				"state":       "CA",
+				"postal_code": "94102",
+			},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "commercial_not_allowed" {
+			t.Errorf("Expected error 'commercial_not_allowed', got %v", resp["error"])
+		}
+
+		suite.postgridService.DefaultIsCommercial = false
+	})
+}
+
+// =============================================================================
+// GetStatus Vouch Verified Only User Test
+// =============================================================================
+
+func TestVerificationHandler_GetStatus_VouchVerifiedUser(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@statusvouchtest.com'")
+
+	user := &models.User{
+		Username:         "statusvouchtest",
+		Email:            "user@statusvouchtest.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+		PostcardVerified: false,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE, postcard_verified = FALSE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("vouch verified user shows correct status", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/verification/status", nil)
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+			PostcardVerified: false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetStatus(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		tier, ok := resp["verification_tier"].(float64)
+		if !ok || int(tier) != int(models.TierVouched) {
+			t.Errorf("Expected verification_tier = %d, got %v", models.TierVouched, resp["verification_tier"])
+		}
+
+		vouchVerified, ok := resp["vouch_verified"].(bool)
+		if !ok || !vouchVerified {
+			t.Errorf("Expected vouch_verified = true, got %v", resp["vouch_verified"])
+		}
+
+		postcardVerified, ok := resp["postcard_verified"].(bool)
+		if !ok || postcardVerified {
+			t.Errorf("Expected postcard_verified = false, got %v", resp["postcard_verified"])
+		}
+	})
+}
+
+// =============================================================================
+// RequestPostcardVerification Region Not Found Test
+// =============================================================================
+
+func TestVerificationHandler_RequestPostcardVerification_RegionNotFound(t *testing.T) {
+	suite := setupVerificationTestSuite(t)
+
+	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@regionnotfound.com'")
+
+	user := &models.User{
+		Username:         "regionnotfound",
+		Email:            "user@regionnotfound.com",
+		PasswordHash:     "$2a$12$test.hash.for.testing.only",
+		VerificationTier: models.TierVouched,
+		VouchVerified:    true,
+	}
+	if err := suite.userRepo.Create(context.Background(), user); err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	_, _ = suite.db.ExecContext(context.Background(),
+		"UPDATE users SET vouch_verified = TRUE WHERE id = ?", user.ID)
+	defer suite.cleanup(user.ID)
+
+	t.Run("nonexistent region_id returns 404", func(t *testing.T) {
+		suite.postgridService.Reset()
+		suite.mapboxService.Reset()
+
+		body := map[string]interface{}{
+			"region_id": "nonexistent-region-id-12345",
+			"address": map[string]string{
+				"line1":       "123 Main St",
+				"city":        "San Francisco",
+				"state":       "CA",
+				"postal_code": "94102",
+			},
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/verification/postcard/request", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           user.ID,
+			Email:            user.Email,
+			VerificationTier: models.TierVouched,
+			VouchVerified:    true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.RequestPostcardVerification(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+

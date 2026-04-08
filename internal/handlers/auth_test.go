@@ -17,6 +17,7 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
+	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
 // testDB returns a database connection for testing
@@ -1659,6 +1660,905 @@ func TestAuthHandler_Login_BlockedUser(t *testing.T) {
 		}
 	})
 
-	// Cleanup
+	// Cleanup blocked login test user
 	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
+}
+
+// =============================================================================
+// VerifyEmail Tests
+// =============================================================================
+
+func TestAuthHandler_VerifyEmail(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	jwtSecret := "test_secret_key_at_least_32_characters_long"
+	handler := NewAuthHandlerWithEmailService(
+		nil, userRepo, jwtAuth, nil, jwtSecret,
+		false, false, nil, nil, nil, "http://localhost:3000", nil,
+	)
+
+	// Create a test user with email_verified = false
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@verifyemailtest.com'")
+	registerBody := map[string]string{
+		"username": "verifyemailtest",
+		"email":    "user@verifyemailtest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var verifyEmailResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&verifyEmailResp)
+
+	// Ensure email is NOT verified
+	_, _ = db.ExecContext(context.Background(), "UPDATE users SET email_verified = FALSE WHERE id = ?", verifyEmailResp.UserID)
+
+	t.Run("missing token returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/auth/verify-email", nil)
+		rec := httptest.NewRecorder()
+
+		handler.VerifyEmail(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid token returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/auth/verify-email?token=bogus_token_value", nil)
+		rec := httptest.NewRecorder()
+
+		handler.VerifyEmail(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("valid token verifies email", func(t *testing.T) {
+		verificationToken, err := handler.generateEmailVerificationToken(verifyEmailResp.UserID, "user@verifyemailtest.com")
+		if err != nil {
+			t.Fatalf("Failed to generate verification token: %v", err)
+		}
+
+		req := httptest.NewRequest("GET", "/api/v1/auth/verify-email?token="+verificationToken, nil)
+		rec := httptest.NewRecorder()
+
+		handler.VerifyEmail(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp["message"] != "Email verified successfully" {
+			t.Errorf("Expected 'Email verified successfully', got %v", resp["message"])
+		}
+
+		// Verify user's email_verified flag is now true
+		user, err := userRepo.GetByID(context.Background(), verifyEmailResp.UserID)
+		if err != nil {
+			t.Fatalf("Failed to get user: %v", err)
+		}
+		if !user.EmailVerified {
+			t.Error("Expected email_verified to be true after verification")
+		}
+	})
+
+	t.Run("already verified email returns success", func(t *testing.T) {
+		verificationToken, err := handler.generateEmailVerificationToken(verifyEmailResp.UserID, "user@verifyemailtest.com")
+		if err != nil {
+			t.Fatalf("Failed to generate verification token: %v", err)
+		}
+
+		req := httptest.NewRequest("GET", "/api/v1/auth/verify-email?token="+verificationToken, nil)
+		rec := httptest.NewRecorder()
+
+		handler.VerifyEmail(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp["message"] != "Email already verified" {
+			t.Errorf("Expected 'Email already verified', got %v", resp["message"])
+		}
+	})
+
+	t.Run("token for nonexistent user returns 400", func(t *testing.T) {
+		verificationToken, err := handler.generateEmailVerificationToken("nonexistent-user-id-12345", "fake@verifyemailtest.com")
+		if err != nil {
+			t.Fatalf("Failed to generate verification token: %v", err)
+		}
+
+		req := httptest.NewRequest("GET", "/api/v1/auth/verify-email?token="+verificationToken, nil)
+		rec := httptest.NewRecorder()
+
+		handler.VerifyEmail(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// Cleanup verify email test user
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", verifyEmailResp.UserID)
+}
+
+// =============================================================================
+// ResendVerificationEmail Tests
+// =============================================================================
+
+func TestAuthHandler_ResendVerificationEmail(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	jwtSecret := "test_secret_key_at_least_32_characters_long"
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		handler := NewAuthHandlerWithEmailService(
+			nil, userRepo, jwtAuth, nil, jwtSecret,
+			false, false, nil, nil, nil, "http://localhost:3000", nil,
+		)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/resend-verification", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ResendVerificationEmail(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("already verified returns 400", func(t *testing.T) {
+		handler := NewAuthHandlerWithEmailService(
+			nil, userRepo, jwtAuth, nil, jwtSecret,
+			false, false, nil, nil, nil, "http://localhost:3000", nil,
+		)
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@resendverifytest.com'")
+		registerBody := map[string]string{
+			"username": "resendverifytest",
+			"email":    "user@resendverifytest.com",
+			"password": "securepassword123",
+		}
+		registerBytes, _ := json.Marshal(registerBody)
+		registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+		registerReq.Header.Set("Content-Type", "application/json")
+		registerRec := httptest.NewRecorder()
+		handler.Register(registerRec, registerReq)
+
+		var resendRegisterResp models.RegisterResponse
+		_ = json.NewDecoder(registerRec.Body).Decode(&resendRegisterResp)
+
+		// Mark email as verified
+		_, _ = db.ExecContext(context.Background(), "UPDATE users SET email_verified = TRUE WHERE id = ?", resendRegisterResp.UserID)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/resend-verification", nil)
+		claims := &middleware.Claims{
+			UserID: resendRegisterResp.UserID,
+			Email:  "user@resendverifytest.com",
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		handler.ResendVerificationEmail(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "already_verified" {
+			t.Errorf("Expected error 'already_verified', got %v", resp["error"])
+		}
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resendRegisterResp.UserID)
+	})
+
+	t.Run("no email service returns 503", func(t *testing.T) {
+		handler := NewAuthHandlerWithEmailService(
+			nil, userRepo, jwtAuth, nil, jwtSecret,
+			false, false, nil, nil, nil, "http://localhost:3000", nil,
+		)
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@resendverifytest2.com'")
+		registerBody := map[string]string{
+			"username": "resendverify2",
+			"email":    "user@resendverifytest2.com",
+			"password": "securepassword123",
+		}
+		registerBytes, _ := json.Marshal(registerBody)
+		registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+		registerReq.Header.Set("Content-Type", "application/json")
+		registerRec := httptest.NewRecorder()
+		handler.Register(registerRec, registerReq)
+
+		var resendRegisterResp2 models.RegisterResponse
+		_ = json.NewDecoder(registerRec.Body).Decode(&resendRegisterResp2)
+
+		_, _ = db.ExecContext(context.Background(), "UPDATE users SET email_verified = FALSE WHERE id = ?", resendRegisterResp2.UserID)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/resend-verification", nil)
+		claims := &middleware.Claims{
+			UserID: resendRegisterResp2.UserID,
+			Email:  "user@resendverifytest2.com",
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		handler.ResendVerificationEmail(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("Expected status 503, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resendRegisterResp2.UserID)
+	})
+
+	t.Run("successful resend with mock email service", func(t *testing.T) {
+		mockEmailService := services.NewMockEmailService(&config.EmailConfig{
+			Enabled:     true,
+			FromAddress: "test@example.com",
+			FromName:    "Test",
+		})
+
+		handler := NewAuthHandlerWithEmailService(
+			nil, userRepo, jwtAuth, mockEmailService, jwtSecret,
+			false, false, nil, nil, nil, "http://localhost:3000", nil,
+		)
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@resendverifytest3.com'")
+		registerBody := map[string]string{
+			"username": "resendverify3",
+			"email":    "user@resendverifytest3.com",
+			"password": "securepassword123",
+		}
+		registerBytes, _ := json.Marshal(registerBody)
+		registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+		registerReq.Header.Set("Content-Type", "application/json")
+		registerRec := httptest.NewRecorder()
+		handler.Register(registerRec, registerReq)
+
+		var resendRegisterResp3 models.RegisterResponse
+		_ = json.NewDecoder(registerRec.Body).Decode(&resendRegisterResp3)
+
+		_, _ = db.ExecContext(context.Background(), "UPDATE users SET email_verified = FALSE WHERE id = ?", resendRegisterResp3.UserID)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/resend-verification", nil)
+		claims := &middleware.Claims{
+			UserID: resendRegisterResp3.UserID,
+			Email:  "user@resendverifytest3.com",
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		handler.ResendVerificationEmail(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["message"] != "Verification email sent" {
+			t.Errorf("Expected 'Verification email sent', got %v", resp["message"])
+		}
+
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resendRegisterResp3.UserID)
+	})
+}
+
+// =============================================================================
+// ForgotPassword Missing Fields Tests
+// =============================================================================
+
+func TestAuthHandler_ForgotPassword_MissingFields(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	passwordResetRepo := database.NewPasswordResetRepository(db)
+	handler := NewAuthHandlerWithEmailService(
+		nil, userRepo, testJWTAuth(), nil, "test_secret_key_at_least_32_characters_long",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
+	)
+
+	t.Run("missing email returns 400", func(t *testing.T) {
+		body := map[string]string{"email": ""}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/forgot-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ForgotPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/auth/forgot-password", bytes.NewReader([]byte("not json")))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ForgotPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// =============================================================================
+// ResetPassword Missing Fields Tests
+// =============================================================================
+
+func TestAuthHandler_ResetPassword_MissingFields(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	passwordResetRepo := database.NewPasswordResetRepository(db)
+	handler := NewAuthHandlerWithEmailService(
+		nil, userRepo, testJWTAuth(), nil, "test_secret_key_at_least_32_characters_long",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
+	)
+
+	t.Run("missing token returns 400", func(t *testing.T) {
+		body := map[string]string{"token": "", "password": "securepassword123"}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/reset-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ResetPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing password returns 400", func(t *testing.T) {
+		body := map[string]string{"token": "some_token", "password": ""}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/reset-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ResetPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/auth/reset-password", bytes.NewReader([]byte("not json")))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ResetPassword(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// =============================================================================
+// ValidateResetToken Missing Token Test
+// =============================================================================
+
+func TestAuthHandler_ValidateResetToken_MissingToken(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	passwordResetRepo := database.NewPasswordResetRepository(db)
+	handler := NewAuthHandlerWithEmailService(
+		nil, userRepo, testJWTAuth(), nil, "test_secret_key_at_least_32_characters_long",
+		false, false, nil, passwordResetRepo, nil, "http://localhost:3000", nil,
+	)
+
+	req := httptest.NewRequest("GET", "/api/v1/auth/validate-reset-token", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ValidateResetToken(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// DeletionPreflight Unauthenticated Test
+// =============================================================================
+
+func TestAuthHandler_DeletionPreflight_Unauthenticated(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	req := httptest.NewRequest("GET", "/api/v1/users/me/deletion-preflight", nil)
+	rec := httptest.NewRecorder()
+
+	jwtAuth.Authenticate(http.HandlerFunc(handler.DeletionPreflight)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rec.Code)
+	}
+}
+
+// =============================================================================
+// DeleteAccount Unauthenticated Test
+// =============================================================================
+
+func TestAuthHandler_DeleteAccount_Unauthenticated(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	body := map[string]string{"password": "securepassword123"}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/users/me", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	jwtAuth.Authenticate(http.HandlerFunc(handler.DeleteAccount)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401, got %d", rec.Code)
+	}
+}
+
+// =============================================================================
+// Login Invalid JSON Test
+// =============================================================================
+
+func TestAuthHandler_Login_InvalidJSON(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	req := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Login(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// Login Account Lockout Test
+// =============================================================================
+
+func TestAuthHandler_Login_AccountLockout(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@lockouttest.com'")
+	registerBody := map[string]string{
+		"username": "lockouttest",
+		"email":    "user@lockouttest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
+	}()
+
+	// Disable MFA
+	_, _ = db.ExecContext(context.Background(),
+		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
+		registerResp.UserID)
+
+	t.Run("locks account after threshold failed attempts", func(t *testing.T) {
+		// Simulate failed_login_attempts at threshold by setting it directly
+		_, _ = db.ExecContext(context.Background(),
+			"UPDATE users SET failed_login_attempts = ?, locked_until = NULL WHERE id = ?",
+			9, registerResp.UserID) // one below threshold
+
+		// This attempt (the 10th) should trigger lockout
+		loginBody := map[string]string{
+			"email":    "user@lockouttest.com",
+			"password": "wrongpassword123",
+		}
+		loginBytes, _ := json.Marshal(loginBody)
+		loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+		loginReq.Header.Set("Content-Type", "application/json")
+		loginRec := httptest.NewRecorder()
+		handler.Login(loginRec, loginReq)
+
+		if loginRec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401 on threshold attempt, got %d", loginRec.Code)
+		}
+
+		// Next attempt should get 429 (account locked)
+		loginReq2 := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+		loginReq2.Header.Set("Content-Type", "application/json")
+		loginRec2 := httptest.NewRecorder()
+		handler.Login(loginRec2, loginReq2)
+
+		if loginRec2.Code != http.StatusTooManyRequests {
+			t.Errorf("Expected status 429 after lockout, got %d: %s", loginRec2.Code, loginRec2.Body.String())
+		}
+
+		// Reset for cleanup
+		_, _ = db.ExecContext(context.Background(),
+			"UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+			registerResp.UserID)
+	})
+
+	t.Run("successful login resets lockout counter", func(t *testing.T) {
+		// Set some failed attempts (but below threshold)
+		_, _ = db.ExecContext(context.Background(),
+			"UPDATE users SET failed_login_attempts = 5, locked_until = NULL WHERE id = ?",
+			registerResp.UserID)
+
+		loginBody := map[string]string{
+			"email":    "user@lockouttest.com",
+			"password": "securepassword123",
+		}
+		loginBytes, _ := json.Marshal(loginBody)
+		loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+		loginReq.Header.Set("Content-Type", "application/json")
+		loginRec := httptest.NewRecorder()
+		handler.Login(loginRec, loginReq)
+
+		if loginRec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", loginRec.Code, loginRec.Body.String())
+		}
+
+		// Verify counter was reset
+		var failedAttempts int
+		err := db.QueryRowContext(context.Background(),
+			"SELECT failed_login_attempts FROM users WHERE id = ?", registerResp.UserID).Scan(&failedAttempts)
+		if err != nil {
+			t.Fatalf("Failed to query failed_login_attempts: %v", err)
+		}
+		if failedAttempts != 0 {
+			t.Errorf("Expected failed_login_attempts to be 0 after successful login, got %d", failedAttempts)
+		}
+	})
+}
+
+// =============================================================================
+// Register Email Alias Rejection Test
+// =============================================================================
+
+func TestAuthHandler_Register_EmailAlias(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	t.Run("rejects email with plus alias", func(t *testing.T) {
+		body := map[string]string{
+			"username": "aliasuser",
+			"email":    "user+alias@example.com",
+			"password": "securepassword123",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Register(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		if resp["error"] != "validation_error" {
+			t.Errorf("Expected error 'validation_error', got %v", resp["error"])
+		}
+	})
+}
+
+// =============================================================================
+// Register Duplicate Email Test
+// =============================================================================
+
+func TestAuthHandler_Register_DuplicateEmail(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@dupeemailtest.com'")
+
+	// First registration
+	body1 := map[string]string{
+		"username": "dupemail1",
+		"email":    "user@dupeemailtest.com",
+		"password": "securepassword123",
+	}
+	bodyBytes1, _ := json.Marshal(body1)
+	req1 := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes1))
+	req1.Header.Set("Content-Type", "application/json")
+	rec1 := httptest.NewRecorder()
+	handler.Register(rec1, req1)
+
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("First registration failed: %d %s", rec1.Code, rec1.Body.String())
+	}
+
+	var firstResp models.RegisterResponse
+	_ = json.NewDecoder(rec1.Body).Decode(&firstResp)
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", firstResp.UserID)
+	}()
+
+	// Second registration with same email, different username
+	body2 := map[string]string{
+		"username": "dupemail2",
+		"email":    "user@dupeemailtest.com",
+		"password": "securepassword123",
+	}
+	bodyBytes2, _ := json.Marshal(body2)
+	req2 := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes2))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	handler.Register(rec2, req2)
+
+	if rec2.Code != http.StatusConflict {
+		t.Errorf("Expected status 409 for duplicate email, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// =============================================================================
+// ChangePassword Edge Cases
+// =============================================================================
+
+func TestAuthHandler_ChangePassword_InvalidJSON(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@changejsontest.com'")
+	registerBody := map[string]string{
+		"username": "changejsontest",
+		"email":    "user@changejsontest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
+	}()
+
+	_, _ = db.ExecContext(context.Background(),
+		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
+		registerResp.UserID)
+
+	// Login
+	loginBody := map[string]string{"email": "user@changejsontest.com", "password": "securepassword123"}
+	loginBytes, _ := json.Marshal(loginBody)
+	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.Login(loginRec, loginReq)
+
+	var loginResp models.LoginResponse
+	_ = json.NewDecoder(loginRec.Body).Decode(&loginResp)
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewReader([]byte("not json")))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.Authenticate(http.HandlerFunc(handler.ChangePassword)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("empty fields returns 400", func(t *testing.T) {
+		body := map[string]string{
+			"current_password": "",
+			"new_password":     "",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+		rec := httptest.NewRecorder()
+
+		jwtAuth.Authenticate(http.HandlerFunc(handler.ChangePassword)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// =============================================================================
+// DeleteAccount Invalid JSON Test
+// =============================================================================
+
+func TestAuthHandler_DeleteAccount_InvalidJSON(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandler(userRepo, jwtAuth)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@deljsontest.com'")
+	registerBody := map[string]string{
+		"username": "deljsontest",
+		"email":    "user@deljsontest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
+	}()
+
+	_, _ = db.ExecContext(context.Background(),
+		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
+		registerResp.UserID)
+
+	// Login
+	loginBody := map[string]string{"email": "user@deljsontest.com", "password": "securepassword123"}
+	loginBytes, _ := json.Marshal(loginBody)
+	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.Login(loginRec, loginReq)
+
+	var loginResp models.LoginResponse
+	_ = json.NewDecoder(loginRec.Body).Decode(&loginResp)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/users/me", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	rec := httptest.NewRecorder()
+
+	jwtAuth.Authenticate(http.HandlerFunc(handler.DeleteAccount)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// DeletionPreflight with Sole Admin Region Test
+// =============================================================================
+
+func TestAuthHandler_DeletionPreflight_SoleAdminWarning(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandlerWithEmailService(
+		db, userRepo, jwtAuth, nil, "test_secret_key_at_least_32_characters_long",
+		false, false, nil, nil, nil, "http://localhost:3000", nil,
+	)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@soleadmintest.com'")
+	registerBody := map[string]string{
+		"username": "soleadmintest",
+		"email":    "user@soleadmintest.com",
+		"password": "securepassword123",
+	}
+	registerBytes, _ := json.Marshal(registerBody)
+	registerReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(registerBytes))
+	registerReq.Header.Set("Content-Type", "application/json")
+	registerRec := httptest.NewRecorder()
+	handler.Register(registerRec, registerReq)
+
+	var registerResp models.RegisterResponse
+	_ = json.NewDecoder(registerRec.Body).Decode(&registerResp)
+
+	// Create a region where this user is the sole admin
+	regionID := "test-sole-admin-" + registerResp.UserID[:8]
+	_, _ = db.ExecContext(context.Background(),
+		"INSERT INTO geographic_regions (id, name, region_type) VALUES (?, 'Sole Admin Test Region', 'city') ON DUPLICATE KEY UPDATE name=name",
+		regionID)
+	_, _ = db.ExecContext(context.Background(),
+		"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status) VALUES (?, ?, ?, TRUE, 'verified')",
+		"ur-"+registerResp.UserID[:8], registerResp.UserID, regionID)
+
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE region_id = ?", regionID)
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM geographic_regions WHERE id = ?", regionID)
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", registerResp.UserID)
+	}()
+
+	// Disable MFA and login
+	_, _ = db.ExecContext(context.Background(),
+		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE WHERE id = ?",
+		registerResp.UserID)
+
+	loginBody := map[string]string{"email": "user@soleadmintest.com", "password": "securepassword123"}
+	loginBytes, _ := json.Marshal(loginBody)
+	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBytes))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.Login(loginRec, loginReq)
+
+	var loginResp models.LoginResponse
+	_ = json.NewDecoder(loginRec.Body).Decode(&loginResp)
+
+	req := httptest.NewRequest("GET", "/api/v1/users/me/deletion-preflight", nil)
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	rec := httptest.NewRecorder()
+
+	jwtAuth.Authenticate(http.HandlerFunc(handler.DeletionPreflight)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var preflightResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&preflightResp)
+
+	warnings, ok := preflightResp["warnings"].([]interface{})
+	if !ok {
+		t.Fatal("Expected warnings array in response")
+	}
+	if len(warnings) == 0 {
+		t.Error("Expected at least 1 sole-admin warning for user with sole-admin region")
+	}
+
+	// Verify warning structure
+	if len(warnings) > 0 {
+		warning, ok := warnings[0].(map[string]interface{})
+		if !ok {
+			t.Fatal("Expected warning to be a map")
+		}
+		if warning["type"] != "sole_admin_region" {
+			t.Errorf("Expected warning type 'sole_admin_region', got %v", warning["type"])
+		}
+		if warning["id"] != regionID {
+			t.Errorf("Expected warning region ID '%s', got %v", regionID, warning["id"])
+		}
+	}
 }
