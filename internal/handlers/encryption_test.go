@@ -47,7 +47,8 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 	regionRepo := database.NewRegionRepository(&database.DB{DB: keyDB})
 	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
 
-	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo)
+	userRepo := database.NewUserRepository(&database.DB{DB: keyDB})
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -70,7 +71,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil, nil, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,
@@ -106,6 +107,33 @@ func testClaims() *middleware.Claims {
 		IsSuperuser:      false,
 		TokenType:        middleware.TokenTypeFull,
 	}
+}
+
+// userGetByIDColumns is the list of columns returned by UserRepository.GetByID.
+var userGetByIDColumns = []string{
+	"id", "username", "email", "password_hash", "verification_tier",
+	"postcard_verified", "vouch_verified", "is_superuser",
+	"mfa_secret", "mfa_enabled", "mfa_backup_codes", "mfa_setup_required",
+	"email_verified", "email_normalized",
+	"is_blocked", "blocked_at", "blocked_by", "block_reason",
+	"address_hash", "created_at", "last_login", "deleted_at",
+	"failed_login_attempts", "locked_until", "failed_mfa_attempts",
+}
+
+// expectUserGetByID sets up a sqlmock expectation for UserRepository.GetByID
+// returning a non-superuser.
+func expectUserGetByID(mock sqlmock.Sqlmock, userID string, isSuperuser bool) {
+	mock.ExpectQuery("SELECT id, username, email, password_hash").
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows(userGetByIDColumns).AddRow(
+			userID, "testuser", "test@example.com", "hash",
+			int(models.TierPostcard), false, false, isSuperuser,
+			nil, false, nil, false,
+			true, nil,
+			false, nil, nil, nil,
+			nil, time.Now(), nil, nil,
+			0, nil, 0,
+		))
 }
 
 // parseResponseBody decodes the JSON response body into a map.
@@ -1066,6 +1094,9 @@ func TestEncryptionHandler_SubmitRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// Membership check: IsUserInRegion (uses recursive CTE on keyMock since regionRepo shares keyDB)
 	suite.keyMock.ExpectQuery("WITH RECURSIVE user_accessible_regions").
 		WithArgs("user-123", "region-abc").
@@ -1106,6 +1137,9 @@ func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// Membership check: GetUserSchool (schoolRepo shares keyDB)
 	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
 		WithArgs("user-123", "school-xyz").
@@ -1145,6 +1179,9 @@ func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 
 func TestEncryptionHandler_GetPublicKeys_ByDistrict(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
 
 	// Membership check: ListByDistrict returns one school, then GetUserSchool confirms membership
 	schoolColumns := []string{"id", "nces_id", "name", "city", "state", "district_id", "district_name", "latitude", "longitude", "member_count", "verified_count", "admin_count"}
@@ -1243,6 +1280,9 @@ func TestEncryptionHandler_GetPublicKeys_MissingAuth(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_RegionNotMember(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// IsUserInRegion returns false
 	suite.keyMock.ExpectQuery("WITH RECURSIVE user_accessible_regions").
 		WithArgs("user-123", "region-nope").
@@ -1270,6 +1310,9 @@ func TestEncryptionHandler_GetPublicKeys_RegionNotMember(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_SchoolNotMember(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// GetUserSchool returns no rows (not a member)
 	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
 		WithArgs("user-123", "school-nope").
@@ -1296,6 +1339,9 @@ func TestEncryptionHandler_GetPublicKeys_SchoolNotMember(t *testing.T) {
 
 func TestEncryptionHandler_GetPublicKeys_DistrictNotMember(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
 
 	// ListByDistrict returns one school, but user is not a member of it
 	schoolColumns := []string{"id", "nces_id", "name", "city", "state", "district_id", "district_name", "latitude", "longitude", "member_count", "verified_count", "admin_count"}
@@ -1340,7 +1386,9 @@ func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembership(t *testing.
 		TokenType:        middleware.TokenTypeFull,
 	}
 
-	// No membership check expected — superuser bypasses it
+	// Superuser check via isSuperuserFromDB — returns true, so membership check is skipped
+	expectUserGetByID(suite.keyMock, "superuser-1", true)
+
 	columns := []string{"user_id", "public_key"}
 	suite.keyMock.ExpectQuery("SELECT ek.user_id, ek.public_key FROM user_encryption_keys").
 		WithArgs("region-abc").

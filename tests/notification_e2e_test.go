@@ -145,7 +145,7 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 
 	// Create handlers with notification service
 	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,

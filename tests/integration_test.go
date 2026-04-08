@@ -84,7 +84,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 
 	// Create handlers with mock services
 	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
@@ -103,7 +103,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(

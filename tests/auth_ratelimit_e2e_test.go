@@ -88,7 +88,7 @@ func SetupAuthRateLimitE2ETest(t *testing.T) *AuthRateLimitTestSuite {
 	authHandler.SetRateLimiter(limiter)
 
 	// Create other handlers
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,

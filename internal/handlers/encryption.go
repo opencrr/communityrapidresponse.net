@@ -17,6 +17,7 @@ type EncryptionHandler struct {
 	encryptedSecretRepo *database.EncryptedSecretRepository
 	regionRepo          *database.RegionRepository
 	schoolRepo          *database.SchoolRepository
+	userRepo            *database.UserRepository
 	notificationService NotificationServiceInterface
 }
 
@@ -26,12 +27,14 @@ func NewEncryptionHandler(
 	encryptedSecretRepo *database.EncryptedSecretRepository,
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
+	userRepo *database.UserRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
 		encryptedSecretRepo: encryptedSecretRepo,
 		regionRepo:          regionRepo,
 		schoolRepo:          schoolRepo,
+		userRepo:            userRepo,
 	}
 }
 
@@ -214,8 +217,15 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "encryption", "verify_superuser")
+		return
+	}
+
 	// Verify caller is a member of the requested scope (superusers bypass)
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		if regionID != "" {
 			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 			if memberErr != nil {
@@ -254,7 +264,6 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	}
 
 	var keys []models.PublicKeyEntry
-	var err error
 
 	if regionID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)

@@ -66,7 +66,7 @@ func setupRegionTestSuite(t *testing.T) *RegionTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	userRepo := database.NewUserRepository(db)
 	mockMapbox := mocks.NewMockMapboxService()
-	handler := NewRegionHandler(regionRepo, mockMapbox, nil)
+	handler := NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",

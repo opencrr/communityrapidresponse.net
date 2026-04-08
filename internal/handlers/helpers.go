@@ -10,8 +10,20 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
+	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 )
+
+// isSuperuserFromDB re-checks superuser status from the database.
+// Use this instead of claims.IsSuperuser for authorization decisions
+// to prevent privilege escalation via stale JWT claims.
+func isSuperuserFromDB(ctx context.Context, userRepo *database.UserRepository, userID string) (bool, error) {
+	user, err := userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return user.IsSuperuser, nil
+}
 
 // validate is the shared struct validator instance used by all handlers.
 var validate = validator.New()

@@ -79,6 +79,18 @@ func (h *GroupHandler) checkGroupRateLimit(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// verifySuperuser re-checks superuser status from the database and writes
+// a 500 error if the check fails. Returns the superuser boolean and whether
+// the caller should continue (false = error already written).
+func (h *GroupHandler) verifySuperuser(w http.ResponseWriter, r *http.Request, userID string) (bool, bool) {
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, userID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "group", "verify_superuser")
+		return false, false
+	}
+	return isSuperuser, true
+}
+
 // Browse handles GET /api/v1/groups/browse
 func (h *GroupHandler) Browse(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -263,7 +275,11 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "update_group")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to update it")
 		return
 	}
@@ -388,8 +404,14 @@ func (h *GroupHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+
 	// Check membership (superusers bypass)
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to check membership", "group", "list_members")
@@ -419,7 +441,7 @@ func (h *GroupHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	if !group.ShowAddressVerification {
 		isAdmin, _ := h.groupRepo.IsUserAdmin(r.Context(), groupID, claims.UserID)
-		if !isAdmin && !claims.IsSuperuser {
+		if !isAdmin && !isSuperuser {
 			for i := range members {
 				members[i].AddressVerified = false
 			}
@@ -523,7 +545,11 @@ func (h *GroupHandler) CreateInviteLink(w http.ResponseWriter, r *http.Request) 
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invite_link")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -576,7 +602,11 @@ func (h *GroupHandler) ListInviteLinks(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "list_invite_links")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -706,7 +736,11 @@ func (h *GroupHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_invitation")
 		return
 	}
-	if !isMember && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isMember && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
 		return
 	}
@@ -871,7 +905,11 @@ func (h *GroupHandler) GetTrustVouchStatus(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check caller is a member
-	if !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isSuperuser {
 		isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to check membership", "group", "trust_vouch_status")
@@ -1022,7 +1060,11 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_signal_group")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -1102,6 +1144,12 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Re-check superuser from DB
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+
 	// Get all signal groups for this owner group
 	signalGroups, err := h.signalGroupRepo.ListByOwnerGroup(r.Context(), groupID)
 	if err != nil {
@@ -1138,7 +1186,7 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 	// Filter signal groups by access tier
 	var filteredGroups []models.SignalGroupPublic
 	for _, sg := range signalGroups {
-		if claims.IsSuperuser || database.UserMeetsAccessTier(sg.AccessTier, true, isVerifiedResident, memberInfo) {
+		if isSuperuser || database.UserMeetsAccessTier(sg.AccessTier, true, isVerifiedResident, memberInfo) {
 			filteredGroups = append(filteredGroups, models.SignalGroupPublic{
 				ID:                 sg.ID,
 				OwnerGroupID:      sg.OwnerGroupID,
@@ -1191,7 +1239,11 @@ func (h *GroupHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_resource")
 		return
 	}
-	if !isMember && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isMember && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
 		return
 	}
@@ -1240,6 +1292,12 @@ func (h *GroupHandler) ListResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+
 	// Get all resources for this group
 	allResources, err := h.groupRepo.ListResources(r.Context(), groupID)
 	if err != nil {
@@ -1276,7 +1334,7 @@ func (h *GroupHandler) ListResources(w http.ResponseWriter, r *http.Request) {
 	// Filter resources by access tier
 	var filteredResources []models.GroupResource
 	for _, resource := range allResources {
-		if claims.IsSuperuser || database.UserMeetsAccessTier(resource.AccessTier, true, isVerifiedResident, memberInfo) {
+		if isSuperuser || database.UserMeetsAccessTier(resource.AccessTier, true, isVerifiedResident, memberInfo) {
 			filteredResources = append(filteredResources, resource)
 		}
 	}
@@ -1316,7 +1374,11 @@ func (h *GroupHandler) UpdateResource(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "update_resource")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -1391,7 +1453,11 @@ func (h *GroupHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "delete_resource")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -1449,7 +1515,11 @@ func (h *GroupHandler) BlockGroup(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "block_group")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to block other groups")
 		return
 	}
@@ -1518,7 +1588,11 @@ func (h *GroupHandler) UnblockGroup(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "unblock_group")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to unblock groups")
 		return
 	}
@@ -1566,7 +1640,11 @@ func (h *GroupHandler) ListBlockedGroups(w http.ResponseWriter, r *http.Request)
 		writeServerError(w, r, err, "Failed to check permissions", "group", "list_blocked_groups")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to view blocked groups")
 		return
 	}
@@ -1610,7 +1688,11 @@ func (h *GroupHandler) CreateOrUpdatePosting(w http.ResponseWriter, r *http.Requ
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_posting")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to post to the topic board")
 		return
 	}
@@ -1664,7 +1746,11 @@ func (h *GroupHandler) GetPosting(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "get_posting")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to view topic board postings")
 		return
 	}
@@ -1702,7 +1788,11 @@ func (h *GroupHandler) RemovePosting(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "remove_posting")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group to remove topic board postings")
 		return
 	}
@@ -1750,7 +1840,11 @@ func (h *GroupHandler) BrowsePostings(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err, "Failed to check permissions", "group", "browse_postings")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of the specified group to browse the topic board")
 		return
 	}
@@ -1818,7 +1912,11 @@ func (h *GroupHandler) CreateMeshtasticChannel(w http.ResponseWriter, r *http.Re
 		writeServerError(w, r, err, "Failed to check permissions", "group", "create_meshtastic_channel")
 		return
 	}
-	if !isAdmin && !claims.IsSuperuser {
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+	if !isAdmin && !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this group")
 		return
 	}
@@ -1898,6 +1996,12 @@ func (h *GroupHandler) ListMeshtasticChannels(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Re-check superuser from DB
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+
 	// Get all meshtastic channels for this owner group
 	meshtasticChannels, err := h.meshtasticChannelRepo.ListByOwnerGroup(r.Context(), groupID)
 	if err != nil {
@@ -1934,7 +2038,7 @@ func (h *GroupHandler) ListMeshtasticChannels(w http.ResponseWriter, r *http.Req
 	// Filter meshtastic channels by access tier
 	var filteredChannels []models.MeshtasticChannelPublic
 	for _, mc := range meshtasticChannels {
-		if claims.IsSuperuser || database.UserMeetsAccessTier(mc.AccessTier, true, isVerifiedResident, memberInfo) {
+		if isSuperuser || database.UserMeetsAccessTier(mc.AccessTier, true, isVerifiedResident, memberInfo) {
 			filteredChannels = append(filteredChannels, models.MeshtasticChannelPublic{
 				ID:                 mc.ID,
 				OwnerGroupID:       mc.OwnerGroupID,

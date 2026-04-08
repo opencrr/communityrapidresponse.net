@@ -104,7 +104,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		false, true, auditRepo, passwordResetRepo, nil,
 		"http://localhost:3000", encryptionKeyRepo,
 	)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
@@ -123,7 +123,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo)
 	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	connectionRepo := database.NewConnectionRepository(db)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)

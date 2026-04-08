@@ -208,7 +208,7 @@ func main() {
 	authHandler.SetRateLimiter(rateLimiter)
 
 	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mapboxService, auditRepo)
 	verificationHandler := handlers.NewVerificationHandler(
 		db,
 		verificationRepo,
@@ -240,7 +240,7 @@ func main() {
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
 
 	// Initialize encryption handler
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo)
 
 	// Wire status cache to handlers for immediate cache eviction on privilege changes
 	adminHandler.SetStatusCache(statusCache)
@@ -262,7 +262,7 @@ func main() {
 
 	// Build Content-Security-Policy directives
 	cspDirectives := "default-src 'self'; " +
-		"script-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
+		"script-src 'self' https://api.mapbox.com; " +
 		"style-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
 		"img-src 'self' data: blob: https://api.mapbox.com; " +
 		"connect-src 'self' https://api.mapbox.com https://events.mapbox.com; " +

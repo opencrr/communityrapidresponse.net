@@ -79,7 +79,7 @@ func SetupCSRFTest(t *testing.T) *CSRFTestSuite {
 	mockMapbox := mocks.NewMockMapboxService()
 
 	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
@@ -198,8 +198,13 @@ func (s *CSRFTestSuite) getCSRFTokenFromJar(client *http.Client) string {
 }
 
 // registerAndLogin creates a test user and returns (userID, jwtToken).
+// Uses CSRF-protected requests since login and register require CSRF tokens.
 func (s *CSRFTestSuite) registerAndLogin(client *http.Client, username, email, password string) (string, string) {
-	resp := s.doRequest(client, "POST", "/api/v1/auth/register", map[string]string{
+	// Ensure the client has a CSRF cookie by making a GET request first
+	getResp := s.doRequest(client, "GET", "/", nil, "")
+	_ = getResp.Body.Close()
+
+	resp := s.doRequestWithCSRF(client, "POST", "/api/v1/auth/register", map[string]string{
 		"username": username,
 		"email":    email,
 		"password": password,
@@ -220,7 +225,7 @@ func (s *CSRFTestSuite) registerAndLogin(client *http.Client, username, email, p
 	_, _ = s.db.ExecContext(context.Background(),
 		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, email_verified = TRUE WHERE id = ?", userID)
 
-	resp2 := s.doRequest(client, "POST", "/api/v1/auth/login", map[string]string{
+	resp2 := s.doRequestWithCSRF(client, "POST", "/api/v1/auth/login", map[string]string{
 		"email":    email,
 		"password": password,
 	}, "")
@@ -335,22 +340,13 @@ func TestCSRFIntegration_CookieNotOverwrittenOnSubsequentGET(t *testing.T) {
 func TestCSRFIntegration_ExemptAuthEndpoints(t *testing.T) {
 	suite := SetupCSRFTest(t)
 
-	// Auth endpoints are exempt — POST without CSRF token should succeed (or fail for
-	// business logic reasons, but NOT with 403 CSRF error)
+	// Only token-based auth endpoints are exempt — POST without CSRF token
+	// should succeed (or fail for business logic reasons, but NOT with 403 CSRF error).
+	// Login, register, and logout require CSRF tokens.
 	exemptPaths := []struct {
 		path    string
 		payload interface{}
 	}{
-		{"/api/v1/auth/register", map[string]string{
-			"username": fmt.Sprintf("csrfexempt%d", time.Now().UnixNano()),
-			"email":    fmt.Sprintf("csrfexempt%d@test.com", time.Now().UnixNano()),
-			"password": "securepassword123",
-		}},
-		{"/api/v1/auth/login", map[string]string{
-			"email":    "nonexistent@test.com",
-			"password": "wrongpassword123",
-		}},
-		{"/api/v1/auth/logout", nil},
 		{"/api/v1/auth/forgot-password", map[string]string{
 			"email": "nonexistent@test.com",
 		}},
@@ -377,17 +373,41 @@ func TestCSRFIntegration_ExemptAuthEndpoints(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// Clean up any user that was successfully registered
-	ctx := context.Background()
-	rows, _ := suite.db.QueryContext(ctx, "SELECT id FROM users WHERE email LIKE 'csrfexempt%@test.com'")
-	if rows != nil {
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var userID string
-			_ = rows.Scan(&userID)
-			suite.cleanup(userID)
-		}
+func TestCSRFIntegration_NonExemptAuthEndpoints(t *testing.T) {
+	suite := SetupCSRFTest(t)
+
+	// Login, register, and logout require CSRF tokens — POST without CSRF
+	// should return 403 csrf_validation_failed.
+	nonExemptPaths := []struct {
+		path    string
+		payload interface{}
+	}{
+		{"/api/v1/auth/register", map[string]string{
+			"username": fmt.Sprintf("csrfnonexempt%d", time.Now().UnixNano()),
+			"email":    fmt.Sprintf("csrfnonexempt%d@test.com", time.Now().UnixNano()),
+			"password": "securepassword123",
+		}},
+		{"/api/v1/auth/login", map[string]string{
+			"email":    "nonexistent@test.com",
+			"password": "wrongpassword123",
+		}},
+		{"/api/v1/auth/logout", nil},
+	}
+
+	for _, tc := range nonExemptPaths {
+		t.Run(tc.path, func(t *testing.T) {
+			// Use a fresh client with NO csrf_token cookie and NO header
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp := suite.doRequest(client, "POST", tc.path, tc.payload, "")
+			defer func() { _ = resp.Body.Close() }()
+
+			// Should be 403 csrf_validation_failed
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("non-exempt path %s: expected 403, got %d", tc.path, resp.StatusCode)
+			}
+		})
 	}
 }
 
@@ -750,8 +770,12 @@ func TestCSRF_E2E_RegisterLoginAndAuthenticatedAction(t *testing.T) {
 	email := fmt.Sprintf("csrfe2e%d@test.com", time.Now().UnixNano())
 	password := "securepassword123"
 
-	// Step 1: Register (exempt — no CSRF needed)
-	resp1 := suite.doRequest(client, "POST", "/api/v1/auth/register", map[string]string{
+	// Step 0: GET to acquire CSRF cookie (simulating initial page load)
+	resp0 := suite.doRequest(client, "GET", "/", nil, "")
+	_ = resp0.Body.Close()
+
+	// Step 1: Register (requires CSRF token)
+	resp1 := suite.doRequestWithCSRF(client, "POST", "/api/v1/auth/register", map[string]string{
 		"username": username,
 		"email":    email,
 		"password": password,
@@ -772,8 +796,8 @@ func TestCSRF_E2E_RegisterLoginAndAuthenticatedAction(t *testing.T) {
 	_, _ = suite.db.ExecContext(context.Background(),
 		"UPDATE users SET mfa_setup_required = FALSE, mfa_enabled = FALSE, email_verified = TRUE WHERE id = ?", userID)
 
-	// Step 2: Login (exempt — no CSRF needed)
-	resp2 := suite.doRequest(client, "POST", "/api/v1/auth/login", map[string]string{
+	// Step 2: Login (requires CSRF token)
+	resp2 := suite.doRequestWithCSRF(client, "POST", "/api/v1/auth/login", map[string]string{
 		"email":    email,
 		"password": password,
 	}, "")
@@ -786,7 +810,7 @@ func TestCSRF_E2E_RegisterLoginAndAuthenticatedAction(t *testing.T) {
 		t.Fatal("expected JWT token after login")
 	}
 
-	// Step 3: GET to acquire CSRF cookie (simulating page load)
+	// Step 3: GET to acquire fresh CSRF cookie
 	resp3 := suite.doRequest(client, "GET", "/api/v1/users/me", nil, jwtToken)
 	_ = resp3.Body.Close()
 
@@ -1074,32 +1098,27 @@ func TestCSRF_E2E_CORSPreflightAllowsCSRFHeader(t *testing.T) {
 	}
 }
 
-func TestCSRF_E2E_LogoutExemptFromCSRF(t *testing.T) {
+func TestCSRF_E2E_LogoutRequiresCSRF(t *testing.T) {
 	suite := SetupCSRFTest(t)
 
-	// POST to /api/v1/auth/logout without CSRF — should be exempt
+	// POST to /api/v1/auth/logout without CSRF — should be rejected
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp := suite.doRequest(client, "POST", "/api/v1/auth/logout", nil, "")
 	defer func() { _ = resp.Body.Close() }()
 
-	// Should NOT get CSRF 403
-	if resp.StatusCode == http.StatusForbidden {
-		var body map[string]string
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		if body["error"] == "csrf_validation_failed" {
-			t.Error("logout should be exempt from CSRF")
-		}
+	// Should get CSRF 403
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("logout without CSRF: expected 403, got %d", resp.StatusCode)
 	}
 }
 
 func TestCSRF_E2E_CSRFTokenSetOnExemptPOST(t *testing.T) {
 	suite := SetupCSRFTest(t)
 
-	// Even exempt POSTs should set the CSRF cookie for subsequent use
+	// Exempt POSTs should set the CSRF cookie for subsequent use
 	client := suite.newCookieClient()
-	resp := suite.doRequest(client, "POST", "/api/v1/auth/login", map[string]string{
-		"email":    "nonexistent@example.com",
-		"password": "password12345",
+	resp := suite.doRequest(client, "POST", "/api/v1/auth/forgot-password", map[string]string{
+		"email": "nonexistent@example.com",
 	}, "")
 	defer func() { _ = resp.Body.Close() }()
 

@@ -84,7 +84,7 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	authHandler := handlers.NewAuthHandlerWithEmailService(
 		nil, userRepo, jwtAuth, emailService, jwtConfig.Secret, false, false, nil, nil, nil, "http://localhost:3000", nil,
 	)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
 		nil, verifyRepo, userRepo, regionRepo, mockMail, mockMapbox, nil,
 	)
