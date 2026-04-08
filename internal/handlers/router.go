@@ -114,7 +114,6 @@ func (r *Router) Setup() http.Handler {
 
 	// Protected routes - communities (regions)
 	r.mux.HandleFunc("/api/v1/communities", r.handleRegions)
-	r.mux.HandleFunc("/api/v1/communities/admin", r.authenticated(r.methodHandler(http.MethodGet, r.regions.ListAdmin)))
 	r.mux.HandleFunc("/api/v1/communities/", r.handleRegionByID)
 
 	// Group routes (nil-safe for tests that don't need groups)
@@ -146,10 +145,6 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/verification/status", r.authenticated(r.methodHandler(http.MethodGet, r.verification.GetStatus)))
 	r.mux.HandleFunc("/api/v1/verification/postcard/request", r.authenticated(r.methodHandler(http.MethodPost, r.verification.RequestPostcardVerification)))
 	r.mux.HandleFunc("/api/v1/verification/postcard/verify", r.authenticated(r.methodHandler(http.MethodPost, r.verification.VerifyCode)))
-	r.mux.HandleFunc("/api/v1/verification/vouch", r.authenticated(r.methodHandler(http.MethodPost, r.verification.Vouch)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/request", r.authenticated(r.methodHandler(http.MethodPost, r.verification.RequestVouchVerification)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/pending", r.authenticated(r.methodHandler(http.MethodGet, r.verification.GetPendingVouchRequests)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/status/", r.authenticated(r.handleVouchStatus))
 
 	// Protected routes - encryption keys
 	r.mux.HandleFunc("/api/v1/encryption/keys", r.handleEncryptionKeys)
@@ -273,34 +268,6 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	regionID := parts[0]
 
-	// Check for members sub-route (member-visible, email-stripped)
-	if len(parts) >= 2 && parts[1] == "members" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodGet {
-			r.authenticated(r.regions.ListMembers)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for users sub-route
-	if len(parts) >= 2 && parts[1] == "users" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodGet {
-			r.authenticated(r.regions.ListUsersInRegion)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
 	// Add ID to query params for handler
 	q := req.URL.Query()
 	q.Set("id", regionID)
@@ -318,26 +285,6 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-
-// handleVouchStatus handles /api/v1/verification/vouch/status/:user_id
-func (r *Router) handleVouchStatus(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/verification/vouch/status/")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "User ID required")
-		return
-	}
-
-	q := req.URL.Query()
-	q.Set("user_id", path)
-	req.URL.RawQuery = q.Encode()
-
-	if req.Method == http.MethodGet {
-		r.verification.GetVouchStatus(w, req)
-		return
-	}
-
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
 
 // handleAdminUserByID handles /api/v1/admin/users/:id and /api/v1/admin/users/:id/grant-vouch, etc.
 func (r *Router) handleAdminUserByID(w http.ResponseWriter, req *http.Request) {

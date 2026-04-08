@@ -26,7 +26,6 @@ type APIContractTestSuite struct {
 	server     *httptest.Server
 	userRepo   *database.UserRepository
 	regionRepo *database.RegionRepository
-	vouchRepo  *database.VouchRepository
 	verifyRepo *database.VerificationRepository
 	jwtAuth    *middleware.JWTAuth
 }
@@ -60,7 +59,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -95,9 +93,8 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
-		nil, verifyRepo, vouchRepo, userRepo, regionRepo,
+		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
-		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -140,7 +137,6 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 		server:     server,
 		userRepo:   userRepo,
 		regionRepo: regionRepo,
-		vouchRepo:  vouchRepo,
 		verifyRepo: verifyRepo,
 		jwtAuth:    jwtAuth,
 	}
@@ -215,325 +211,6 @@ func (s *APIContractTestSuite) generateToken(user *models.User) string {
 	return token
 }
 
-// TestAPIContract_VouchEndpoint_FrontendPayloadFormat tests that the vouch endpoint
-// accepts the payload format that the frontend sends (user_id field, no region_id)
-func TestAPIContract_VouchEndpoint_FrontendPayloadFormat(t *testing.T) {
-	suite := SetupAPIContractTest(t)
-	defer suite.Cleanup()
-
-	// Create test users
-	adminUser := suite.createUser("contract_admin", "contract_admin@test.com", true, true)
-	voucheeUser := suite.createUser("contract_vouchee", "contract_vouchee@test.com", false, false)
-
-	// Create a region and add both users
-	region := suite.createRegion("Contract City", models.RegionTypeCity)
-	suite.addUserToRegion(adminUser.ID, region.ID, true, string(models.UserRegionStatusVerified))
-	suite.addUserToRegion(voucheeUser.ID, region.ID, false, string(models.UserRegionStatusPending))
-
-	token := suite.generateToken(adminUser)
-
-	t.Run("frontend_sends_user_id_with_email", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		// This is exactly what the frontend sends
-		payload := map[string]interface{}{
-			"user_id": voucheeUser.Email,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-
-	t.Run("frontend_sends_user_id_with_username", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		payload := map[string]interface{}{
-			"user_id": voucheeUser.Username,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-
-	t.Run("frontend_sends_user_id_with_uuid", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		payload := map[string]interface{}{
-			"user_id": voucheeUser.ID,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-}
-
-// TestAPIContract_VouchEndpoint_LegacyPayloadFormat tests backward compatibility
-// with the old payload format (vouched_user_id and region_id)
-func TestAPIContract_VouchEndpoint_LegacyPayloadFormat(t *testing.T) {
-	suite := SetupAPIContractTest(t)
-	defer suite.Cleanup()
-
-	adminUser := suite.createUser("legacy_admin", "legacy_admin@test.com", true, true)
-	voucheeUser := suite.createUser("legacy_vouchee", "legacy_vouchee@test.com", false, false)
-
-	region := suite.createRegion("Legacy City", models.RegionTypeCity)
-	suite.addUserToRegion(adminUser.ID, region.ID, true, string(models.UserRegionStatusVerified))
-	suite.addUserToRegion(voucheeUser.ID, region.ID, false, string(models.UserRegionStatusPending))
-
-	token := suite.generateToken(adminUser)
-
-	t.Run("legacy_format_with_vouched_user_id_and_region_id", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		// Old format that might still be used
-		payload := map[string]interface{}{
-			"vouched_user_id": voucheeUser.ID,
-			"region_id":       region.ID,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("Legacy format should still work. Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-
-	t.Run("user_id_takes_precedence_over_vouched_user_id", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		// When both are present, user_id should take precedence
-		payload := map[string]interface{}{
-			"user_id":         voucheeUser.Email,
-			"vouched_user_id": "should-be-ignored",
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("user_id should take precedence. Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-}
-
-// TestAPIContract_VouchEndpoint_RegionAutoDetection tests that the backend
-// auto-detects the region from the user's pending vouch request
-func TestAPIContract_VouchEndpoint_RegionAutoDetection(t *testing.T) {
-	suite := SetupAPIContractTest(t)
-	defer suite.Cleanup()
-
-	adminUser := suite.createUser("autodet_admin", "autodet_admin@test.com", true, true)
-	voucheeUser := suite.createUser("autodet_vouchee", "autodet_vouchee@test.com", false, false)
-
-	region1 := suite.createRegion("AutoDet City 1", models.RegionTypeCity)
-	region2 := suite.createRegion("AutoDet City 2", models.RegionTypeCity)
-
-	// Admin is in both regions
-	suite.addUserToRegion(adminUser.ID, region1.ID, true, string(models.UserRegionStatusVerified))
-	suite.addUserToRegion(adminUser.ID, region2.ID, true, string(models.UserRegionStatusVerified))
-
-	// Vouchee only has pending request in region1
-	suite.addUserToRegion(voucheeUser.ID, region1.ID, false, string(models.UserRegionStatusPending))
-
-	token := suite.generateToken(adminUser)
-
-	t.Run("region_auto_detected_from_pending_request", func(t *testing.T) {
-		suite.cleanupVouches(adminUser.ID, voucheeUser.ID)
-
-		// No region_id provided - should auto-detect region1
-		payload := map[string]interface{}{
-			"user_id": voucheeUser.Email,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusCreated {
-			var errResp map[string]interface{}
-			_ = json.NewDecoder(resp.Body).Decode(&errResp)
-			t.Errorf("Region should be auto-detected. Expected 201, got %d. Error: %v", resp.StatusCode, errResp)
-		}
-	})
-}
-
-// TestAPIContract_VouchEndpoint_ErrorCases tests various error scenarios
-func TestAPIContract_VouchEndpoint_ErrorCases(t *testing.T) {
-	suite := SetupAPIContractTest(t)
-	defer suite.Cleanup()
-
-	adminUser := suite.createUser("error_admin", "error_admin@test.com", true, true)
-	noRequestUser := suite.createUser("error_norequest", "error_norequest@test.com", false, false)
-
-	region := suite.createRegion("Error City", models.RegionTypeCity)
-	suite.addUserToRegion(adminUser.ID, region.ID, true, string(models.UserRegionStatusVerified))
-	// noRequestUser has no pending vouch request
-
-	token := suite.generateToken(adminUser)
-
-	t.Run("empty_user_identifier_returns_400", func(t *testing.T) {
-		payload := map[string]interface{}{
-			"user_id": "",
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected 400 for empty user_id, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("nonexistent_user_returns_404", func(t *testing.T) {
-		payload := map[string]interface{}{
-			"user_id": "nonexistent@example.com",
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("Expected 404 for nonexistent user, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("user_without_pending_request_returns_400", func(t *testing.T) {
-		payload := map[string]interface{}{
-			"user_id": noRequestUser.Email,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected 400 for user without pending request, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("self_vouch_returns_400", func(t *testing.T) {
-		// Admin tries to vouch for themselves
-		// Need a separate region where admin has a pending request (can't have both verified and pending in same region)
-		selfVouchRegion := suite.createRegion("Self Vouch City", models.RegionTypeCity)
-		suite.addUserToRegion(adminUser.ID, selfVouchRegion.ID, false, string(models.UserRegionStatusPending))
-
-		payload := map[string]interface{}{
-			"user_id": adminUser.Email,
-		}
-		body, _ := json.Marshal(payload)
-
-		req, _ := http.NewRequest(http.MethodPost, suite.server.URL+"/api/v1/verification/vouch", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected 400 for self-vouch, got %d", resp.StatusCode)
-		}
-	})
-}
-
-
-// TestAPIContract_Regions_ResponseFormat tests that Region responses
-// match what the frontend expects
 func TestAPIContract_Regions_ResponseFormat(t *testing.T) {
 	suite := SetupAPIContractTest(t)
 	defer suite.Cleanup()

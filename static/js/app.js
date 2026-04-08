@@ -18,7 +18,6 @@ import mfaSetupPage from './pages/mfaSetup.js';
 import mfaVerifyPage from './pages/mfaVerify.js';
 import regionDetailPage from './pages/regionDetail.js';
 import verificationPage from './pages/verification.js';
-import vouchPage from './pages/vouch.js';
 import verifyEmailPage from './pages/verifyEmail.js';
 import createRegionPage from './pages/admin/createRegion.js';
 import manageGroupsPage from './pages/admin/manageGroups.js';
@@ -72,7 +71,6 @@ const routes = [
     { path: '/schools/:id', page: schoolDetailPage, auth: true },
     { path: '/school-districts/:id', page: districtDetailPage, auth: true },
     { path: '/verify', page: verificationPage, auth: true },
-    { path: '/vouch', page: vouchPage, auth: true },
     { path: '/groups', page: myGroupsPage, auth: true },
     { path: '/groups/browse', redirect: '/discover' },
     { path: '/groups/create', page: groupCreatePage, auth: true },

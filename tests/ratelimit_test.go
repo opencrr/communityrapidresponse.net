@@ -60,7 +60,6 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -82,9 +81,8 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
-		nil, verifyRepo, vouchRepo, userRepo, regionRepo,
+		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
-		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 

@@ -69,7 +69,6 @@ func main() {
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verificationRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	signalGroupRepo := database.NewSignalGroupRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	secretUpdateProposalRepo := database.NewSecretUpdateProposalRepository(db)
@@ -213,20 +212,12 @@ func main() {
 	verificationHandler := handlers.NewVerificationHandler(
 		db,
 		verificationRepo,
-		vouchRepo,
 		userRepo,
 		regionRepo,
 		mailService,
 		mapboxService,
 		auditRepo,
-		cfg.Bootstrap.CooldownEnabled,
-		cfg.Bootstrap.CooldownMinutes,
 	)
-	if cfg.Bootstrap.CooldownEnabled {
-		slog.Info("bootstrap vouch cooldown enabled", "cooldown_minutes", cfg.Bootstrap.CooldownMinutes)
-	} else {
-		slog.Info("bootstrap vouch cooldown disabled")
-	}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, auditRepo)
 
 	// Initialize NCES service for lazy-loading district boundaries

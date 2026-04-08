@@ -27,7 +27,6 @@ type MailProviderTestSuite struct {
 	userRepo     *database.UserRepository
 	regionRepo   *database.RegionRepository
 	verifyRepo   *database.VerificationRepository
-	vouchRepo    *database.VouchRepository
 	jwtAuth      *middleware.JWTAuth
 	mockMail     *mocks.MockPostgridService
 	mockMapbox   *mocks.MockMapboxService
@@ -63,7 +62,6 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
 	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
@@ -88,8 +86,7 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	)
 	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
-		nil, verifyRepo, vouchRepo, userRepo, regionRepo, mockMail, mockMapbox, nil,
-		false, 30, // Bootstrap cooldown disabled for tests
+		nil, verifyRepo, userRepo, regionRepo, mockMail, mockMapbox, nil,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -121,7 +118,6 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 		userRepo:     userRepo,
 		regionRepo:   regionRepo,
 		verifyRepo:   verifyRepo,
-		vouchRepo:    vouchRepo,
 		jwtAuth:      jwtAuth,
 		mockMail:     mockMail,
 		mockMapbox:   mockMapbox,
