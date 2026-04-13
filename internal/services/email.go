@@ -13,6 +13,18 @@ var (
 	ErrUnsupportedEmailBackend = errors.New("unsupported email backend")
 )
 
+func redactEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return "***"
+	}
+	local := parts[0]
+	if len(local) <= 1 {
+		return local + "***@" + parts[1]
+	}
+	return string(local[0]) + "***@" + parts[1]
+}
+
 // NewEmailService creates an email service based on the configuration.
 // It returns the appropriate backend implementation based on cfg.Backend.
 //
