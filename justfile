@@ -504,6 +504,11 @@ security:
     govulncheck ./...
     @echo "✅ Security scan complete"
 
+# Detect documentation drift (stale routes, terminology)
+doc-drift:
+    @echo "📄 Checking for documentation drift..."
+    go run ./cmd/doc-drift
+
 # Verify module dependency integrity
 verify:
     @echo "🔍 Verifying module dependencies..."

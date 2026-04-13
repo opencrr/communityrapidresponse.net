@@ -149,6 +149,23 @@ jobs:
           version: v2.10.1
           args: --timeout=5m
 
+  doc-drift:
+    name: Doc Drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check documentation drift
+        run: go run ./cmd/doc-drift --warn-only
+
   build:
     name: Build
     runs-on: ubuntu-latest
