@@ -64,5 +64,22 @@ build-errors.log
 # Compiled seed schools binary
 /seed-schools
 
-# Security audit (sensitive - never commit)
+# Security audit and scan reports (sensitive - never commit)
 SECURITY_AUDIT.md
+PII_SCAN_REPORT.md
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# Credential and secrets files
+credentials.*
+secrets.*
+
+# Data dumps and exports (may contain sensitive user data)
+*.csv
+*.xlsx
+*.xls
