@@ -504,6 +504,11 @@ security:
     govulncheck ./...
     @echo "✅ Security scan complete"
 
+# Scan dependencies for security and maintenance risks
+dep-risk:
+    @echo "🔍 Running dependency risk scanner..."
+    go run ./cmd/depriskscan
+
 # Verify module dependency integrity
 verify:
     @echo "🔍 Verifying module dependencies..."

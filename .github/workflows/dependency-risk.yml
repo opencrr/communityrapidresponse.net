@@ -1,0 +1,29 @@
+name: Dependency Risk Scan
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  pull_request:
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dep-risk-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run dependency risk scanner
+        run: go run ./cmd/depriskscan
