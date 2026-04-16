@@ -41,9 +41,9 @@ type NotificationE2ETestSuite struct {
 
 // emailTracker tracks emails for E2E tests
 type emailTracker struct {
-	mu       sync.Mutex
-	sent     []trackedEmail
-	enabled  bool
+	mu      sync.Mutex
+	sent    []trackedEmail
+	enabled bool
 }
 
 type trackedEmail struct {

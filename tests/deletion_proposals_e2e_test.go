@@ -22,14 +22,14 @@ import (
 
 // DeletionE2ETestSuite holds dependencies for deletion proposal E2E tests
 type DeletionE2ETestSuite struct {
-	t               *testing.T
-	db              *database.DB
-	server          *httptest.Server
-	userRepo        *database.UserRepository
-	regionRepo      *database.RegionRepository
-	groupRepo       *database.SignalGroupRepository
-	proposalRepo    *database.DeletionProposalRepository
-	jwtAuth         *middleware.JWTAuth
+	t            *testing.T
+	db           *database.DB
+	server       *httptest.Server
+	userRepo     *database.UserRepository
+	regionRepo   *database.RegionRepository
+	groupRepo    *database.SignalGroupRepository
+	proposalRepo *database.DeletionProposalRepository
+	jwtAuth      *middleware.JWTAuth
 }
 
 // SetupDeletionE2ETest creates a test suite with the deletion proposal handler wired in

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/google/uuid"
+	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"golang.org/x/crypto/bcrypt"
 )
 

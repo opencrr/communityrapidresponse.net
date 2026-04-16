@@ -8,10 +8,10 @@ import (
 type ProposalStatus string
 
 const (
-	ProposalStatusPending                  ProposalStatus = "pending"
-	ProposalStatusApproved                 ProposalStatus = "approved"
-	ProposalStatusRejected                 ProposalStatus = "rejected"
-	ProposalStatusExpired                  ProposalStatus = "expired"
+	ProposalStatusPending                     ProposalStatus = "pending"
+	ProposalStatusApproved                    ProposalStatus = "approved"
+	ProposalStatusRejected                    ProposalStatus = "rejected"
+	ProposalStatusExpired                     ProposalStatus = "expired"
 	ProposalStatusApprovedPendingFinalization ProposalStatus = "approved_pending_finalization"
 )
 
@@ -83,26 +83,26 @@ type DeletionProposalSummary struct {
 
 // DeletionProposalDetailResponse represents detailed proposal info with votes
 type DeletionProposalDetailResponse struct {
-	ID           string              `json:"id"`
-	AssetType    string              `json:"asset_type"`
-	AssetID      string              `json:"asset_id"`
-	AssetName    string              `json:"asset_name"`
-	RegionID     string              `json:"region_id,omitempty"`
-	RegionName   string              `json:"region_name,omitempty"`
-	SchoolID     string              `json:"school_id,omitempty"`
-	SchoolName   string              `json:"school_name,omitempty"`
-	DistrictID   string              `json:"district_id,omitempty"`
-	DistrictName string              `json:"district_name,omitempty"`
-	ProposedBy   ProposalUser        `json:"proposed_by"`
-	Reason       string              `json:"reason"`
-	Status       string              `json:"status"`
-	VotesNeeded  int                 `json:"votes_needed"`
-	CurrentVotes int                 `json:"current_votes"`
-	CanVote      bool                `json:"can_vote"`
-	HasVoted     bool                `json:"has_voted"`
+	ID           string               `json:"id"`
+	AssetType    string               `json:"asset_type"`
+	AssetID      string               `json:"asset_id"`
+	AssetName    string               `json:"asset_name"`
+	RegionID     string               `json:"region_id,omitempty"`
+	RegionName   string               `json:"region_name,omitempty"`
+	SchoolID     string               `json:"school_id,omitempty"`
+	SchoolName   string               `json:"school_name,omitempty"`
+	DistrictID   string               `json:"district_id,omitempty"`
+	DistrictName string               `json:"district_name,omitempty"`
+	ProposedBy   ProposalUser         `json:"proposed_by"`
+	Reason       string               `json:"reason"`
+	Status       string               `json:"status"`
+	VotesNeeded  int                  `json:"votes_needed"`
+	CurrentVotes int                  `json:"current_votes"`
+	CanVote      bool                 `json:"can_vote"`
+	HasVoted     bool                 `json:"has_voted"`
 	Votes        []DeletionVoteDetail `json:"votes"`
-	CreatedAt    time.Time           `json:"created_at"`
-	ResolvedAt   *time.Time          `json:"resolved_at,omitempty"`
+	CreatedAt    time.Time            `json:"created_at"`
+	ResolvedAt   *time.Time           `json:"resolved_at,omitempty"`
 }
 
 // DeletionVoteDetail represents a vote on a deletion proposal
@@ -198,22 +198,22 @@ type BlockedUserInfo struct {
 
 // BlocklistProposalDetailResponse represents detailed proposal info with votes
 type BlocklistProposalDetailResponse struct {
-	ID           string               `json:"id"`
-	TargetUser   PublicUser           `json:"target_user"`
-	RegionID     string               `json:"region_id"`
-	RegionName   string               `json:"region_name"`
-	ProposedBy   ProposalUser         `json:"proposed_by"`
-	Reason       string               `json:"reason"`
-	Evidence     string               `json:"evidence,omitempty"`
-	Status       string               `json:"status"`
-	VotesNeeded  int                  `json:"votes_needed"`
-	CurrentVotes int                  `json:"current_votes"`
-	CanVote      bool                 `json:"can_vote"`
-	HasVoted     bool                 `json:"has_voted"`
+	ID           string                `json:"id"`
+	TargetUser   PublicUser            `json:"target_user"`
+	RegionID     string                `json:"region_id"`
+	RegionName   string                `json:"region_name"`
+	ProposedBy   ProposalUser          `json:"proposed_by"`
+	Reason       string                `json:"reason"`
+	Evidence     string                `json:"evidence,omitempty"`
+	Status       string                `json:"status"`
+	VotesNeeded  int                   `json:"votes_needed"`
+	CurrentVotes int                   `json:"current_votes"`
+	CanVote      bool                  `json:"can_vote"`
+	HasVoted     bool                  `json:"has_voted"`
 	Votes        []BlocklistVoteDetail `json:"votes"`
-	CreatedAt    time.Time            `json:"created_at"`
-	ExpiresAt    time.Time            `json:"expires_at"`
-	ResolvedAt   *time.Time           `json:"resolved_at,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
+	ExpiresAt    time.Time             `json:"expires_at"`
+	ResolvedAt   *time.Time            `json:"resolved_at,omitempty"`
 }
 
 // BlocklistVoteDetail represents a vote on a blocklist proposal

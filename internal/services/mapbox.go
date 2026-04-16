@@ -117,9 +117,9 @@ func (s *MapboxService) geocodeAddressWithURL(ctx context.Context, apiURL string
 	// Parse response
 	var apiResp struct {
 		Features []struct {
-			ID       string    `json:"id"`
-			Center   []float64 `json:"center"` // [longitude, latitude]
-			Context  []struct {
+			ID      string    `json:"id"`
+			Center  []float64 `json:"center"` // [longitude, latitude]
+			Context []struct {
 				ID        string `json:"id"`
 				Text      string `json:"text"`
 				ShortCode string `json:"short_code"`
@@ -614,9 +614,9 @@ func (s *MapboxService) GetStateBoundary(ctx context.Context, stateName string, 
 
 	// Try multiple search strategies to find the state boundary
 	searchQueries := []string{
-		stateName + ", United States",           // Most specific
-		"State of " + stateName + ", USA",       // Alternative format
-		stateName + ", USA",                     // Simple format
+		stateName + ", United States",     // Most specific
+		"State of " + stateName + ", USA", // Alternative format
+		stateName + ", USA",               // Simple format
 	}
 
 	for _, searchQuery := range searchQueries {

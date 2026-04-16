@@ -15,31 +15,31 @@ const (
 
 // User represents a registered user in the system
 type User struct {
-	ID               string           `json:"id" db:"id"`
-	Username         string           `json:"username" db:"username"`
-	Email            string           `json:"email" db:"email"`
-	PasswordHash     string           `json:"-" db:"password_hash"`
-	VerificationTier VerificationTier `json:"verification_tier" db:"verification_tier"`
-	PostcardVerified bool             `json:"postcard_verified" db:"postcard_verified"`
-	VouchVerified    bool             `json:"vouch_verified" db:"vouch_verified"`
-	IsSuperuser      bool             `json:"is_superuser" db:"is_superuser"`
-	MFASecret        *string          `json:"-" db:"mfa_secret"`          // Encrypted TOTP secret
-	MFAEnabled       bool             `json:"mfa_enabled" db:"mfa_enabled"`
-	MFABackupCodes   *string          `json:"-" db:"mfa_backup_codes"`    // JSON array of hashed backup codes
-	MFASetupRequired bool             `json:"mfa_setup_required" db:"mfa_setup_required"`
-	EmailVerified    bool             `json:"email_verified" db:"email_verified"`
-	EmailNormalized  *string          `json:"-" db:"email_normalized"` // Normalized email for duplicate detection
-	IsBlocked     bool       `json:"is_blocked" db:"is_blocked"`
-	BlockedAt     *time.Time `json:"blocked_at,omitempty" db:"blocked_at"`
-	BlockedBy     *string    `json:"blocked_by,omitempty" db:"blocked_by"`
-	BlockReason   *string    `json:"block_reason,omitempty" db:"block_reason"`
-	AddressHash      *string          `json:"-" db:"address_hash"` // SHA-256 hash of verified address (never exposed)
-	CreatedAt        time.Time        `json:"created_at" db:"created_at"`
-	LastLogin            *time.Time       `json:"last_login,omitempty" db:"last_login"`
-	DeletedAt            *time.Time       `json:"-" db:"deleted_at"`
-	FailedLoginAttempts  int              `json:"-" db:"failed_login_attempts"`
-	LockedUntil          *time.Time       `json:"-" db:"locked_until"`
-	FailedMFAAttempts    int              `json:"-" db:"failed_mfa_attempts"`
+	ID                  string           `json:"id" db:"id"`
+	Username            string           `json:"username" db:"username"`
+	Email               string           `json:"email" db:"email"`
+	PasswordHash        string           `json:"-" db:"password_hash"`
+	VerificationTier    VerificationTier `json:"verification_tier" db:"verification_tier"`
+	PostcardVerified    bool             `json:"postcard_verified" db:"postcard_verified"`
+	VouchVerified       bool             `json:"vouch_verified" db:"vouch_verified"`
+	IsSuperuser         bool             `json:"is_superuser" db:"is_superuser"`
+	MFASecret           *string          `json:"-" db:"mfa_secret"` // Encrypted TOTP secret
+	MFAEnabled          bool             `json:"mfa_enabled" db:"mfa_enabled"`
+	MFABackupCodes      *string          `json:"-" db:"mfa_backup_codes"` // JSON array of hashed backup codes
+	MFASetupRequired    bool             `json:"mfa_setup_required" db:"mfa_setup_required"`
+	EmailVerified       bool             `json:"email_verified" db:"email_verified"`
+	EmailNormalized     *string          `json:"-" db:"email_normalized"` // Normalized email for duplicate detection
+	IsBlocked           bool             `json:"is_blocked" db:"is_blocked"`
+	BlockedAt           *time.Time       `json:"blocked_at,omitempty" db:"blocked_at"`
+	BlockedBy           *string          `json:"blocked_by,omitempty" db:"blocked_by"`
+	BlockReason         *string          `json:"block_reason,omitempty" db:"block_reason"`
+	AddressHash         *string          `json:"-" db:"address_hash"` // SHA-256 hash of verified address (never exposed)
+	CreatedAt           time.Time        `json:"created_at" db:"created_at"`
+	LastLogin           *time.Time       `json:"last_login,omitempty" db:"last_login"`
+	DeletedAt           *time.Time       `json:"-" db:"deleted_at"`
+	FailedLoginAttempts int              `json:"-" db:"failed_login_attempts"`
+	LockedUntil         *time.Time       `json:"-" db:"locked_until"`
+	FailedMFAAttempts   int              `json:"-" db:"failed_mfa_attempts"`
 }
 
 // UserRegion represents a user's membership in a geographic region
@@ -54,21 +54,21 @@ type UserRegion struct {
 
 // AdminBoundary represents the administrative boundary where a user can create regions
 type AdminBoundary struct {
-	ID               string     `json:"id" db:"id"`
-	UserID           string     `json:"user_id" db:"user_id"`
-	BoundaryType     string     `json:"boundary_type" db:"boundary_type"` // 'city', 'town', 'county'
-	BoundaryName     string     `json:"boundary_name" db:"boundary_name"`
-	BoundaryState    string     `json:"boundary_state" db:"boundary_state"`
-	BoundaryCountry  string     `json:"boundary_country" db:"boundary_country"`
-	MapboxPlaceID    *string    `json:"mapbox_place_id,omitempty" db:"mapbox_place_id"`
-	BoundaryGeometry []byte     `json:"-" db:"boundary_geometry"` // WKB format
-	VerifiedAt       time.Time  `json:"verified_at" db:"verified_at"`
+	ID               string    `json:"id" db:"id"`
+	UserID           string    `json:"user_id" db:"user_id"`
+	BoundaryType     string    `json:"boundary_type" db:"boundary_type"` // 'city', 'town', 'county'
+	BoundaryName     string    `json:"boundary_name" db:"boundary_name"`
+	BoundaryState    string    `json:"boundary_state" db:"boundary_state"`
+	BoundaryCountry  string    `json:"boundary_country" db:"boundary_country"`
+	MapboxPlaceID    *string   `json:"mapbox_place_id,omitempty" db:"mapbox_place_id"`
+	BoundaryGeometry []byte    `json:"-" db:"boundary_geometry"` // WKB format
+	VerifiedAt       time.Time `json:"verified_at" db:"verified_at"`
 }
 
 // UserWithRegions represents a user with their associated regions
 type UserWithRegions struct {
 	User
-	Regions            []UserRegionInfo  `json:"regions,omitempty"`
+	Regions              []UserRegionInfo    `json:"regions,omitempty"`
 	AuthorizedBoundaries []AdminBoundaryInfo `json:"authorized_boundaries,omitempty"`
 }
 
