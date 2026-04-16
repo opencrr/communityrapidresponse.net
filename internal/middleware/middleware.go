@@ -60,26 +60,45 @@ func Recoverer(next http.Handler) http.Handler {
 	})
 }
 
-// CORS adds CORS headers
+// CORS adds CORS headers.
+//
+// Security note: when the allowed-origins list contains "*" and a cross-origin
+// request arrives, we respond with a literal "*" origin and OMIT the
+// Access-Control-Allow-Credentials header. Browsers reject credentialed
+// requests against a wildcard origin, which prevents the classic
+// "reflect arbitrary origin + credentials=true" footgun that would otherwise
+// allow any site to make authenticated cross-origin requests.
+// For exact-match origins (the production path) we continue to echo the
+// origin back with credentials enabled.
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 
-			// Check if origin is allowed
 			allowed := false
+			wildcard := false
 			for _, o := range allowedOrigins {
-				if o == "*" || o == origin {
+				if o == "*" {
 					allowed = true
+					wildcard = true
+					continue
+				}
+				if o == origin {
+					allowed = true
+					wildcard = false
 					break
 				}
 			}
 
 			if allowed {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
+				if wildcard {
+					w.Header().Set("Access-Control-Allow-Origin", "*")
+				} else {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Max-Age", "86400")
 			}
 
@@ -130,6 +149,9 @@ func SecurityHeadersWithConfig(cfg *SecurityConfig) func(http.Handler) http.Hand
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("X-XSS-Protection", "1; mode=block")
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			// Disable powerful browser APIs we never use. Narrows the blast
+			// radius of any future XSS and blocks passive fingerprinting vectors.
+			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()")
 
 			if cfg != nil {
 				if cfg.CSPDirectives != "" {
