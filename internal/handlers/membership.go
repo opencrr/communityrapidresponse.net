@@ -74,7 +74,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "membership", "get_region")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "membership", "get_region")
 		return
 	}
 
@@ -87,7 +87,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 	// Check if user is already a member of the target region
 	isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check region membership", "membership", "check_region_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "membership", "check_region_membership")
 		return
 	}
 	if isMember {
@@ -98,7 +98,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 	// Check if user is a member of the parent region hierarchy
 	isInParent, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, *region.ParentRegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check parent region membership", "membership", "check_parent_membership")
+		writeServerError(w, r, err, "Parent community membership could not be verified. Please try again.", "membership", "check_parent_membership")
 		return
 	}
 	if !isInParent {
@@ -109,7 +109,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 	// Check for existing pending request
 	existingRequest, err := h.membershipRepo.GetPendingByUserAndRegion(r.Context(), claims.UserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check existing requests", "membership", "check_existing_requests")
+		writeServerError(w, r, err, "Existing requests could not be checked. Please try again.", "membership", "check_existing_requests")
 		return
 	}
 	if existingRequest != nil {
@@ -124,7 +124,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 	// Check rate limit: max pending requests per user
 	pendingCount, err := h.membershipRepo.CountPendingByUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count pending requests", "membership", "count_pending_requests")
+		writeServerError(w, r, err, "Pending requests could not be counted. Please try again.", "membership", "count_pending_requests")
 		return
 	}
 	if pendingCount >= database.MaxPendingRequestsPerUser {
@@ -147,7 +147,7 @@ func (h *MembershipHandler) CreateRequest(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.membershipRepo.Create(r.Context(), req); err != nil {
-		writeServerError(w, r, err, "Failed to create membership request", "membership", "create_request")
+		writeServerError(w, r, err, "Membership request could not be created. Please try again.", "membership", "create_request")
 		return
 	}
 
@@ -190,7 +190,7 @@ func (h *MembershipHandler) ListUserRequests(w http.ResponseWriter, r *http.Requ
 
 	requests, err := h.membershipRepo.ListUserRequests(r.Context(), claims.UserID, filter)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list membership requests", "membership", "list_user_requests")
+		writeServerError(w, r, err, "Membership requests could not be loaded. Please try again.", "membership", "list_user_requests")
 		return
 	}
 
@@ -219,7 +219,7 @@ func (h *MembershipHandler) CancelRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get membership request", "membership", "get_request")
+		writeServerError(w, r, err, "Membership request could not be retrieved. Please try again.", "membership", "get_request")
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *MembershipHandler) CancelRequest(w http.ResponseWriter, r *http.Request
 
 	// Cancel the request
 	if err := h.membershipRepo.Cancel(r.Context(), requestID, claims.UserID); err != nil {
-		writeServerError(w, r, err, "Failed to cancel request", "membership", "cancel_request")
+		writeServerError(w, r, err, "Request could not be cancelled. Please try again.", "membership", "cancel_request")
 		return
 	}
 
@@ -267,7 +267,7 @@ func (h *MembershipHandler) ListPendingForRegion(w http.ResponseWriter, r *http.
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "membership", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "membership", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -278,7 +278,7 @@ func (h *MembershipHandler) ListPendingForRegion(w http.ResponseWriter, r *http.
 
 	requests, err := h.membershipRepo.ListPendingByRegion(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list membership requests", "membership", "list_pending_by_region")
+		writeServerError(w, r, err, "Membership requests could not be loaded. Please try again.", "membership", "list_pending_by_region")
 		return
 	}
 
@@ -302,7 +302,7 @@ func (h *MembershipHandler) ListPendingForAdmin(w http.ResponseWriter, r *http.R
 
 	requests, err := h.membershipRepo.ListPendingForAdminUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list membership requests", "membership", "list_pending_for_admin")
+		writeServerError(w, r, err, "Membership requests could not be loaded. Please try again.", "membership", "list_pending_for_admin")
 		return
 	}
 
@@ -331,7 +331,7 @@ func (h *MembershipHandler) GetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get membership request", "membership", "get_request_with_votes")
+		writeServerError(w, r, err, "Membership request could not be retrieved. Please try again.", "membership", "get_request_with_votes")
 		return
 	}
 
@@ -342,7 +342,7 @@ func (h *MembershipHandler) GetRequest(w http.ResponseWriter, r *http.Request) {
 	if !isOwner && !claims.IsSuperuser {
 		isAdmin, err = h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, request.RegionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "membership", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "membership", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -399,14 +399,14 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get membership request", "membership", "get_request")
+		writeServerError(w, r, err, "Membership request could not be retrieved. Please try again.", "membership", "get_request")
 		return
 	}
 
 	// Check if user is admin for this region (outside tx)
 	isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, request.RegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "membership", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "membership", "verify_admin_status")
 		return
 	}
 	if !isAdmin {
@@ -502,7 +502,7 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to record vote", "membership", "record_vote")
+		writeServerError(w, r, err, "Vote could not be recorded. Please try again.", "membership", "record_vote")
 		return
 	}
 
@@ -574,7 +574,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "membership", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "membership", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -590,7 +590,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "membership", "get_region")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "membership", "get_region")
 		return
 	}
 
@@ -610,7 +610,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	// Check if target user is a member of the parent region hierarchy
 	isInParent, err := h.regionRepo.IsUserInRegion(r.Context(), req.UserID, *region.ParentRegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check parent region membership", "membership", "check_parent_membership")
+		writeServerError(w, r, err, "Parent community membership could not be verified. Please try again.", "membership", "check_parent_membership")
 		return
 	}
 	if !isInParent {
@@ -621,7 +621,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	// Check if user is already a member
 	isMember, err := h.regionRepo.IsUserInRegion(r.Context(), req.UserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check region membership", "membership", "check_region_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "membership", "check_region_membership")
 		return
 	}
 	if isMember {
@@ -632,7 +632,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	// Check for existing pending invitation or request
 	existingRequest, err := h.membershipRepo.GetPendingByUserAndRegion(r.Context(), req.UserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check existing requests", "membership", "check_existing_requests")
+		writeServerError(w, r, err, "Existing requests could not be checked. Please try again.", "membership", "check_existing_requests")
 		return
 	}
 	if existingRequest != nil {
@@ -654,7 +654,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.membershipRepo.Create(r.Context(), invitation); err != nil {
-		writeServerError(w, r, err, "Failed to create invitation", "membership", "create_invitation")
+		writeServerError(w, r, err, "Invitation could not be sent. Please try again.", "membership", "create_invitation")
 		return
 	}
 
@@ -700,7 +700,7 @@ func (h *MembershipHandler) ListInvitations(w http.ResponseWriter, r *http.Reque
 
 	invitations, err := h.membershipRepo.ListInvitationsForUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list invitations", "membership", "list_invitations")
+		writeServerError(w, r, err, "Invitations could not be loaded. Please try again.", "membership", "list_invitations")
 		return
 	}
 
@@ -799,10 +799,10 @@ func (h *MembershipHandler) RespondToInvitation(w http.ResponseWriter, r *http.R
 				return
 			}
 			if errMsg == "invalid_type" {
-				writeError(w, http.StatusBadRequest, "invalid_type", "This is not an invitation")
+				writeError(w, http.StatusBadRequest, "invalid_type", "This membership request cannot be accepted as an invitation")
 				return
 			}
-			writeServerError(w, r, err, "Failed to accept invitation", "membership", "accept_invitation")
+			writeServerError(w, r, err, "Invitation could not be accepted. Please try again.", "membership", "accept_invitation")
 			return
 		}
 
@@ -828,7 +828,7 @@ func (h *MembershipHandler) RespondToInvitation(w http.ResponseWriter, r *http.R
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to get invitation", "membership", "get_invitation")
+			writeServerError(w, r, err, "Invitation could not be retrieved. Please try again.", "membership", "get_invitation")
 			return
 		}
 
@@ -837,7 +837,7 @@ func (h *MembershipHandler) RespondToInvitation(w http.ResponseWriter, r *http.R
 			return
 		}
 		if invitation.RequestType != models.MembershipRequestTypeInvitation {
-			writeError(w, http.StatusBadRequest, "invalid_type", "This is not an invitation")
+			writeError(w, http.StatusBadRequest, "invalid_type", "This membership request cannot be accepted as an invitation")
 			return
 		}
 		if invitation.Status != models.MembershipRequestStatusPending {
@@ -846,7 +846,7 @@ func (h *MembershipHandler) RespondToInvitation(w http.ResponseWriter, r *http.R
 		}
 
 		if err := h.membershipRepo.UpdateStatus(r.Context(), invitationID, models.MembershipRequestStatusRejected); err != nil {
-			writeServerError(w, r, err, "Failed to decline invitation", "membership", "decline_invitation")
+			writeServerError(w, r, err, "Invitation response could not be recorded. Please try again.", "membership", "decline_invitation")
 			return
 		}
 

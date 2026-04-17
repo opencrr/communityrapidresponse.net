@@ -98,7 +98,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify reporter is in region
 		reporterInRegion, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify region membership", "reports", "check_reporter_region")
+			writeServerError(w, r, err, "Community membership could not be verified. Please try again.", "reports", "check_reporter_region")
 			return
 		}
 		if !reporterInRegion {
@@ -109,7 +109,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify target is in region
 		targetInRegion, err := h.regionRepo.IsUserInRegion(r.Context(), req.ReportedUserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify region membership", "reports", "check_target_region")
+			writeServerError(w, r, err, "Community membership could not be verified. Please try again.", "reports", "check_target_region")
 			return
 		}
 		if !targetInRegion {
@@ -123,7 +123,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify reporter is a member of the school
 		reporterSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify school membership", "reports", "check_reporter_school")
+			writeServerError(w, r, err, "School membership could not be verified. Please try again.", "reports", "check_reporter_school")
 			return
 		}
 		if reporterSchool == nil {
@@ -134,7 +134,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify target is a member of the school
 		targetSchool, err := h.schoolRepo.GetUserSchool(r.Context(), req.ReportedUserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify school membership", "reports", "check_target_school")
+			writeServerError(w, r, err, "School membership could not be verified. Please try again.", "reports", "check_target_school")
 			return
 		}
 		if targetSchool == nil {
@@ -148,7 +148,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify reporter is a member of a school in the district
 		reporterInDistrict, err := h.isUserInDistrict(r, claims.UserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify district membership", "reports", "check_reporter_district")
+			writeServerError(w, r, err, "District membership could not be verified. Please try again.", "reports", "check_reporter_district")
 			return
 		}
 		if !reporterInDistrict {
@@ -159,7 +159,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 		// Verify target is a member of a school in the district
 		targetInDistrict, err := h.isUserInDistrict(r, req.ReportedUserID, scopeID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify district membership", "reports", "check_target_district")
+			writeServerError(w, r, err, "District membership could not be verified. Please try again.", "reports", "check_target_district")
 			return
 		}
 		if !targetInDistrict {
@@ -175,7 +175,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 	// Rate limit: 5 reports per week
 	weekCount, err := h.reportRepo.CountReportsThisWeek(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check report limit", "reports", "count_reports")
+		writeServerError(w, r, err, "Report limit could not be verified. Please try again.", "reports", "count_reports")
 		return
 	}
 	if weekCount >= 5 {
@@ -186,7 +186,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 	// Duplicate check
 	existing, err := h.reportRepo.GetPendingByReporterAndTarget(r.Context(), claims.UserID, req.ReportedUserID, report.RegionID, report.SchoolID, report.DistrictID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check for existing reports", "reports", "duplicate_check")
+		writeServerError(w, r, err, "Existing reports could not be checked. Please try again.", "reports", "duplicate_check")
 		return
 	}
 	if existing != nil {
@@ -196,7 +196,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 
 	// Create the report
 	if err := h.reportRepo.Create(r.Context(), report); err != nil {
-		writeServerError(w, r, err, "Failed to create report", "reports", "create_report")
+		writeServerError(w, r, err, "Report could not be submitted. Please try again.", "reports", "create_report")
 		return
 	}
 
@@ -236,7 +236,7 @@ func (h *UserReportHandler) ListReports(w http.ResponseWriter, r *http.Request) 
 	if claims.IsSuperuser {
 		reports, err := h.reportRepo.ListAll(r.Context(), filter)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to list reports", "reports", "list_all")
+			writeServerError(w, r, err, "Reports could not be loaded. Please try again.", "reports", "list_all")
 			return
 		}
 		allReports = reports
@@ -244,14 +244,14 @@ func (h *UserReportHandler) ListReports(w http.ResponseWriter, r *http.Request) 
 		// Check if user is admin of any regions
 		regionReports, err := h.reportRepo.ListByRegionAdmin(r.Context(), claims.UserID, filter)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to list reports", "reports", "list_region_reports")
+			writeServerError(w, r, err, "Reports could not be loaded. Please try again.", "reports", "list_region_reports")
 			return
 		}
 
 		// Check if user is admin of any schools/districts
 		schoolReports, err := h.reportRepo.ListBySchoolAdmin(r.Context(), claims.UserID, filter)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to list reports", "reports", "list_school_reports")
+			writeServerError(w, r, err, "Reports could not be loaded. Please try again.", "reports", "list_school_reports")
 			return
 		}
 
@@ -302,7 +302,7 @@ func (h *UserReportHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Report not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get report", "reports", "get_report")
+		writeServerError(w, r, err, "Report could not be retrieved. Please try again.", "reports", "get_report")
 		return
 	}
 
@@ -310,7 +310,7 @@ func (h *UserReportHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		hasAccess, err := h.isAdminForReport(r, claims.UserID, report)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "reports", "check_admin_access")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "reports", "check_admin_access")
 			return
 		}
 		if !hasAccess {
@@ -322,7 +322,7 @@ func (h *UserReportHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	// Get full details
 	detail, err := h.reportRepo.GetByIDWithDetails(r.Context(), reportID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get report details", "reports", "get_report_details")
+		writeServerError(w, r, err, "Report details could not be retrieved. Please try again.", "reports", "get_report_details")
 		return
 	}
 
@@ -350,7 +350,7 @@ func (h *UserReportHandler) ResolveReport(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusNotFound, "not_found", "Report not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get report", "reports", "get_report")
+		writeServerError(w, r, err, "Report could not be retrieved. Please try again.", "reports", "get_report")
 		return
 	}
 
@@ -364,7 +364,7 @@ func (h *UserReportHandler) ResolveReport(w http.ResponseWriter, r *http.Request
 	if !claims.IsSuperuser {
 		hasAccess, err := h.isAdminForReport(r, claims.UserID, report)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "reports", "check_admin_access")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "reports", "check_admin_access")
 			return
 		}
 		if !hasAccess {
@@ -384,7 +384,7 @@ func (h *UserReportHandler) ResolveReport(w http.ResponseWriter, r *http.Request
 	case "dismiss":
 		err = h.reportRepo.UpdateStatus(r.Context(), reportID, models.ReportStatusDismissed, &claims.UserID, req.Note, nil)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to dismiss report", "reports", "dismiss_report")
+			writeServerError(w, r, err, "Report could not be dismissed. Please try again.", "reports", "dismiss_report")
 			return
 		}
 
@@ -401,7 +401,7 @@ func (h *UserReportHandler) ResolveReport(w http.ResponseWriter, r *http.Request
 	case "initiate_blocklist":
 		err = h.reportRepo.UpdateStatus(r.Context(), reportID, models.ReportStatusResolvedBlocklist, &claims.UserID, req.Note, nil)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to resolve report", "reports", "resolve_blocklist")
+			writeServerError(w, r, err, "Report could not be resolved. Please try again.", "reports", "resolve_blocklist")
 			return
 		}
 

@@ -74,7 +74,7 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 
 			regions, err := h.regionRepo.GetRegionsContainingPoint(r.Context(), lat, lng)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to query regions", "region", "list_regions")
+				writeServerError(w, r, err, "Communities could not be loaded. Please try again.", "region", "list_regions")
 				return
 			}
 
@@ -85,7 +85,7 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 		// List all regions with optional filters
 		regions, err := h.regionRepo.List(r.Context(), regionType, parentID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to list regions", "region", "list_regions")
+			writeServerError(w, r, err, "Communities could not be loaded. Please try again.", "region", "list_regions")
 			return
 		}
 
@@ -96,7 +96,7 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Regular users only see regions they belong to
 	regions, err := h.regionRepo.ListForUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list regions", "region", "list_regions")
+		writeServerError(w, r, err, "Communities could not be loaded. Please try again.", "region", "list_regions")
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *RegionHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 	if claims.IsSuperuser {
 		regions, err := h.regionRepo.List(r.Context(), nil, nil)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to list regions", "region", "list_regions")
+			writeServerError(w, r, err, "Communities could not be loaded. Please try again.", "region", "list_regions")
 			return
 		}
 		writeJSON(w, http.StatusOK, models.RegionListResponse{Regions: regions})
@@ -133,7 +133,7 @@ func (h *RegionHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 	// Regular admins see only regions they're admin of
 	regions, err := h.regionRepo.ListAdminRegions(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list admin regions", "region", "list_regions")
+		writeServerError(w, r, err, "Communities could not be loaded. Please try again.", "region", "list_regions")
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		// Check membership first for regular users
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, id)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check region access", "region", "get_region")
+			writeServerError(w, r, err, "Community access could not be verified. Please try again.", "region", "get_region")
 			return
 		}
 		if !isMember {
@@ -180,7 +180,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "region", "get_region")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "region", "get_region")
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		contained, err := h.regionRepo.IsContainedInAdminRegion(r.Context(), claims.UserID, string(geoJSON))
 		if err != nil {
-			writeServerError(w, r, err, "Failed to validate region boundary", "region", "admin_containment_check")
+			writeServerError(w, r, err, "Community boundary could not be validated. Please try again.", "region", "admin_containment_check")
 			return
 		}
 		if !contained {
@@ -326,7 +326,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.regionRepo.Create(r.Context(), region, string(geoJSON)); err != nil {
-		writeServerError(w, r, err, "Failed to create region", "region", "create_region")
+		writeServerError(w, r, err, "Community could not be created. Please try again.", "region", "create_region")
 		return
 	}
 
@@ -373,7 +373,7 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "region", "update_region")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "region", "update_region")
 		return
 	}
 
@@ -381,7 +381,7 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, id)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check permissions", "region", "update_region")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "region", "update_region")
 			return
 		}
 		if !isAdmin {
@@ -402,7 +402,7 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.regionRepo.Update(r.Context(), id, req.Name); err != nil {
-		writeServerError(w, r, err, "Failed to update region", "region", "update_region")
+		writeServerError(w, r, err, "Community could not be updated. Please try again.", "region", "update_region")
 		return
 	}
 
@@ -448,12 +448,12 @@ func (h *RegionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "region", "delete_region")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "region", "delete_region")
 		return
 	}
 
 	if err := h.regionRepo.Delete(r.Context(), id); err != nil {
-		writeServerError(w, r, err, "Failed to delete region", "region", "delete_region")
+		writeServerError(w, r, err, "Community could not be deleted. Please try again.", "region", "delete_region")
 		return
 	}
 
@@ -838,7 +838,7 @@ func (h *RegionHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check membership", "region", "list_members")
+			writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "region", "list_members")
 			return
 		}
 		if !isMember {
@@ -849,7 +849,7 @@ func (h *RegionHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.regionRepo.GetUsersInRegion(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list members", "region", "list_members")
+		writeServerError(w, r, err, "Member list could not be loaded. Please try again.", "region", "list_members")
 		return
 	}
 
@@ -897,7 +897,7 @@ func (h *RegionHandler) ListUsersInRegion(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "region", "list_users")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "region", "list_users")
 		return
 	}
 
@@ -905,7 +905,7 @@ func (h *RegionHandler) ListUsersInRegion(w http.ResponseWriter, r *http.Request
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check permissions", "region", "list_users")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "region", "list_users")
 			return
 		}
 		if !isAdmin {
@@ -916,7 +916,7 @@ func (h *RegionHandler) ListUsersInRegion(w http.ResponseWriter, r *http.Request
 
 	users, err := h.regionRepo.GetUsersInRegion(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get users", "region", "list_users")
+		writeServerError(w, r, err, "User list could not be loaded. Please try again.", "region", "list_users")
 		return
 	}
 

@@ -192,7 +192,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to process registration", "auth", "register")
+		writeServerError(w, r, err, "Registration could not be completed. Please try again.", "auth", "register")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "account_exists", "An account with these credentials already exists")
 			return
 		}
-		writeServerError(w, r, err, "Failed to create user", "auth", "register")
+		writeServerError(w, r, err, "Registration could not be completed. Please try again.", "auth", "register")
 		return
 	}
 
@@ -289,7 +289,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to process login", "auth", "login")
+		writeServerError(w, r, err, "Login could not be completed. Please try again.", "auth", "login")
 		return
 	}
 
@@ -389,7 +389,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Generate token
 	token, err := h.jwtAuth.GenerateTokenWithType(user, tokenType)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate token", "auth", "login")
+		writeServerError(w, r, err, "Login could not be completed. Please try again.", "auth", "login")
 		return
 	}
 
@@ -495,7 +495,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.userRepo.GetUserWithRegions(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "auth", "get_user")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "auth", "get_user")
 		return
 	}
 
@@ -583,7 +583,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify email", "auth", "verify_email")
+		writeServerError(w, r, err, "Email verification could not be completed. Please try again.", "auth", "verify_email")
 		return
 	}
 
@@ -598,7 +598,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Mark email as verified
 	if err := h.userRepo.SetEmailVerified(r.Context(), user.ID, true); err != nil {
-		writeServerError(w, r, err, "Failed to verify email", "auth", "verify_email")
+		writeServerError(w, r, err, "Email verification could not be completed. Please try again.", "auth", "verify_email")
 		return
 	}
 
@@ -623,7 +623,7 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 	// Get the user
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "auth", "resend_verification")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "auth", "resend_verification")
 		return
 	}
 
@@ -642,12 +642,12 @@ func (h *AuthHandler) ResendVerificationEmail(w http.ResponseWriter, r *http.Req
 	// Generate and send verification email
 	verificationToken, err := h.generateEmailVerificationToken(user.ID, user.Email)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate verification token", "auth", "resend_verification")
+		writeServerError(w, r, err, "Verification email could not be sent. Please try again.", "auth", "resend_verification")
 		return
 	}
 
 	if err := h.emailService.SendVerificationEmail(r.Context(), user.Email, verificationToken); err != nil {
-		writeServerError(w, r, err, "Failed to send verification email", "auth", "resend_verification")
+		writeServerError(w, r, err, "Verification email could not be sent. Please try again.", "auth", "resend_verification")
 		return
 	}
 
@@ -692,7 +692,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Get user to verify current password
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "auth", "change_password")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "auth", "change_password")
 		return
 	}
 
@@ -705,13 +705,13 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to process password change", "auth", "change_password")
+		writeServerError(w, r, err, "Password change could not be completed. Please try again.", "auth", "change_password")
 		return
 	}
 
 	// Update password
 	if err := h.userRepo.UpdatePassword(r.Context(), user.ID, string(hashedPassword)); err != nil {
-		writeServerError(w, r, err, "Failed to update password", "auth", "change_password")
+		writeServerError(w, r, err, "Password change could not be completed. Please try again.", "auth", "change_password")
 		return
 	}
 
@@ -900,14 +900,14 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "expired_token", "This reset link has expired. Please request a new one.")
 			return
 		}
-		writeServerError(w, r, err, "Failed to validate reset token", "auth", "reset_password")
+		writeServerError(w, r, err, "Password reset could not be completed. Please try again.", "auth", "reset_password")
 		return
 	}
 
 	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to process password reset", "auth", "reset_password")
+		writeServerError(w, r, err, "Password reset could not be completed. Please try again.", "auth", "reset_password")
 		return
 	}
 
@@ -926,13 +926,13 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			return h.passwordResetRepo.InvalidateForUserTx(r.Context(), tx, resetToken.UserID)
 		})
 		if txErr != nil {
-			writeServerError(w, r, txErr, "Failed to reset password", "auth", "reset_password")
+			writeServerError(w, r, txErr, "Password reset could not be completed. Please try again.", "auth", "reset_password")
 			return
 		}
 	} else {
 		// Non-transactional fallback (unit tests where h.db is nil)
 		if err := h.userRepo.UpdatePassword(r.Context(), resetToken.UserID, string(hashedPassword)); err != nil {
-			writeServerError(w, r, err, "Failed to update password", "auth", "reset_password")
+			writeServerError(w, r, err, "Password reset could not be completed. Please try again.", "auth", "reset_password")
 			return
 		}
 		if err := h.userRepo.InvalidateTokens(r.Context(), resetToken.UserID); err != nil {
@@ -1014,7 +1014,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	// Get user to verify password
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "auth", "delete_account")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "auth", "delete_account")
 		return
 	}
 
@@ -1033,7 +1033,7 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	// Determine deletion strategy
 	isBlocked, err := h.userRepo.IsUserBlockedAnywhere(r.Context(), user.ID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "auth", "delete_account")
+		writeServerError(w, r, err, "Account status could not be verified. Please try again.", "auth", "delete_account")
 		return
 	}
 
@@ -1052,12 +1052,12 @@ func (h *AuthHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	if isBlocked {
 		scrubUUID := uuid.New().String()
 		if err := h.userRepo.SoftDelete(r.Context(), user.ID, scrubUUID); err != nil {
-			writeServerError(w, r, err, "Failed to delete account", "auth", "delete_account")
+			writeServerError(w, r, err, "Account deletion could not be completed. Please try again.", "auth", "delete_account")
 			return
 		}
 	} else {
 		if err := h.userRepo.Delete(r.Context(), user.ID); err != nil {
-			writeServerError(w, r, err, "Failed to delete account", "auth", "delete_account")
+			writeServerError(w, r, err, "Account deletion could not be completed. Please try again.", "auth", "delete_account")
 			return
 		}
 	}

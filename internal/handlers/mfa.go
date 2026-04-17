@@ -83,33 +83,33 @@ func (h *MFAHandler) InitSetup(w http.ResponseWriter, r *http.Request) {
 	// Get user to verify they exist
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "mfa", "get_user")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "mfa", "get_user")
 		return
 	}
 
 	// Generate TOTP secret
 	key, err := h.mfaService.GenerateSecret(user.Email)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate MFA secret", "mfa", "generate_secret")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "generate_secret")
 		return
 	}
 
 	// Encrypt and store the secret
 	encryptedSecret, err := h.mfaService.EncryptSecret(key.Secret())
 	if err != nil {
-		writeServerError(w, r, err, "Failed to encrypt MFA secret", "mfa", "encrypt_secret")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "encrypt_secret")
 		return
 	}
 
 	if err := h.userRepo.SetMFASecret(r.Context(), user.ID, encryptedSecret); err != nil {
-		writeServerError(w, r, err, "Failed to store MFA secret", "mfa", "store_mfa_secret")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "store_mfa_secret")
 		return
 	}
 
 	// Generate QR code
 	qrCode, err := h.mfaService.GenerateQRCode(key)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate QR code", "mfa", "generate_qr_code")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "generate_qr_code")
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	// Get user
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "mfa", "get_user")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "mfa", "get_user")
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	// Validate the code
 	valid, err := h.mfaService.ValidateCode(*user.MFASecret, req.Code)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to validate code", "mfa", "validate_code")
+		writeServerError(w, r, err, "Code verification could not be completed. Please try again.", "mfa", "validate_code")
 		return
 	}
 
@@ -176,20 +176,20 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	// Generate backup codes
 	backupCodes, err := h.mfaService.GenerateBackupCodes(10)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate backup codes", "mfa", "generate_backup_codes")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "generate_backup_codes")
 		return
 	}
 
 	// Hash and store backup codes
 	hashedCodes, err := h.mfaService.HashBackupCodes(backupCodes)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to hash backup codes", "mfa", "hash_backup_codes")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "hash_backup_codes")
 		return
 	}
 
 	// Enable MFA
 	if err := h.userRepo.EnableMFA(r.Context(), user.ID, hashedCodes); err != nil {
-		writeServerError(w, r, err, "Failed to enable MFA", "mfa", "enable_mfa")
+		writeServerError(w, r, err, "MFA setup could not be completed. Please try again.", "mfa", "enable_mfa")
 		return
 	}
 
@@ -206,7 +206,7 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	user.MFASetupRequired = false
 	fullToken, err := h.jwtAuth.GenerateToken(user)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate token", "mfa", "generate_token")
+		writeServerError(w, r, err, "Authentication could not be completed. Please try again.", "mfa", "generate_token")
 		return
 	}
 
@@ -312,7 +312,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	// Get user
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "mfa", "get_user")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "mfa", "get_user")
 		return
 	}
 
@@ -322,7 +322,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user.MFASecret == nil || *user.MFASecret == "" {
-		writeServerError(w, r, fmt.Errorf("MFA secret is nil or empty for user %s", user.ID), "MFA configuration error", "mfa", "mfa_config_check")
+		writeServerError(w, r, fmt.Errorf("MFA secret is nil or empty for user %s", user.ID), "MFA verification could not be completed. Please try again.", "mfa", "mfa_config_check")
 		return
 	}
 
@@ -349,7 +349,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		// Validate TOTP code
 		valid, err := h.mfaService.ValidateCode(*user.MFASecret, req.Code)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to validate code", "mfa", "validate_totp_code")
+			writeServerError(w, r, err, "Code verification could not be completed. Please try again.", "mfa", "validate_totp_code")
 			return
 		}
 		authenticated = valid
@@ -391,7 +391,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusBadRequest, "no_backup_codes", "No backup codes remaining")
 					return
 				}
-				writeServerError(w, r, txErr, "Failed to validate backup code", "mfa", "validate_backup_code")
+				writeServerError(w, r, txErr, "Backup code verification could not be completed. Please try again.", "mfa", "validate_backup_code")
 				return
 			}
 			authenticated = true
@@ -412,12 +412,12 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusBadRequest, "no_backup_codes", "No backup codes remaining")
 					return
 				}
-				writeServerError(w, r, err, "Failed to validate backup code", "mfa", "validate_backup_code")
+				writeServerError(w, r, err, "Backup code verification could not be completed. Please try again.", "mfa", "validate_backup_code")
 				return
 			}
 
 			if err := h.userRepo.UpdateBackupCodes(r.Context(), user.ID, updatedCodes); err != nil {
-				writeServerError(w, r, err, "Failed to update backup codes", "mfa", "update_backup_codes")
+				writeServerError(w, r, err, "Backup code verification could not be completed. Please try again.", "mfa", "update_backup_codes")
 				return
 			}
 
@@ -449,7 +449,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	// Generate full token
 	fullToken, err := h.jwtAuth.GenerateToken(user)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate token", "mfa", "generate_token")
+		writeServerError(w, r, err, "Authentication could not be completed. Please try again.", "mfa", "generate_token")
 		return
 	}
 

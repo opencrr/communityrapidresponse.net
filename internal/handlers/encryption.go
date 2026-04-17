@@ -68,7 +68,7 @@ func (h *EncryptionHandler) UploadKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.encryptionKeyRepo.Create(r.Context(), key); err != nil {
-		writeServerError(w, r, err, "Failed to store encryption keys", "encryption", "upload_keys")
+		writeServerError(w, r, err, "Encryption keys could not be stored. Please try again.", "encryption", "upload_keys")
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *EncryptionHandler) GetKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get encryption keys", "encryption", "get_keys")
+		writeServerError(w, r, err, "Encryption keys could not be retrieved. Please try again.", "encryption", "get_keys")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *EncryptionHandler) UpdateKeys(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "No encryption keys found to update")
 			return
 		}
-		writeServerError(w, r, err, "Failed to update encryption keys", "encryption", "update_keys")
+		writeServerError(w, r, err, "Encryption keys could not be updated. Please try again.", "encryption", "update_keys")
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.encryptionKeyRepo.Create(r.Context(), key); err != nil {
-		writeServerError(w, r, err, "Failed to rotate encryption keys", "encryption", "rotate_keys")
+		writeServerError(w, r, err, "Encryption key rotation could not be completed. Please try again.", "encryption", "rotate_keys")
 		return
 	}
 
@@ -219,7 +219,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		if regionID != "" {
 			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 			if memberErr != nil {
-				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				writeServerError(w, r, memberErr, "Membership could not be verified. Please try again.", "encryption", "check_membership")
 				return
 			}
 			if !isMember {
@@ -235,7 +235,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		} else {
 			schools, memberErr := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 			if memberErr != nil {
-				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				writeServerError(w, r, memberErr, "Membership could not be verified. Please try again.", "encryption", "check_membership")
 				return
 			}
 			isMember := false
@@ -265,7 +265,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get public keys", "encryption", "get_public_keys")
+		writeServerError(w, r, err, "Public keys could not be retrieved. Please try again.", "encryption", "get_public_keys")
 		return
 	}
 
@@ -292,7 +292,7 @@ func (h *EncryptionHandler) GetPendingRekeys(w http.ResponseWriter, r *http.Requ
 
 	rekeys, err := h.encryptedSecretRepo.GetPendingRekeys(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get pending re-keys", "encryption", "get_pending_rekeys")
+		writeServerError(w, r, err, "Pending re-key requests could not be retrieved. Please try again.", "encryption", "get_pending_rekeys")
 		return
 	}
 
@@ -326,7 +326,7 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 	}
 
 	if h.encryptedSecretRepo == nil {
-		writeError(w, http.StatusInternalServerError, "server_error", "Re-keying not available")
+		writeError(w, http.StatusInternalServerError, "server_error", "Encryption key rotation is temporarily unavailable")
 		return
 	}
 

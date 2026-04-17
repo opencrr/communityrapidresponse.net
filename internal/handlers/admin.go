@@ -79,7 +79,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, total, err := h.userRepo.Search(r.Context(), query, page, limit)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to search users", "admin", "search_users")
+		writeServerError(w, r, err, "User search could not be completed. Please try again.", "admin", "search_users")
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "get_user")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "get_user")
 		return
 	}
 
@@ -167,13 +167,13 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "grant_vouch")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "grant_vouch")
 		return
 	}
 
 	// Grant vouch verification
 	if err := h.userRepo.SetVouchVerified(r.Context(), userID, true); err != nil {
-		writeServerError(w, r, err, "Failed to grant vouch verification", "admin", "grant_vouch")
+		writeServerError(w, r, err, "Vouch verification could not be granted. Please try again.", "admin", "grant_vouch")
 		return
 	}
 
@@ -256,13 +256,13 @@ func (h *AdminHandler) RevokeVouchVerification(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "revoke_vouch")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "revoke_vouch")
 		return
 	}
 
 	// Revoke vouch verification
 	if err := h.userRepo.SetVouchVerified(r.Context(), userID, false); err != nil {
-		writeServerError(w, r, err, "Failed to revoke vouch verification", "admin", "revoke_vouch")
+		writeServerError(w, r, err, "Vouch verification could not be revoked. Please try again.", "admin", "revoke_vouch")
 		return
 	}
 
@@ -336,7 +336,7 @@ func (h *AdminHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "block_user")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "block_user")
 		return
 	}
 
@@ -348,7 +348,7 @@ func (h *AdminHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 
 	// Block the user
 	if err := h.userRepo.Block(r.Context(), userID, claims.UserID, req.Reason); err != nil {
-		writeServerError(w, r, err, "Failed to block user", "admin", "block_user")
+		writeServerError(w, r, err, "User could not be blocked. Please try again.", "admin", "block_user")
 		return
 	}
 
@@ -407,13 +407,13 @@ func (h *AdminHandler) UnblockUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "unblock_user")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "unblock_user")
 		return
 	}
 
 	// Unblock the user
 	if err := h.userRepo.Unblock(r.Context(), userID); err != nil {
-		writeServerError(w, r, err, "Failed to unblock user", "admin", "unblock_user")
+		writeServerError(w, r, err, "User could not be unblocked. Please try again.", "admin", "unblock_user")
 		return
 	}
 
@@ -477,7 +477,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "User not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get user", "admin", "delete_user")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "admin", "delete_user")
 		return
 	}
 
@@ -497,7 +497,7 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	// Delete the user
 	if err := h.userRepo.Delete(r.Context(), userID); err != nil {
-		writeServerError(w, r, err, "Failed to delete user", "admin", "delete_user")
+		writeServerError(w, r, err, "User could not be deleted. Please try again.", "admin", "delete_user")
 		return
 	}
 
@@ -533,7 +533,7 @@ func (h *AdminHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.auditRepo.Query(r.Context(), filter)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to query audit logs", "admin", "query_audit_logs")
+		writeServerError(w, r, err, "Audit logs could not be retrieved. Please try again.", "admin", "query_audit_logs")
 		return
 	}
 
@@ -559,7 +559,7 @@ func (h *AdminHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.auditRepo.Query(r.Context(), filter)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to export audit logs", "admin", "export_audit_logs")
+		writeServerError(w, r, err, "Audit log export could not be completed. Please try again.", "admin", "export_audit_logs")
 		return
 	}
 

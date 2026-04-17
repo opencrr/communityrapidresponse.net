@@ -156,7 +156,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 				writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
 				return
 			}
-			writeServerError(w, r, err, "Failed to get signal group", "deletion", "get_signal_group")
+			writeServerError(w, r, err, "Signal group could not be found. Please try again.", "deletion", "get_signal_group")
 			return
 		}
 		if !signalGroup.IsActive {
@@ -174,7 +174,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 				writeError(w, http.StatusNotFound, "not_found", "Region not found")
 				return
 			}
-			writeServerError(w, r, err, "Failed to get region", "deletion", "get_region")
+			writeServerError(w, r, err, "Community could not be found. Please try again.", "deletion", "get_region")
 			return
 		}
 		// The governing region is the parent of the sub-region being deleted
@@ -188,7 +188,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 	// Validate caller is admin in the appropriate scope
 	isAdmin, err := h.isAdminForProposal(r.Context(), claims.UserID, proposal)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "deletion", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "deletion", "verify_admin_status")
 		return
 	}
 	if !isAdmin && !claims.IsSuperuser {
@@ -199,7 +199,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 	// Check admin count meets minimum floor
 	adminCount, err := h.getAdminCount(r.Context(), proposal)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "deletion", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "deletion", "count_admins")
 		return
 	}
 	votesNeeded := h.consensusConfig.RequiredVotes(adminCount)
@@ -258,7 +258,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to create proposal", "deletion", "create_proposal")
+		writeServerError(w, r, err, "Proposal could not be created. Please try again.", "deletion", "create_proposal")
 		return
 	}
 
@@ -307,14 +307,14 @@ func (h *DeletionProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "deletion", "get_proposal")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "deletion", "get_proposal")
 		return
 	}
 
 	// Check if user is admin in the proposal's scope
 	isAdmin, err := h.isAdminForProposal(r.Context(), claims.UserID, proposal)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "deletion", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "deletion", "verify_admin_status")
 		return
 	}
 	if !isAdmin && !claims.IsSuperuser {
@@ -325,7 +325,7 @@ func (h *DeletionProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http.
 	// Get admin count for votes needed calculation
 	adminCount, err := h.getAdminCount(r.Context(), proposal)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "deletion", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "deletion", "count_admins")
 		return
 	}
 	votesNeeded := h.consensusConfig.RequiredVotes(adminCount)
@@ -410,7 +410,7 @@ func (h *DeletionProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http.
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to record vote", "deletion", "record_vote")
+		writeServerError(w, r, err, "Vote could not be recorded. Please try again.", "deletion", "record_vote")
 		return
 	}
 
@@ -479,14 +479,14 @@ func (h *DeletionProposalHandler) GetProposal(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "deletion", "get_proposal")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "deletion", "get_proposal")
 		return
 	}
 
 	// Check access
 	isAdmin, err := h.isAdminForProposal(r.Context(), claims.UserID, rawProposal)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "deletion", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "deletion", "verify_admin_status")
 		return
 	}
 	if !isAdmin && !claims.IsSuperuser {
@@ -497,7 +497,7 @@ func (h *DeletionProposalHandler) GetProposal(w http.ResponseWriter, r *http.Req
 	// Get proposal with votes for the detail response
 	detail, err := h.proposalRepo.GetByIDWithVotes(r.Context(), proposalID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get proposal", "deletion", "get_proposal_with_votes")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "deletion", "get_proposal_with_votes")
 		return
 	}
 
@@ -543,7 +543,7 @@ func (h *DeletionProposalHandler) ListProposals(w http.ResponseWriter, r *http.R
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list proposals", "deletion", "list_proposals")
+		writeServerError(w, r, err, "Proposals could not be loaded. Please try again.", "deletion", "list_proposals")
 		return
 	}
 
@@ -587,7 +587,7 @@ func (h *DeletionProposalHandler) ExpireProposal(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "deletion", "get_proposal")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "deletion", "get_proposal")
 		return
 	}
 
@@ -597,7 +597,7 @@ func (h *DeletionProposalHandler) ExpireProposal(w http.ResponseWriter, r *http.
 	}
 
 	if err := h.proposalRepo.UpdateStatus(r.Context(), proposalID, models.ProposalStatusExpired); err != nil {
-		writeServerError(w, r, err, "Failed to expire proposal", "deletion", "expire_proposal")
+		writeServerError(w, r, err, "Proposal could not be expired. Please try again.", "deletion", "expire_proposal")
 		return
 	}
 

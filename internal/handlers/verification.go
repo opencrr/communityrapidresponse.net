@@ -128,7 +128,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Pre-check rate limiting (non-locking, for fast rejection before external API calls)
 	recentCount, err := h.verificationRepo.CountRecentByUser(r.Context(), claims.UserID, 30)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check rate limit", "verification", "request_verification")
+		writeServerError(w, r, err, "Verification request could not be processed. Please try again.", "verification", "request_verification")
 		return
 	}
 	if recentCount >= maxVerificationRequestsPer30Days {
@@ -141,7 +141,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	if err != nil {
 		slog.ErrorContext(r.Context(), "postgrid address validation failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "address_validation")
-		writeError(w, http.StatusBadGateway, "address_validation_failed", "Failed to validate address")
+		writeError(w, http.StatusBadGateway, "address_validation_failed", "Address could not be validated. Please try again.")
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	if err != nil {
 		slog.ErrorContext(r.Context(), "mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
-		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
+		writeError(w, http.StatusBadGateway, "geocoding_failed", "Address could not be located. Please try again.")
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 				writeError(w, http.StatusNotFound, "region_not_found", "Community not found")
 				return
 			}
-			writeServerError(w, r, err, "Failed to verify address location", "verification", "request_verification")
+			writeServerError(w, r, err, "Address location could not be verified. Please try again.", "verification", "request_verification")
 			return
 		}
 		if !isInRegion {
@@ -233,7 +233,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		// No region specified - find existing or create new
 		existingRegions, err := h.regionRepo.GetRegionsContainingPoint(r.Context(), geocodeResult.Latitude, geocodeResult.Longitude)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to find regions", "verification", "request_verification")
+			writeServerError(w, r, err, "Your community could not be located. Please try again.", "verification", "request_verification")
 			return
 		}
 
@@ -259,7 +259,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 			// (even if state/county regions exist)
 			createdRegionID, err := h.createRegionHierarchy(r.Context(), geocodeResult, &req.Address, claims.UserID)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to create region", "verification", "create_hierarchy")
+				writeServerError(w, r, err, "Community setup could not be completed. Please try again.", "verification", "create_hierarchy")
 				return
 			}
 			regionID = createdRegionID
@@ -270,12 +270,12 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	// Step 4: Generate verification code and postcard reference
 	code, err := generateVerificationCode()
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate verification code", "verification", "request_verification")
+		writeServerError(w, r, err, "Verification code could not be generated. Please try again.", "verification", "request_verification")
 		return
 	}
 	postcardRef, err := generatePostcardRef()
 	if err != nil {
-		writeServerError(w, r, err, "Failed to generate postcard reference", "verification", "request_verification")
+		writeServerError(w, r, err, "Verification reference could not be generated. Please try again.", "verification", "request_verification")
 		return
 	}
 
@@ -311,12 +311,12 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 				writeError(w, http.StatusTooManyRequests, "rate_limit", "Maximum verification requests exceeded. Please wait before requesting again.")
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to create verification request", "verification", "request_verification")
+			writeServerError(w, r, txErr, "Verification request could not be created. Please try again.", "verification", "request_verification")
 			return
 		}
 	} else {
 		if err := h.verificationRepo.CreateVerificationRequest(r.Context(), verificationReq); err != nil {
-			writeServerError(w, r, err, "Failed to create verification request", "verification", "request_verification")
+			writeServerError(w, r, err, "Verification request could not be created. Please try again.", "verification", "request_verification")
 			return
 		}
 	}
@@ -328,7 +328,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "postgrid", "operation", "send_postcard")
 		// Clean up the reserved row since the postcard was never sent
 		_ = h.verificationRepo.Delete(r.Context(), verificationReq.ID)
-		writeError(w, http.StatusBadGateway, "mail_service_error", "Failed to send verification postcard")
+		writeError(w, http.StatusBadGateway, "mail_service_error", "Verification postcard could not be sent. Please try again.")
 		return
 	}
 
@@ -498,7 +498,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusConflict, "already_verified", "This code has already been used")
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to verify code", "verification", "confirm_verification")
+			writeServerError(w, r, txErr, "Code verification could not be completed. Please try again.", "verification", "confirm_verification")
 			return
 		}
 	} else {
@@ -510,7 +510,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify code", "verification", "confirm_verification")
+			writeServerError(w, r, err, "Code verification could not be completed. Please try again.", "verification", "confirm_verification")
 			return
 		}
 		// Check if code is already locked out
@@ -539,11 +539,11 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if err := h.verificationRepo.MarkVerified(r.Context(), verificationReq.ID); err != nil {
-			writeServerError(w, r, err, "Failed to complete verification", "verification", "confirm_verification")
+			writeServerError(w, r, err, "Verification could not be completed. Please try again.", "verification", "confirm_verification")
 			return
 		}
 		if err := h.userRepo.UpdateVerificationTier(r.Context(), claims.UserID, models.TierPostcard); err != nil {
-			writeServerError(w, r, err, "Failed to update user tier", "verification", "confirm_verification")
+			writeServerError(w, r, err, "Verification could not be completed. Please try again.", "verification", "confirm_verification")
 			return
 		}
 		_ = h.userRepo.SetPostcardVerified(r.Context(), claims.UserID, true)
@@ -653,7 +653,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	if err != nil {
 		slog.ErrorContext(r.Context(), "mapbox geocoding failed", "error", err)
 		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", "mapbox", "operation", "geocoding")
-		writeError(w, http.StatusBadGateway, "geocoding_failed", "Failed to geocode address")
+		writeError(w, http.StatusBadGateway, "geocoding_failed", "Address could not be located. Please try again.")
 		return
 	}
 
@@ -663,7 +663,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 
 	existingRegions, err := h.regionRepo.GetRegionsContainingPoint(r.Context(), geocodeResult.Latitude, geocodeResult.Longitude)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to find regions", "verification", "request_vouch")
+		writeServerError(w, r, err, "Your community could not be located. Please try again.", "verification", "request_vouch")
 		return
 	}
 
@@ -686,7 +686,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		// No city-level region exists - create the hierarchy
 		createdRegionID, err := h.createRegionHierarchy(r.Context(), geocodeResult, &req.Address, claims.UserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create region", "verification", "create_hierarchy")
+			writeServerError(w, r, err, "Community setup could not be completed. Please try again.", "verification", "create_hierarchy")
 			return
 		}
 		regionID = createdRegionID
@@ -696,7 +696,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	// Get region details for response
 	region, err := h.regionRepo.GetByID(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region details", "verification", "request_vouch")
+		writeServerError(w, r, err, "Community details could not be retrieved. Please try again.", "verification", "request_vouch")
 		return
 	}
 
@@ -752,7 +752,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 				writeError(w, httpStatus, errCode, errMsg)
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to create vouch request", "verification", "request_vouch")
+			writeServerError(w, r, txErr, "Vouch request could not be submitted. Please try again.", "verification", "request_vouch")
 			return
 		}
 	} else {
@@ -760,12 +760,12 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		var err error
 		bootstrapMode, adminCount, err = h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check region status", "verification", "request_vouch")
+			writeServerError(w, r, err, "Community status could not be verified. Please try again.", "verification", "request_vouch")
 			return
 		}
 		existing, err := h.regionRepo.GetUserRegion(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check existing membership", "verification", "request_vouch")
+			writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "verification", "request_vouch")
 			return
 		}
 		if existing != nil {
@@ -778,7 +778,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 		}
 		userRegionID, err = h.regionRepo.AddUserToRegionPending(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create vouch request", "verification", "request_vouch")
+			writeServerError(w, r, err, "Vouch request could not be submitted. Please try again.", "verification", "request_vouch")
 			return
 		}
 
@@ -847,7 +847,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Get fresh voucher data from database (JWT claims may be stale after verification)
 	voucher, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 
@@ -903,7 +903,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		// and vouchee has a pending membership (excludes state level)
 		sharedRegion, err := h.regionRepo.GetMostSpecificSharedPendingRegion(r.Context(), claims.UserID, vouchedUserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check shared region", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Community membership could not be verified. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		if sharedRegion != nil {
@@ -912,7 +912,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			// Fall back to the vouchee's most specific pending region
 			pendingRegion, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), vouchedUserID)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to check pending vouch request", "verification", "vouch_for_user")
+				writeServerError(w, r, err, "Vouch request status could not be verified. Please try again.", "verification", "vouch_for_user")
 				return
 			}
 			if pendingRegion != nil {
@@ -927,7 +927,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Enforce state-level vouch cap: no vouching at state level
 	targetRegion, err := h.regionRepo.GetByID(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Community information could not be retrieved. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 	if targetRegion.RegionType == models.RegionTypeState {
@@ -938,7 +938,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check bootstrap mode for this region
 	bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check region bootstrap status", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Community status could not be verified. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 
@@ -953,7 +953,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	if bootstrapMode {
 		mostSpecificPending, err := h.regionRepo.GetUserPendingVouchRegion(r.Context(), vouchedUserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouchee pending region", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Vouch request status could not be verified. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		if mostSpecificPending != nil && mostSpecificPending.ID != regionID {
@@ -970,7 +970,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		if h.bootstrapCooldownEnabled {
 			lastVouchTime, err := h.vouchRepo.GetLastVouchTimeByVoucher(r.Context(), claims.UserID)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to check vouch cooldown", "verification", "vouch_for_user")
+				writeServerError(w, r, err, "Vouch status could not be verified. Please try again.", "verification", "vouch_for_user")
 				return
 			}
 			if lastVouchTime != nil {
@@ -999,7 +999,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check for circular vouch pattern (vouchee already vouched for voucher)
 	isCircular, err := h.vouchRepo.HasVouched(r.Context(), vouchedUserID, claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check vouch pattern", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Vouch eligibility could not be verified. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 	if isCircular {
@@ -1017,7 +1017,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		isVoucherInRegion, err = h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, regionID)
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check voucher region membership", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Your community membership could not be verified. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 	if !isVoucherInRegion {
@@ -1028,7 +1028,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check if vouchee is blocked in this region
 	isBlocked, err := h.vouchRepo.IsUserBlockedInRegion(r.Context(), vouchedUserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "User status could not be verified. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 	if isBlocked {
@@ -1040,7 +1040,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// User must have a pending vouch request (created via address submission)
 	pendingRequest, err := h.regionRepo.GetUserRegionByStatus(r.Context(), vouchedUserID, regionID, string(models.UserRegionStatusPending))
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check vouch request status", "verification", "vouch_for_user")
+		writeServerError(w, r, err, "Vouch request status could not be verified. Please try again.", "verification", "vouch_for_user")
 		return
 	}
 	if pendingRequest == nil {
@@ -1122,14 +1122,14 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusTooManyRequests, "vouch_limit", "You have reached your monthly vouch limit")
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to create vouch", "verification", "vouch_for_user")
+			writeServerError(w, r, txErr, "Vouch could not be submitted. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 	} else {
 		// Fallback for when db is not available (e.g., tests)
 		hasVouched, err := h.vouchRepo.HasVouched(r.Context(), claims.UserID, vouchedUserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch status", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Vouch status could not be verified. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		if hasVouched {
@@ -1138,7 +1138,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		}
 		monthlyVouches, err := h.vouchRepo.CountVouchesThisMonth(r.Context(), claims.UserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch limit", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Vouch limit could not be verified. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		if monthlyVouches >= maxVouchesPerMonth {
@@ -1146,12 +1146,12 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.vouchRepo.Create(r.Context(), vouch); err != nil {
-			writeServerError(w, r, err, "Failed to create vouch", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Vouch could not be submitted. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		totalVouches, err = h.vouchRepo.CountVouchesForUserWithDescendants(r.Context(), vouchedUserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to count vouches", "verification", "vouch_for_user")
+			writeServerError(w, r, err, "Vouch count could not be retrieved. Please try again.", "verification", "vouch_for_user")
 			return
 		}
 		if totalVouches >= vouchesRequired {
@@ -1256,14 +1256,14 @@ func (h *VerificationHandler) GetVouchStatus(w http.ResponseWriter, r *http.Requ
 	// Count vouches with descendant accumulation
 	totalVouches, err := h.vouchRepo.CountVouchesForUserWithDescendants(r.Context(), userID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count vouches", "verification", "get_status")
+		writeServerError(w, r, err, "Vouch count could not be retrieved. Please try again.", "verification", "get_status")
 		return
 	}
 
 	// Get vouchers with descendant accumulation
 	vouchers, err := h.vouchRepo.GetVouchersForUserWithDescendants(r.Context(), userID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get vouchers", "verification", "get_status")
+		writeServerError(w, r, err, "Voucher information could not be retrieved. Please try again.", "verification", "get_status")
 		return
 	}
 
@@ -1298,7 +1298,7 @@ func (h *VerificationHandler) GetPendingVouchRequests(w http.ResponseWriter, r *
 	// Get fresh user data from database (JWT claims may be stale after verification)
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "verification", "get_pending_vouches")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "verification", "get_pending_vouches")
 		return
 	}
 
@@ -1342,7 +1342,7 @@ func (h *VerificationHandler) GetPendingVouchRequests(w http.ResponseWriter, r *
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to fetch pending requests", "verification", "get_pending_vouches")
+		writeServerError(w, r, err, "Pending requests could not be retrieved. Please try again.", "verification", "get_pending_vouches")
 		return
 	}
 
@@ -1363,14 +1363,14 @@ func (h *VerificationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 	// Get user to check verification tier
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get user", "verification", "get_status")
+		writeServerError(w, r, err, "Your account information could not be retrieved. Please try again.", "verification", "get_status")
 		return
 	}
 
 	// Check for pending postcard verification requests
 	pendingRequests, err := h.verificationRepo.GetPendingByUserID(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check verification status", "verification", "get_status")
+		writeServerError(w, r, err, "Verification status could not be retrieved. Please try again.", "verification", "get_status")
 		return
 	}
 

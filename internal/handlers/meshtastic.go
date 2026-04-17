@@ -101,7 +101,7 @@ func (h *MeshtasticHandler) createRegionChannel(w http.ResponseWriter, r *http.R
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "meshtastic", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "meshtastic", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -113,7 +113,7 @@ func (h *MeshtasticHandler) createRegionChannel(w http.ResponseWriter, r *http.R
 	if !claims.IsSuperuser {
 		bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check region status", "meshtastic", "check_bootstrap_mode")
+			writeServerError(w, r, err, "Community status could not be verified. Please try again.", "meshtastic", "check_bootstrap_mode")
 			return
 		}
 		if bootstrapMode {
@@ -140,7 +140,7 @@ func (h *MeshtasticHandler) createRegionChannel(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Meshtastic channels reached for this region")
 			return
 		}
-		writeServerError(w, r, err, "Failed to create Meshtastic channel", "meshtastic", "create_channel")
+		writeServerError(w, r, err, "Meshtastic channel could not be created. Please try again.", "meshtastic", "create_channel")
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *MeshtasticHandler) createSchoolChannel(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Meshtastic channels reached for this school")
 			return
 		}
-		writeServerError(w, r, err, "Failed to create Meshtastic channel", "meshtastic", "create_channel")
+		writeServerError(w, r, err, "Meshtastic channel could not be created. Please try again.", "meshtastic", "create_channel")
 		return
 	}
 
@@ -208,7 +208,7 @@ func (h *MeshtasticHandler) createDistrictChannel(w http.ResponseWriter, r *http
 		// District admin check: user must be admin of at least one school in the district
 		schools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "meshtastic", "verify_district_admin")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "meshtastic", "verify_district_admin")
 			return
 		}
 		isDistrictAdmin := false
@@ -237,7 +237,7 @@ func (h *MeshtasticHandler) createDistrictChannel(w http.ResponseWriter, r *http
 			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Meshtastic channels reached for this district")
 			return
 		}
-		writeServerError(w, r, err, "Failed to create Meshtastic channel", "meshtastic", "create_channel")
+		writeServerError(w, r, err, "Meshtastic channel could not be created. Please try again.", "meshtastic", "create_channel")
 		return
 	}
 
@@ -341,7 +341,7 @@ func (h *MeshtasticHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Meshtastic channels", "meshtastic", "list_channels")
+		writeServerError(w, r, err, "Meshtastic channels could not be loaded. Please try again.", "meshtastic", "list_channels")
 		return
 	}
 
@@ -392,7 +392,7 @@ func (h *MeshtasticHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 
 	channels, err := h.channelRepo.ListByAdminUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Meshtastic channels", "meshtastic", "list_admin_channels")
+		writeServerError(w, r, err, "Meshtastic channels could not be loaded. Please try again.", "meshtastic", "list_admin_channels")
 		return
 	}
 
@@ -454,7 +454,7 @@ func (h *MeshtasticHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get Meshtastic channel", "meshtastic", "get_channel")
+		writeServerError(w, r, err, "Meshtastic channel could not be retrieved. Please try again.", "meshtastic", "get_channel")
 		return
 	}
 
@@ -463,7 +463,7 @@ func (h *MeshtasticHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if channel.RegionID != nil {
 			isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, *channel.RegionID)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to verify admin status", "meshtastic", "verify_admin_status")
+				writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "meshtastic", "verify_admin_status")
 				return
 			}
 			if !isAdmin {
@@ -479,7 +479,7 @@ func (h *MeshtasticHandler) Update(w http.ResponseWriter, r *http.Request) {
 		} else if channel.DistrictID != nil {
 			schools, err := h.schoolRepo.ListByDistrict(r.Context(), *channel.DistrictID)
 			if err != nil {
-				writeServerError(w, r, err, "Failed to verify admin status", "meshtastic", "verify_district_admin")
+				writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "meshtastic", "verify_district_admin")
 				return
 			}
 			isDistrictAdmin := false
@@ -498,7 +498,7 @@ func (h *MeshtasticHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.channelRepo.Update(r.Context(), channelID, req.Name, req.Description); err != nil {
-		writeServerError(w, r, err, "Failed to update Meshtastic channel", "meshtastic", "update_channel")
+		writeServerError(w, r, err, "Meshtastic channel could not be updated. Please try again.", "meshtastic", "update_channel")
 		return
 	}
 

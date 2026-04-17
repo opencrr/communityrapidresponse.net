@@ -52,7 +52,7 @@ func Recoverer(next http.Handler) http.Handler {
 					"stack", string(debug.Stack()),
 					"request_id", logging.RequestID(r.Context()),
 				)
-				http.Error(w, `{"error":"internal_error","message":"Internal server error"}`, http.StatusInternalServerError)
+				http.Error(w, `{"error":"internal_error","message":"An unexpected error occurred. Please try again later."}`, http.StatusInternalServerError)
 			}
 		}()
 

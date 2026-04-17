@@ -97,7 +97,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 	// Check if user is admin for this region
 	isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "blocklist", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "blocklist", "verify_admin_status")
 		return
 	}
 	if !isAdmin {
@@ -108,7 +108,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 	// Check admin count meets minimum floor
 	adminCount, err := h.regionRepo.GetAdminCount(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "blocklist", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "blocklist", "count_admins")
 		return
 	}
 	votesNeeded := h.consensusConfig.RequiredVotes(adminCount)
@@ -129,7 +129,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 			writeError(w, http.StatusNotFound, "user_not_found", "Target user not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get target user", "blocklist", "get_target_user")
+		writeServerError(w, r, err, "User information could not be retrieved. Please try again.", "blocklist", "get_target_user")
 		return
 	}
 	if targetUser.IsSuperuser {
@@ -140,7 +140,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 	// Check if target user is in the region
 	isInRegion, err := h.proposalRepo.IsUserInRegion(r.Context(), req.TargetUserID, regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check user region membership", "blocklist", "check_user_region")
+		writeServerError(w, r, err, "User membership could not be verified. Please try again.", "blocklist", "check_user_region")
 		return
 	}
 	if !isInRegion {
@@ -151,7 +151,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 	// Check rate limit (outside tx - read-only)
 	proposalsThisMonth, err := h.proposalRepo.CountProposalsThisMonth(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check rate limit", "blocklist", "check_rate_limit")
+		writeServerError(w, r, err, "Rate limit could not be verified. Please try again.", "blocklist", "check_rate_limit")
 		return
 	}
 	if proposalsThisMonth >= h.blocklistConfig.ProposalRateLimitPerMonth {
@@ -215,7 +215,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to create proposal", "blocklist", "create_proposal")
+		writeServerError(w, r, err, "Proposal could not be created. Please try again.", "blocklist", "create_proposal")
 		return
 	}
 
@@ -264,7 +264,7 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "blocklist", "get_proposal")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "blocklist", "get_proposal")
 		return
 	}
 
@@ -275,7 +275,7 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 	}
 	isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, *proposal.RegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify admin status", "blocklist", "verify_admin_status")
+		writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "blocklist", "verify_admin_status")
 		return
 	}
 	if !isAdmin {
@@ -286,7 +286,7 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 	// Get admin count (outside tx)
 	adminCount, err := h.regionRepo.GetAdminCount(r.Context(), *proposal.RegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "blocklist", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "blocklist", "count_admins")
 		return
 	}
 	votesNeeded := h.consensusConfig.RequiredVotes(adminCount)
@@ -362,7 +362,7 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to record vote", "blocklist", "record_vote")
+		writeServerError(w, r, err, "Vote could not be recorded. Please try again.", "blocklist", "record_vote")
 		return
 	}
 
@@ -433,7 +433,7 @@ func (h *BlocklistProposalHandler) GetProposal(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "blocklist", "get_proposal_with_votes")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "blocklist", "get_proposal_with_votes")
 		return
 	}
 
@@ -442,7 +442,7 @@ func (h *BlocklistProposalHandler) GetProposal(w http.ResponseWriter, r *http.Re
 	if !claims.IsSuperuser {
 		isAdmin, err = h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, proposal.RegionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "blocklist", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "blocklist", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -454,7 +454,7 @@ func (h *BlocklistProposalHandler) GetProposal(w http.ResponseWriter, r *http.Re
 	// Get admin count for votes needed calculation
 	adminCount, err := h.regionRepo.GetAdminCount(r.Context(), proposal.RegionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "blocklist", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "blocklist", "count_admins")
 		return
 	}
 	proposal.VotesNeeded = h.consensusConfig.RequiredVotes(adminCount)
@@ -506,7 +506,7 @@ func (h *BlocklistProposalHandler) ListProposals(w http.ResponseWriter, r *http.
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list proposals", "blocklist", "list_proposals")
+		writeServerError(w, r, err, "Proposals could not be loaded. Please try again.", "blocklist", "list_proposals")
 		return
 	}
 
@@ -546,7 +546,7 @@ func (h *BlocklistProposalHandler) ExpireProposal(w http.ResponseWriter, r *http
 			writeError(w, http.StatusNotFound, "not_found", "Proposal not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get proposal", "blocklist", "get_proposal")
+		writeServerError(w, r, err, "Proposal could not be retrieved. Please try again.", "blocklist", "get_proposal")
 		return
 	}
 
@@ -558,7 +558,7 @@ func (h *BlocklistProposalHandler) ExpireProposal(w http.ResponseWriter, r *http
 
 	// Update status to expired
 	if err := h.proposalRepo.UpdateStatus(r.Context(), proposalID, models.ProposalStatusExpired); err != nil {
-		writeServerError(w, r, err, "Failed to expire proposal", "blocklist", "expire_proposal")
+		writeServerError(w, r, err, "Proposal could not be expired. Please try again.", "blocklist", "expire_proposal")
 		return
 	}
 
@@ -597,7 +597,7 @@ func (h *BlocklistProposalHandler) ListBlockedAddresses(w http.ResponseWriter, r
 
 	addresses, err := h.proposalRepo.ListBlockedAddresses(r.Context(), activeOnly)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list blocked addresses", "blocklist", "list_blocked_addresses")
+		writeServerError(w, r, err, "Blocked addresses could not be loaded. Please try again.", "blocklist", "list_blocked_addresses")
 		return
 	}
 
@@ -637,7 +637,7 @@ func (h *BlocklistProposalHandler) ExpireAddress(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusNotFound, "not_found", "Blocked address not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to expire address", "blocklist", "expire_address")
+		writeServerError(w, r, err, "Address block could not be expired. Please try again.", "blocklist", "expire_address")
 		return
 	}
 

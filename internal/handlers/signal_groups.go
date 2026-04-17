@@ -68,7 +68,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "signal_group", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "signal_group", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -82,7 +82,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		bootstrapMode, adminCount, err := h.regionRepo.IsRegionInBootstrapMode(r.Context(), regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check region status", "signal_group", "check_bootstrap_mode")
+			writeServerError(w, r, err, "Community status could not be verified. Please try again.", "signal_group", "check_bootstrap_mode")
 			return
 		}
 		if bootstrapMode {
@@ -132,13 +132,13 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "signal_group", "create_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "signal_group", "create_group")
 			return
 		}
 	} else {
 		count, err := h.groupRepo.CountByRegion(r.Context(), regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "signal_group", "count_by_region")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "signal_group", "count_by_region")
 			return
 		}
 		if count >= maxGroupsPerRegion {
@@ -146,7 +146,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.groupRepo.Create(r.Context(), group); err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "signal_group", "create_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "signal_group", "create_group")
 			return
 		}
 		// Create encrypted secret (non-transactional fallback)
@@ -158,7 +158,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 			UpdatedBy:        claims.UserID,
 		}
 		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
-			writeServerError(w, r, err, "Failed to create encrypted secret", "signal_group", "create_encrypted_secret")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "signal_group", "create_encrypted_secret")
 			return
 		}
 	}
@@ -204,7 +204,7 @@ func (h *SignalGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 		if !claims.IsSuperuser {
 			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 			if memberErr != nil {
-				writeServerError(w, r, memberErr, "Failed to check region access", "signal_group", "check_region_access")
+				writeServerError(w, r, memberErr, "Community access could not be verified. Please try again.", "signal_group", "check_region_access")
 				return
 			}
 			if !isMember {
@@ -218,7 +218,7 @@ func (h *SignalGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "signal_group", "list_groups")
+		writeServerError(w, r, err, "Signal groups could not be loaded. Please try again.", "signal_group", "list_groups")
 		return
 	}
 
@@ -273,7 +273,7 @@ func (h *SignalGroupHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.groupRepo.ListByAdminUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "signal_group", "list_admin_groups")
+		writeServerError(w, r, err, "Signal groups could not be loaded. Please try again.", "signal_group", "list_admin_groups")
 		return
 	}
 
@@ -338,7 +338,7 @@ func (h *SignalGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get Signal group", "signal_group", "get_group")
+		writeServerError(w, r, err, "Signal group details could not be retrieved. Please try again.", "signal_group", "get_group")
 		return
 	}
 
@@ -350,7 +350,7 @@ func (h *SignalGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, *group.RegionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "signal_group", "verify_admin_status")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "signal_group", "verify_admin_status")
 			return
 		}
 		if !isAdmin {
@@ -361,7 +361,7 @@ func (h *SignalGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Update (name and description only - secret requires consensus)
 	if err := h.groupRepo.Update(r.Context(), groupID, req.Name, req.Description); err != nil {
-		writeServerError(w, r, err, "Failed to update Signal group", "signal_group", "update_group")
+		writeServerError(w, r, err, "Signal group could not be updated. Please try again.", "signal_group", "update_group")
 		return
 	}
 

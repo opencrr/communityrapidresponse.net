@@ -105,7 +105,7 @@ func (h *SchoolHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	schools, totalCount, err := h.schoolRepo.Search(r.Context(), query, state, "", page, limit)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to search schools", "school", "search_schools")
+		writeServerError(w, r, err, "School search could not be completed. Please try again.", "school", "search_schools")
 		return
 	}
 
@@ -137,7 +137,7 @@ func (h *SchoolHandler) Get(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "School not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get school", "school", "get_school")
+		writeServerError(w, r, err, "School details could not be retrieved. Please try again.", "school", "get_school")
 		return
 	}
 
@@ -190,7 +190,7 @@ func (h *SchoolHandler) Join(w http.ResponseWriter, r *http.Request) {
 	// Pre-check: is user blocked?
 	isBlocked, err := h.schoolRepo.IsUserBlockedInSchool(r.Context(), claims.UserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "school", "check_block_status")
+		writeServerError(w, r, err, "Account status could not be verified. Please try again.", "school", "check_block_status")
 		return
 	}
 	if isBlocked {
@@ -219,14 +219,14 @@ func (h *SchoolHandler) Join(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "already_member", "You are already a member of this school")
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to join school", "school", "join_school")
+			writeServerError(w, r, txErr, "School membership could not be updated. Please try again.", "school", "join_school")
 			return
 		}
 	} else {
 		// Fallback for when db is not available (e.g., tests)
 		existing, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
+			writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "school", "check_membership")
 			return
 		}
 		if existing != nil {
@@ -236,7 +236,7 @@ func (h *SchoolHandler) Join(w http.ResponseWriter, r *http.Request) {
 
 		membershipID, err = h.schoolRepo.AddUserToSchool(r.Context(), claims.UserID, schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to join school", "school", "join_school")
+			writeServerError(w, r, err, "School membership could not be updated. Please try again.", "school", "join_school")
 			return
 		}
 	}
@@ -271,7 +271,7 @@ func (h *SchoolHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.schoolRepo.RemoveUserFromSchool(r.Context(), claims.UserID, schoolID); err != nil {
-		writeServerError(w, r, err, "Failed to leave school", "school", "leave_school")
+		writeServerError(w, r, err, "School membership could not be updated. Please try again.", "school", "leave_school")
 		return
 	}
 
@@ -342,7 +342,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check voucher is a member of the school
 	voucherMembership, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_voucher_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "school", "check_voucher_membership")
 		return
 	}
 	if voucherMembership == nil {
@@ -353,7 +353,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check bootstrap mode
 	bootstrapMode, adminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check school bootstrap status", "school", "check_bootstrap_status")
+		writeServerError(w, r, err, "School status could not be verified. Please try again.", "school", "check_bootstrap_status")
 		return
 	}
 
@@ -377,7 +377,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check vouchee is a member of the school (must have called /join first)
 	voucheeMembership, err := h.schoolRepo.GetUserSchool(r.Context(), vouchedUserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check vouchee membership", "school", "check_vouchee_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "school", "check_vouchee_membership")
 		return
 	}
 	if voucheeMembership == nil {
@@ -388,7 +388,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	// Check if vouchee is blocked
 	isBlocked, err := h.schoolRepo.IsUserBlockedInSchool(r.Context(), vouchedUserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "school", "check_vouchee_block_status")
+		writeServerError(w, r, err, "User status could not be verified. Please try again.", "school", "check_vouchee_block_status")
 		return
 	}
 	if isBlocked {
@@ -400,7 +400,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	if bootstrapMode && h.bootstrapCooldownEnabled {
 		lastVouchTime, err := h.schoolVouchRepo.GetLastVouchTimeByVoucher(r.Context(), claims.UserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch cooldown", "school", "check_vouch_cooldown")
+			writeServerError(w, r, err, "Vouch status could not be verified. Please try again.", "school", "check_vouch_cooldown")
 			return
 		}
 		if lastVouchTime != nil {
@@ -490,14 +490,14 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusTooManyRequests, "vouch_limit", "You have reached your monthly vouch limit")
 				return
 			}
-			writeServerError(w, r, txErr, "Failed to create vouch", "school", "create_vouch")
+			writeServerError(w, r, txErr, "Vouch could not be submitted. Please try again.", "school", "create_vouch")
 			return
 		}
 	} else {
 		// Fallback for when db is not available (e.g., tests)
 		hasVouched, err := h.schoolVouchRepo.HasVouched(r.Context(), claims.UserID, vouchedUserID, schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch status", "school", "check_vouch_status")
+			writeServerError(w, r, err, "Vouch status could not be verified. Please try again.", "school", "check_vouch_status")
 			return
 		}
 		if hasVouched {
@@ -507,7 +507,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 
 		monthlyVouches, err := h.schoolVouchRepo.CountVouchesThisMonth(r.Context(), claims.UserID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch limit", "school", "check_vouch_limit")
+			writeServerError(w, r, err, "Vouch limit could not be verified. Please try again.", "school", "check_vouch_limit")
 			return
 		}
 		if monthlyVouches >= maxSchoolVouchesPerMonth {
@@ -516,13 +516,13 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.schoolVouchRepo.Create(r.Context(), vouch); err != nil {
-			writeServerError(w, r, err, "Failed to create vouch", "school", "create_vouch")
+			writeServerError(w, r, err, "Vouch could not be submitted. Please try again.", "school", "create_vouch")
 			return
 		}
 
 		totalVouches, err = h.schoolVouchRepo.CountVouchesForUser(r.Context(), vouchedUserID, schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to count vouches", "school", "count_vouches")
+			writeServerError(w, r, err, "Vouch count could not be retrieved. Please try again.", "school", "count_vouches")
 			return
 		}
 
@@ -591,7 +591,7 @@ func (h *SchoolHandler) GetPendingVouchRequests(w http.ResponseWriter, r *http.R
 	// Check caller is a member
 	isMember, err := h.schoolRepo.IsUserInSchool(r.Context(), claims.UserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "school", "check_membership")
 		return
 	}
 	if !isMember {
@@ -601,7 +601,7 @@ func (h *SchoolHandler) GetPendingVouchRequests(w http.ResponseWriter, r *http.R
 
 	pendingUsers, err := h.schoolVouchRepo.GetPendingVouchUsers(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to fetch pending vouch requests", "school", "get_pending_vouch_users")
+		writeServerError(w, r, err, "Pending requests could not be retrieved. Please try again.", "school", "get_pending_vouch_users")
 		return
 	}
 
@@ -650,14 +650,14 @@ func (h *SchoolHandler) GetVouchStatus(w http.ResponseWriter, r *http.Request) {
 	// Count vouches
 	totalVouches, err := h.schoolVouchRepo.CountVouchesForUser(r.Context(), userID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count vouches", "school", "count_vouches")
+		writeServerError(w, r, err, "Vouch count could not be retrieved. Please try again.", "school", "count_vouches")
 		return
 	}
 
 	// Get vouchers
 	vouchers, err := h.schoolVouchRepo.GetVouchersForUser(r.Context(), userID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to get vouchers", "school", "get_vouchers")
+		writeServerError(w, r, err, "Voucher information could not be retrieved. Please try again.", "school", "get_vouchers")
 		return
 	}
 
@@ -705,7 +705,7 @@ func (h *SchoolHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 	members, err := h.schoolRepo.GetSchoolMembers(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list members", "school", "list_members")
+		writeServerError(w, r, err, "Member list could not be loaded. Please try again.", "school", "list_members")
 		return
 	}
 
@@ -735,7 +735,7 @@ func (h *SchoolHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request)
 	// Check user is verified member of this school
 	userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
+		writeServerError(w, r, err, "Membership status could not be verified. Please try again.", "school", "check_membership")
 		return
 	}
 	if userSchool == nil || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
@@ -745,7 +745,7 @@ func (h *SchoolHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request)
 
 	groups, err := h.signalGroupRepo.ListBySchool(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "school", "list_signal_groups")
+		writeServerError(w, r, err, "Signal groups could not be loaded. Please try again.", "school", "list_signal_groups")
 		return
 	}
 
@@ -805,7 +805,7 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 	// Check user is admin of this school
 	userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_admin_membership")
+		writeServerError(w, r, err, "Admin status could not be verified. Please try again.", "school", "check_admin_membership")
 		return
 	}
 	if userSchool == nil || !userSchool.IsAdmin || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
@@ -817,7 +817,7 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 	if !claims.IsSuperuser {
 		bootstrapMode, currentAdminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check school status", "school", "check_bootstrap_mode")
+			writeServerError(w, r, err, "School status could not be verified. Please try again.", "school", "check_bootstrap_mode")
 			return
 		}
 		if bootstrapMode {
@@ -866,13 +866,13 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_signal_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_signal_group")
 			return
 		}
 	} else {
 		count, err := h.signalGroupRepo.CountBySchool(r.Context(), schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "count_school_groups")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "count_school_groups")
 			return
 		}
 		if count >= maxGroupsPerSchool {
@@ -880,7 +880,7 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_signal_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_signal_group")
 			return
 		}
 		secret := &models.EncryptedSecret{
@@ -891,7 +891,7 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 			UpdatedBy:        claims.UserID,
 		}
 		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
-			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_encrypted_secret")
 			return
 		}
 	}
@@ -923,7 +923,7 @@ func (h *SchoolHandler) ListMySchools(w http.ResponseWriter, r *http.Request) {
 
 	schools, err := h.schoolRepo.ListUserSchoolsWithStatus(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list schools", "school", "list_my_schools")
+		writeServerError(w, r, err, "Schools could not be loaded. Please try again.", "school", "list_my_schools")
 		return
 	}
 
@@ -943,7 +943,7 @@ func (h *SchoolHandler) SearchDistricts(w http.ResponseWriter, r *http.Request) 
 
 	districts, err := h.districtRepo.Search(r.Context(), query, state)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to search districts", "school", "search_districts")
+		writeServerError(w, r, err, "District search could not be completed. Please try again.", "school", "search_districts")
 		return
 	}
 
@@ -970,7 +970,7 @@ func (h *SchoolHandler) GetDistrict(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "District not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get district", "school", "get_district")
+		writeServerError(w, r, err, "District details could not be retrieved. Please try again.", "school", "get_district")
 		return
 	}
 
@@ -992,7 +992,7 @@ func (h *SchoolHandler) GetDistrict(w http.ResponseWriter, r *http.Request) {
 
 	schools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list schools in district", "school", "list_schools_in_district")
+		writeServerError(w, r, err, "Schools in district could not be loaded. Please try again.", "school", "list_schools_in_district")
 		return
 	}
 
@@ -1029,7 +1029,7 @@ func (h *SchoolHandler) ListDistrictMembers(w http.ResponseWriter, r *http.Reque
 			return txErr
 		})
 		if txErr != nil {
-			writeServerError(w, r, txErr, "Failed to check district membership", "school", "check_district_membership")
+			writeServerError(w, r, txErr, "District membership could not be verified. Please try again.", "school", "check_district_membership")
 			return
 		}
 		if !isVerified {
@@ -1040,7 +1040,7 @@ func (h *SchoolHandler) ListDistrictMembers(w http.ResponseWriter, r *http.Reque
 		// Fallback for when db is not available (e.g., tests)
 		districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check district membership", "school", "check_district_membership")
+			writeServerError(w, r, err, "District membership could not be verified. Please try again.", "school", "check_district_membership")
 			return
 		}
 		isVerified := false
@@ -1059,7 +1059,7 @@ func (h *SchoolHandler) ListDistrictMembers(w http.ResponseWriter, r *http.Reque
 
 	members, err := h.schoolRepo.GetDistrictMembers(r.Context(), districtID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list district members", "school", "list_district_members")
+		writeServerError(w, r, err, "District members could not be loaded. Please try again.", "school", "list_district_members")
 		return
 	}
 
@@ -1095,7 +1095,7 @@ func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.
 			return txErr
 		})
 		if txErr != nil {
-			writeServerError(w, r, txErr, "Failed to check district membership", "school", "check_district_membership")
+			writeServerError(w, r, txErr, "District membership could not be verified. Please try again.", "school", "check_district_membership")
 			return
 		}
 		if !isVerified {
@@ -1107,7 +1107,7 @@ func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.
 		// Check by listing schools in district and checking membership
 		districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check district membership", "school", "check_district_membership")
+			writeServerError(w, r, err, "District membership could not be verified. Please try again.", "school", "check_district_membership")
 			return
 		}
 		isVerified := false
@@ -1126,7 +1126,7 @@ func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.
 
 	groups, err := h.signalGroupRepo.ListByDistrict(r.Context(), districtID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "school", "list_district_signal_groups")
+		writeServerError(w, r, err, "Signal groups could not be loaded. Please try again.", "school", "list_district_signal_groups")
 		return
 	}
 
@@ -1186,7 +1186,7 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 	// Check user is admin of at least one school in district (verified admin)
 	districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check district schools", "school", "check_district_schools")
+		writeServerError(w, r, err, "District schools could not be verified. Please try again.", "school", "check_district_schools")
 		return
 	}
 
@@ -1238,13 +1238,13 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_district_signal_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_district_signal_group")
 			return
 		}
 	} else {
 		count, err := h.signalGroupRepo.CountByDistrict(r.Context(), districtID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "count_district_groups")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "count_district_groups")
 			return
 		}
 		if count >= maxGroupsPerDistrict {
@@ -1252,7 +1252,7 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 			return
 		}
 		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_district_signal_group")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_district_signal_group")
 			return
 		}
 		secret := &models.EncryptedSecret{
@@ -1263,7 +1263,7 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 			UpdatedBy:        claims.UserID,
 		}
 		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
-			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
+			writeServerError(w, r, err, "Signal group could not be created. Please try again.", "school", "create_encrypted_secret")
 			return
 		}
 	}

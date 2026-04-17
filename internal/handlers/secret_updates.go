@@ -98,7 +98,7 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "get_secret")
+			writeServerError(w, r, err, "Encrypted data could not be retrieved. Please try again.", "secret_update", "get_secret")
 			return
 		}
 		var scopeErr error
@@ -114,7 +114,7 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if err != nil {
-			writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "get_secret")
+			writeServerError(w, r, err, "Encrypted data could not be retrieved. Please try again.", "secret_update", "get_secret")
 			return
 		}
 		var scopeErr error
@@ -170,7 +170,7 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to create proposal", "secret_update", "create_proposal")
+		writeServerError(w, r, err, "Proposal could not be created. Please try again.", "secret_update", "create_proposal")
 		return
 	}
 
@@ -268,7 +268,7 @@ func (h *SecretUpdateHandler) Vote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to record vote", "secret_update", "record_vote")
+		writeServerError(w, r, err, "Vote could not be recorded. Please try again.", "secret_update", "record_vote")
 		return
 	}
 
@@ -332,7 +332,7 @@ func (h *SecretUpdateHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Encrypted secret not found")
 			return
 		}
-		writeServerError(w, r, err, "Failed to get encrypted secret", "secret_update", "finalize_lookup")
+		writeServerError(w, r, err, "Encrypted data could not be retrieved. Please try again.", "secret_update", "finalize_lookup")
 		return
 	}
 
@@ -370,19 +370,19 @@ func (h *SecretUpdateHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeServerError(w, r, err, "Failed to verify proposal status", "secret_update", "finalize_check")
+		writeServerError(w, r, err, "Proposal status could not be verified. Please try again.", "secret_update", "finalize_check")
 		return
 	}
 
 	if err := h.secretRepo.UpdatePayloadAndKeys(r.Context(), secretID, req.EncryptedPayload, req.EncryptionIV, claims.UserID, req.WrappedKeys); err != nil {
-		writeServerError(w, r, err, "Failed to finalize secret update", "secret_update", "finalize")
+		writeServerError(w, r, err, "Secret update could not be finalized. Please try again.", "secret_update", "finalize")
 		return
 	}
 
 	// Mark the proposal as finalized
 	if err := h.proposalRepo.MarkFinalized(r.Context(), proposal.ID); err != nil {
 		// Log but don't fail — the secret update itself succeeded
-		writeServerError(w, r, err, "Failed to mark proposal as finalized", "secret_update", "mark_finalized")
+		writeServerError(w, r, err, "Proposal finalization could not be completed. Please try again.", "secret_update", "mark_finalized")
 		return
 	}
 
@@ -468,7 +468,7 @@ func (h *SecretUpdateHandler) ListProposals(w http.ResponseWriter, r *http.Reque
 
 	proposals, err := h.proposalRepo.List(r.Context(), claims.UserID, claims.IsSuperuser, filter)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list proposals", "secret_update", "list_proposals")
+		writeServerError(w, r, err, "Proposals could not be loaded. Please try again.", "secret_update", "list_proposals")
 		return
 	}
 
@@ -512,7 +512,7 @@ func (h *SecretUpdateHandler) ExpireProposal(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.proposalRepo.UpdateStatus(r.Context(), proposalID, models.ProposalStatusExpired); err != nil {
-		writeServerError(w, r, err, "Failed to expire proposal", "secret_update", "expire_proposal")
+		writeServerError(w, r, err, "Proposal could not be expired. Please try again.", "secret_update", "expire_proposal")
 		return
 	}
 
@@ -593,7 +593,7 @@ func (h *SecretUpdateHandler) verifyAdminAccess(w http.ResponseWriter, r *http.R
 	if districtID != nil {
 		return h.verifyDistrictAdmin(w, r, claims, *districtID)
 	}
-	writeError(w, http.StatusBadRequest, "invalid_scope", "Proposal has no valid scope")
+	writeError(w, http.StatusBadRequest, "invalid_scope", "This proposal is missing required scope information")
 	return 0, errors.New("no scope")
 }
 
@@ -602,7 +602,7 @@ func (h *SecretUpdateHandler) verifyRegionAdmin(w http.ResponseWriter, r *http.R
 	if !claims.IsSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to verify admin status", "secret_update", "verify_admin")
+			writeServerError(w, r, err, "Your permissions could not be verified. Please try again.", "secret_update", "verify_admin")
 			return 0, err
 		}
 		if !isAdmin {
@@ -612,7 +612,7 @@ func (h *SecretUpdateHandler) verifyRegionAdmin(w http.ResponseWriter, r *http.R
 	}
 	adminCount, err := h.regionRepo.GetAdminCount(r.Context(), regionID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count admins", "secret_update", "count_admins")
+		writeServerError(w, r, err, "Proposal could not be processed. Please try again.", "secret_update", "count_admins")
 		return 0, err
 	}
 	return adminCount, nil
@@ -623,7 +623,7 @@ func (h *SecretUpdateHandler) verifySchoolAdmin(w http.ResponseWriter, r *http.R
 	if !claims.IsSuperuser {
 		userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
 		if err != nil {
-			writeServerError(w, r, err, "Failed to check school membership", "secret_update", "check_school_admin")
+			writeServerError(w, r, err, "School membership could not be verified. Please try again.", "secret_update", "check_school_admin")
 			return 0, err
 		}
 		if userSchool == nil || !userSchool.IsAdmin || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
@@ -633,7 +633,7 @@ func (h *SecretUpdateHandler) verifySchoolAdmin(w http.ResponseWriter, r *http.R
 	}
 	adminCount, err := h.schoolRepo.GetVerifiedAdminCount(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to count school admins", "secret_update", "count_school_admins")
+		writeServerError(w, r, err, "School admin count could not be retrieved. Please try again.", "secret_update", "count_school_admins")
 		return 0, err
 	}
 	return adminCount, nil
@@ -643,7 +643,7 @@ func (h *SecretUpdateHandler) verifySchoolAdmin(w http.ResponseWriter, r *http.R
 func (h *SecretUpdateHandler) verifyDistrictAdmin(w http.ResponseWriter, r *http.Request, claims *middleware.Claims, districtID string) (int, error) {
 	schools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list district schools", "secret_update", "list_district_schools")
+		writeServerError(w, r, err, "District schools could not be loaded. Please try again.", "secret_update", "list_district_schools")
 		return 0, err
 	}
 
