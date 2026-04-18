@@ -612,8 +612,8 @@ func TestIntegration_Lob_ServiceFailure(t *testing.T) {
 
 func TestLobService_DeliverabilityStatus(t *testing.T) {
 	tests := []struct {
-		name              string
-		deliverability    string
+		name                string
+		deliverability      string
 		expectedDeliverable bool
 	}{
 		{"deliverable", "deliverable", true},
@@ -628,7 +628,7 @@ func TestLobService_DeliverabilityStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := map[string]interface{}{
-					"id":           "us_ver_test",
+					"id":             "us_ver_test",
 					"deliverability": tt.deliverability,
 					"deliverability_analysis": map[string]interface{}{
 						"dpv_cmra":         "N",
@@ -672,8 +672,8 @@ func TestLobService_DeliverabilityStatus(t *testing.T) {
 
 func TestLobService_ZipCodeType_POBoxDetection(t *testing.T) {
 	tests := []struct {
-		name        string
-		zipCodeType string
+		name          string
+		zipCodeType   string
 		expectedPOBox bool
 	}{
 		{"standard_zip", "standard", false},
@@ -686,7 +686,7 @@ func TestLobService_ZipCodeType_POBoxDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := map[string]interface{}{
-					"id":           "us_ver_test",
+					"id":             "us_ver_test",
 					"deliverability": "deliverable",
 					"deliverability_analysis": map[string]interface{}{
 						"dpv_cmra":         "N",
@@ -743,7 +743,7 @@ func TestLobService_CMRA_Detection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := map[string]interface{}{
-					"id":           "us_ver_test",
+					"id":             "us_ver_test",
 					"deliverability": "deliverable",
 					"deliverability_analysis": map[string]interface{}{
 						"dpv_cmra":         tt.dpvCMRA,
@@ -861,7 +861,7 @@ func TestLobService_BasicAuth_Header(t *testing.T) {
 		receivedAuth = r.Header.Get("Authorization")
 
 		response := map[string]interface{}{
-			"id":           "us_ver_test",
+			"id":             "us_ver_test",
 			"deliverability": "deliverable",
 			"deliverability_analysis": map[string]interface{}{
 				"dpv_cmra": "N",

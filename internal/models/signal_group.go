@@ -6,19 +6,19 @@ import (
 
 // SignalGroup represents a Signal group associated with a region, school, or district
 type SignalGroup struct {
-	ID                  string     `json:"id" db:"id"`
-	RegionID            *string    `json:"region_id,omitempty" db:"region_id"`
-	SchoolID            *string    `json:"school_id,omitempty" db:"school_id"`
-	DistrictID          *string    `json:"district_id,omitempty" db:"district_id"`
-	RegionName          string     `json:"region_name,omitempty" db:"region_name"`     // Populated by joins
-	SchoolName          string     `json:"school_name,omitempty" db:"school_name"`     // Populated by joins
-	DistrictName        string     `json:"district_name,omitempty" db:"district_name"` // Populated by joins
-	GroupName           string     `json:"group_name" db:"group_name"`
-	Description         *string    `json:"description,omitempty" db:"description"`
-	CreatedBy           *string    `json:"created_by,omitempty" db:"created_by"`
-	CreatedAt           time.Time  `json:"created_at" db:"created_at"`
-	IsActive            bool       `json:"is_active" db:"is_active"`
-	HasPendingDeletion  bool       `json:"-" db:"has_pending_deletion"`
+	ID                 string    `json:"id" db:"id"`
+	RegionID           *string   `json:"region_id,omitempty" db:"region_id"`
+	SchoolID           *string   `json:"school_id,omitempty" db:"school_id"`
+	DistrictID         *string   `json:"district_id,omitempty" db:"district_id"`
+	RegionName         string    `json:"region_name,omitempty" db:"region_name"`     // Populated by joins
+	SchoolName         string    `json:"school_name,omitempty" db:"school_name"`     // Populated by joins
+	DistrictName       string    `json:"district_name,omitempty" db:"district_name"` // Populated by joins
+	GroupName          string    `json:"group_name" db:"group_name"`
+	Description        *string   `json:"description,omitempty" db:"description"`
+	CreatedBy          *string   `json:"created_by,omitempty" db:"created_by"`
+	CreatedAt          time.Time `json:"created_at" db:"created_at"`
+	IsActive           bool      `json:"is_active" db:"is_active"`
+	HasPendingDeletion bool      `json:"-" db:"has_pending_deletion"`
 }
 
 // SignalGroupPublic represents a signal group without sensitive data

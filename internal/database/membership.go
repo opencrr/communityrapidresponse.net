@@ -16,13 +16,13 @@ import (
 )
 
 var (
-	ErrMembershipRequestNotFound     = errors.New("membership request not found")
-	ErrDuplicatePendingRequest       = errors.New("a pending request already exists for this user and region")
-	ErrUserAlreadyInRegion           = errors.New("user is already a member of this region")
-	ErrUserNotInParentRegion         = errors.New("user is not a member of the parent region")
-	ErrRegionNotSubRegion            = errors.New("target region is not a sub-region")
-	ErrMaxPendingRequestsReached     = errors.New("maximum pending requests limit reached")
-	ErrAlreadyVoted                  = errors.New("user has already voted on this request")
+	ErrMembershipRequestNotFound = errors.New("membership request not found")
+	ErrDuplicatePendingRequest   = errors.New("a pending request already exists for this user and region")
+	ErrUserAlreadyInRegion       = errors.New("user is already a member of this region")
+	ErrUserNotInParentRegion     = errors.New("user is not a member of the parent region")
+	ErrRegionNotSubRegion        = errors.New("target region is not a sub-region")
+	ErrMaxPendingRequestsReached = errors.New("maximum pending requests limit reached")
+	ErrAlreadyVoted              = errors.New("user has already voted on this request")
 )
 
 const (

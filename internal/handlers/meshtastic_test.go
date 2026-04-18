@@ -386,7 +386,7 @@ func TestMeshtasticHandler_Create_Region_Success(t *testing.T) {
 	// 5. CreateChannelTx — INSERT channel
 	suite.mock.ExpectExec("INSERT INTO meshtastic_channels").
 		WithArgs(
-			sqlmock.AnyArg(), // id (uuid)
+			sqlmock.AnyArg(),                                       // id (uuid)
 			strPtr("region-1"), sqlmock.AnyArg(), sqlmock.AnyArg(), // region_id, school_id, district_id
 			"Test Channel",
 			sqlmock.AnyArg(), // description

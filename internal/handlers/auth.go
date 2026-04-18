@@ -25,18 +25,18 @@ import (
 
 // Auth rate limit constants
 const (
-	authLoginLimit             = 10
-	authLoginWindow            = 5 * time.Minute
-	authRegisterLimit          = 3
-	authRegisterWindow         = 1 * time.Hour
-	authForgotPasswordLimit    = 5
-	authForgotPasswordWindow   = 15 * time.Minute
-	authResetPasswordLimit     = 10
-	authResetPasswordWindow    = 15 * time.Minute
-	authResendVerifyLimit      = 3
-	authResendVerifyWindow     = 15 * time.Minute
-	accountLockoutThreshold    = 10
-	accountLockoutDuration     = 15 * time.Minute
+	authLoginLimit           = 10
+	authLoginWindow          = 5 * time.Minute
+	authRegisterLimit        = 3
+	authRegisterWindow       = 1 * time.Hour
+	authForgotPasswordLimit  = 5
+	authForgotPasswordWindow = 15 * time.Minute
+	authResetPasswordLimit   = 10
+	authResetPasswordWindow  = 15 * time.Minute
+	authResendVerifyLimit    = 3
+	authResendVerifyWindow   = 15 * time.Minute
+	accountLockoutThreshold  = 10
+	accountLockoutDuration   = 15 * time.Minute
 )
 
 // EmailVerificationClaims represents JWT claims for email verification tokens
@@ -510,8 +510,8 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 			"vouch_verified":        user.VouchVerified,
 			"is_superuser":          user.IsSuperuser,
 			"email_verified":        user.EmailVerified,
-			"is_blocked":     user.IsBlocked,
-			"block_reason":   user.BlockReason,
+			"is_blocked":            user.IsBlocked,
+			"block_reason":          user.BlockReason,
 			"created_at":            user.CreatedAt,
 			"last_login":            user.LastLogin,
 			"regions":               user.Regions,
