@@ -176,6 +176,8 @@ jobs:
           path: bin/server
           retention-days: 7
 
+  # Note: Dependency risk scanning (outdatedness, deprecation, retraction) runs in
+  # .github/workflows/dependency-risk.yml on a weekly schedule.
   security:
     name: Security
     runs-on: ubuntu-latest

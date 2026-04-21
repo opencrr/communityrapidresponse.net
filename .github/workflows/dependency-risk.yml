@@ -1,0 +1,57 @@
+name: Dependency Risk Scan
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Weekly on Monday at 9:00 UTC
+  workflow_dispatch: # Allow manual triggering
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25.9'
+
+jobs:
+  dep-risk:
+    name: Dependency Risk Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Build depcheck
+        run: go build -o bin/depcheck ./cmd/depcheck
+
+      - name: Run dependency risk scan (JSON)
+        id: scan-json
+        run: ./bin/depcheck -json -output dep-risk-report.json || true
+
+      - name: Run dependency risk scan (human-readable)
+        id: scan
+        run: |
+          set +e
+          output=$(./bin/depcheck -skip-vuln 2>/dev/null)
+          exit_code=$?
+          echo "$output"
+          echo "$output" >> "$GITHUB_STEP_SUMMARY"
+          exit $exit_code
+
+      - name: Upload risk report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dep-risk-report
+          path: dep-risk-report.json
+          retention-days: 30

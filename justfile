@@ -495,7 +495,20 @@ tidy:
     @echo "🧹 Tidying modules..."
     go mod tidy
 
+# Analyze dependencies for security and maintenance risks
+dep-risk:
+    @echo "📦 Analyzing dependency risks..."
+    go build -o bin/depcheck ./cmd/depcheck
+    ./bin/depcheck
+
+# Analyze dependencies and output JSON report
+dep-risk-json:
+    @echo "📦 Analyzing dependency risks (JSON)..."
+    go build -o bin/depcheck ./cmd/depcheck
+    ./bin/depcheck -json
+
 # Run security scanners (gosec + govulncheck)
+# Note: see .github/workflows/dependency-risk.yml for dedicated dep risk scanning
 security:
     @echo "🔒 Running security scanners..."
     @command -v gosec >/dev/null 2>&1 || { echo "Installing gosec..."; go install github.com/securego/gosec/v2/cmd/gosec@latest; }
