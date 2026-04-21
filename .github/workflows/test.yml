@@ -149,6 +149,9 @@ jobs:
           version: v2.10.1
           args: --timeout=5m
 
+      - name: Check documentation drift
+        run: go run ./cmd/doc-drift
+
   build:
     name: Build
     runs-on: ubuntu-latest
