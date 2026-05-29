@@ -509,6 +509,19 @@ verify:
     @echo "🔍 Verifying module dependencies..."
     go mod verify
 
+# Classify tech debt and regenerate docs/TECH_DEBT.md.
+# Use `just tech-debt check` to fail (exit 2) when HIGH count exceeds baseline.
+tech-debt mode="report":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{mode}}" = "check" ]; then
+        echo "🔎 Checking tech-debt HIGH baseline..."
+        go run ./cmd/tech-debt-classify -check -out docs/TECH_DEBT.md
+    else
+        echo "📝 Regenerating docs/TECH_DEBT.md..."
+        go run ./cmd/tech-debt-classify -out docs/TECH_DEBT.md
+    fi
+
 # =============================================================================
 # Docker Management
 # =============================================================================
