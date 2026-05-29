@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,31 @@ func cleanupAuditByResource(t *testing.T, db *DB, resourceID string) {
 	}
 }
 
+// createAuditTestUser inserts a real users row whose id can be used as a FK
+// target for audit_log.user_id. The user is removed in t.Cleanup. The email
+// and username are scoped with a UUID suffix to avoid collisions between
+// concurrently running tests.
+func createAuditTestUser(t *testing.T, db *DB, label string) *models.User {
+	t.Helper()
+	repo := NewUserRepository(db)
+	suffix := uuid.New().String()
+	user := &models.User{
+		Username:     "audit_" + label + "_" + suffix[:8],
+		Email:        "audit_" + label + "_" + suffix[:8] + "@example.test",
+		PasswordHash: "hash",
+	}
+	if err := repo.Create(context.Background(), user); err != nil {
+		t.Fatalf("failed to create test user (%s): %v", label, err)
+	}
+	t.Cleanup(func() {
+		// audit_log rows that reference this user are cleaned by
+		// resource-scoped DELETE in each test; the FK is ON DELETE SET NULL
+		// so deleting the user is safe even if any stragglers remain.
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", user.ID)
+	})
+	return user
+}
+
 func TestNewAuditRepository(t *testing.T) {
 	db := testDB(t)
 	repo := NewAuditRepository(db)
@@ -67,14 +93,14 @@ func TestAuditRepository_Log_Success(t *testing.T) {
 	repo := NewAuditRepository(db)
 	ctx := ctxWithRequest(t, "10.0.0.5", "test-agent/1.0")
 
-	userID := "audit-user-" + uniqueResourceID()
+	user := createAuditTestUser(t, db, "logsuccess")
 	resourceID := uniqueResourceID()
 	t.Cleanup(func() { cleanupAuditByResource(t, db, resourceID) })
 
 	details := map[string]any{"foo": "bar", "n": 7}
 	resourceType := "test_resource"
 
-	if err := repo.Log(ctx, &userID, "test_action", &resourceType, &resourceID, details); err != nil {
+	if err := repo.Log(ctx, &user.ID, "test_action", &resourceType, &resourceID, details); err != nil {
 		t.Fatalf("Log returned error: %v", err)
 	}
 
@@ -89,8 +115,8 @@ func TestAuditRepository_Log_Success(t *testing.T) {
 	if err := row.Scan(&gotUserID, &gotAction, &gotResourceType, &gotResourceID, &gotDetails, &gotIP, &gotUA); err != nil {
 		t.Fatalf("failed to read back row: %v", err)
 	}
-	if gotUserID != userID {
-		t.Errorf("user_id = %q, want %q", gotUserID, userID)
+	if gotUserID != user.ID {
+		t.Errorf("user_id = %q, want %q", gotUserID, user.ID)
 	}
 	if gotAction != "test_action" {
 		t.Errorf("action = %q, want %q", gotAction, "test_action")
@@ -157,7 +183,13 @@ func TestAuditRepository_Log_TruncatesLongUserAgent(t *testing.T) {
 		t.Fatalf("failed to read user_agent: %v", err)
 	}
 	if len(storedUA) != 512 {
-		t.Errorf("user_agent length = %d, want 512", len(storedUA))
+		t.Fatalf("user_agent length = %d, want 512", len(storedUA))
+	}
+	// Ensure truncation preserved the original bytes rather than silently
+	// filling with zeroes or some other placeholder.
+	if want := strings.Repeat("A", 512); storedUA != want {
+		t.Errorf("user_agent content mismatch: got %q (first 32 bytes), want 512 'A's",
+			storedUA[:32])
 	}
 }
 
@@ -208,24 +240,21 @@ func seedAuditRows(t *testing.T, db *DB, repo *AuditRepository, count int) audit
 		resourceType: "seeded_resource",
 	}
 	for i := 0; i < count; i++ {
-		ip := "10.1.1." + intToStr(i+1)
-		ua := "agent-" + intToStr(i)
-		userID := "user-" + intToStr(i)
-		action := "action_" + intToStr(i)
+		ip := "10.1.1." + strconv.Itoa(i+1)
+		ua := "agent-" + strconv.Itoa(i)
+		// Each row references a real user so the FK constraint
+		// (audit_log.user_id -> users.id) is satisfied.
+		user := createAuditTestUser(t, db, "seed"+strconv.Itoa(i))
+		action := "action_" + strconv.Itoa(i)
 		ctx := ctxWithRequest(t, ip, ua)
-		if err := repo.Log(ctx, &userID, action, &seed.resourceType, &seed.resourceID, map[string]int{"i": i}); err != nil {
+		if err := repo.Log(ctx, &user.ID, action, &seed.resourceType, &seed.resourceID, map[string]int{"i": i}); err != nil {
 			t.Fatalf("seed Log #%d failed: %v", i, err)
 		}
-		seed.userIDs = append(seed.userIDs, userID)
+		seed.userIDs = append(seed.userIDs, user.ID)
 		seed.actions = append(seed.actions, action)
 		seed.ips = append(seed.ips, ip)
 	}
 	return seed
-}
-
-func intToStr(i int) string {
-	// avoid strconv to keep imports tidy
-	return uuid.NewSHA1(uuid.Nil, []byte{byte(i)}).String()[:8]
 }
 
 func TestAuditRepository_Query_Filtering(t *testing.T) {
@@ -446,20 +475,22 @@ func TestAuditRepository_DeleteOlderThan(t *testing.T) {
 	t.Cleanup(func() { cleanupAuditByResource(t, db, resourceID) })
 
 	// Seed one "old" row by writing directly with a backdated created_at, and
-	// one "new" row through the repo so it gets a current timestamp.
+	// one "new" row through the repo so it gets a current timestamp. Both rows
+	// reference a real user so the FK constraint is satisfied.
+	oldUser := createAuditTestUser(t, db, "retentionold")
+	newUser := createAuditTestUser(t, db, "retentionnew")
+
 	oldID := uuid.New().String()
-	oldUser := "old-user"
 	oldTime := time.Now().UTC().Add(-200 * 24 * time.Hour) // 200 days ago
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		oldID, oldUser, "old_action", resourceType, resourceID, oldTime,
+		oldID, oldUser.ID, "old_action", resourceType, resourceID, oldTime,
 	); err != nil {
 		t.Fatalf("failed to seed old row: %v", err)
 	}
 
-	newUser := "new-user"
-	if err := repo.Log(ctx, &newUser, "new_action", &resourceType, &resourceID, nil); err != nil {
+	if err := repo.Log(ctx, &newUser.ID, "new_action", &resourceType, &resourceID, nil); err != nil {
 		t.Fatalf("failed to seed new row via repo: %v", err)
 	}
 
@@ -504,7 +535,8 @@ func TestAuditRepository_DeleteOlderThan_Batching(t *testing.T) {
 	t.Cleanup(func() { cleanupAuditByResource(t, db, resourceID) })
 
 	// Seed >1000 old rows in a single multi-value insert to exercise the
-	// batched delete loop (batchSize = 1000).
+	// batched delete loop (batchSize = 1000). user_id is NULL so we don't
+	// need to create 1050 real users — the FK accepts NULL.
 	const total = 1050
 	cutoff := time.Now().UTC().Add(-200 * 24 * time.Hour)
 
