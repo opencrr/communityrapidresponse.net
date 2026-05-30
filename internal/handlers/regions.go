@@ -473,16 +473,6 @@ func (h *RegionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetAdminCount returns the number of admins for a region (used by other handlers)
-func (h *RegionHandler) GetAdminCount(r *http.Request, regionID string) (int, error) {
-	return h.regionRepo.GetAdminCount(r.Context(), regionID)
-}
-
-// IsUserAdmin checks if a user is an admin (exported for middleware)
-func (h *RegionHandler) IsUserAdmin(r *http.Request, userID, regionID string) (bool, error) {
-	return h.regionRepo.IsUserAdmin(r.Context(), userID, regionID)
-}
-
 // autoCreateParentRegions auto-creates parent regions for county and city types
 // Returns the parent region ID to use, or nil if no parent is needed
 // State and county names are auto-detected from the geometry location using reverse geocoding

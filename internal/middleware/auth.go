@@ -261,39 +261,6 @@ func RequireTier(minTier models.VerificationTier) func(http.Handler) http.Handle
 	}
 }
 
-// RequireAdmin creates middleware that requires admin status for a region
-// Note: This requires the regionID to be available in the request
-func RequireAdmin(getRegionID func(*http.Request) string, isAdmin func(context.Context, string, string) (bool, error)) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			claims := GetUserFromContext(r.Context())
-			if claims == nil {
-				http.Error(w, `{"error":"unauthorized","message":"Authentication required"}`, http.StatusUnauthorized)
-				return
-			}
-
-			regionID := getRegionID(r)
-			if regionID == "" {
-				http.Error(w, `{"error":"bad_request","message":"Community ID required"}`, http.StatusBadRequest)
-				return
-			}
-
-			admin, err := isAdmin(r.Context(), claims.UserID, regionID)
-			if err != nil {
-				http.Error(w, `{"error":"internal_error","message":"Failed to check admin status"}`, http.StatusInternalServerError)
-				return
-			}
-
-			if !admin {
-				http.Error(w, `{"error":"forbidden","message":"Admin access required"}`, http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // GetUserFromContext retrieves user claims from context
 func GetUserFromContext(ctx context.Context) *Claims {
 	claims, ok := ctx.Value(UserContextKey).(*Claims)

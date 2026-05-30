@@ -41,7 +41,6 @@ type SchoolHandler struct {
 	consensusConfig          *config.ConsensusConfig
 	bootstrapCooldownEnabled bool
 	bootstrapCooldownMinutes int
-	notificationService      NotificationServiceInterface
 }
 
 // NewSchoolHandler creates a new school handler
@@ -73,12 +72,6 @@ func NewSchoolHandler(
 		bootstrapCooldownEnabled: bootstrapCooldownEnabled,
 		bootstrapCooldownMinutes: bootstrapCooldownMinutes,
 	}
-}
-
-// SetNotificationService sets the notification service for the handler.
-// This is optional - if not set, notifications will not be sent.
-func (h *SchoolHandler) SetNotificationService(svc NotificationServiceInterface) {
-	h.notificationService = svc
 }
 
 // Search handles GET /api/v1/schools/search (public)

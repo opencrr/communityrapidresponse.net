@@ -23,25 +23,6 @@ type RateLimiter interface {
 	Cleanup(ctx context.Context, olderThan time.Duration) error
 }
 
-// RateLimitConfig holds configuration for rate limiting
-type RateLimitConfig struct {
-	// IPRateLimit is requests per minute per IP
-	IPRateLimit int
-	// IPRateWindow is the time window for IP rate limiting
-	IPRateWindow time.Duration
-	// Enabled allows disabling rate limiting (e.g., for testing)
-	Enabled bool
-}
-
-// DefaultRateLimitConfig returns sensible defaults
-func DefaultRateLimitConfig() *RateLimitConfig {
-	return &RateLimitConfig{
-		IPRateLimit:  100,
-		IPRateWindow: time.Minute,
-		Enabled:      true,
-	}
-}
-
 // DBRateLimiter implements RateLimiter using MariaDB/MySQL
 type DBRateLimiter struct {
 	db *sql.DB

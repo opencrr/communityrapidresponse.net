@@ -117,10 +117,6 @@ func (q *MockQueue) Ack(ctx context.Context, id string, contentHash string) erro
 	return nil
 }
 
-func (q *MockQueue) Nack(ctx context.Context, id string, errorMsg string) error {
-	return nil
-}
-
 func (q *MockQueue) WasSentRecently(ctx context.Context, userID, notificationType, resourceID string, within time.Duration) (bool, error) {
 	key := userID + ":" + notificationType + ":" + resourceID
 	return q.sentRecently[key], nil
@@ -128,10 +124,6 @@ func (q *MockQueue) WasSentRecently(ctx context.Context, userID, notificationTyp
 
 func (q *MockQueue) WasContentSentRecently(ctx context.Context, contentHash string, within time.Duration) (bool, error) {
 	return q.contentSent[contentHash], nil
-}
-
-func (q *MockQueue) QueueDepth(ctx context.Context) (int64, error) {
-	return int64(len(q.notifications)), nil
 }
 
 func TestMockQueue_EnqueueDequeue(t *testing.T) {
