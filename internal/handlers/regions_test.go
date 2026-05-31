@@ -373,7 +373,7 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 			regionType: models.RegionTypeNeighborhood,
 			parentID:   nil,
 			shouldFail: true,
-			errorMsg:   "neighborhood regions must have an existing city parent",
+			errorMsg:   "neighborhood regions require parent_id of an existing city region",
 		},
 		{
 			name:       "neighborhood with neighborhood parent should fail",
@@ -387,7 +387,7 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 			regionType: models.RegionTypeCityBlock,
 			parentID:   nil,
 			shouldFail: true,
-			errorMsg:   "city block regions must have an existing neighborhood parent",
+			errorMsg:   "city block regions require parent_id of an existing neighborhood region",
 		},
 		{
 			name:       "city_block with city parent should fail",
