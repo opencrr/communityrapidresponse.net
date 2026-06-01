@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"log/slog"
 	"net/http"
@@ -82,7 +83,7 @@ func CSRFProtection(secret string, secureCookies bool) func(http.Handler) http.H
 				return
 			}
 
-			if cookieToken != headerToken {
+			if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(headerToken)) != 1 {
 				http.Error(w, `{"error":"csrf_validation_failed","message":"CSRF token mismatch"}`, http.StatusForbidden)
 				return
 			}

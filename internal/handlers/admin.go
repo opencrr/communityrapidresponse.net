@@ -324,7 +324,7 @@ func (h *AdminHandler) BlockUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		// Reason is optional, continue without it
 		req.Reason = ""
 	}

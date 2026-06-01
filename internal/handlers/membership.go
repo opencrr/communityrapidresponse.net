@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -387,7 +386,7 @@ func (h *MembershipHandler) VoteOnRequest(w http.ResponseWriter, r *http.Request
 	}
 
 	var voteReq models.VoteMembershipRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&voteReq); err != nil {
+	if err := decodeJSON(r, &voteReq); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -560,7 +559,7 @@ func (h *MembershipHandler) CreateInvitation(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req models.CreateInvitationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -723,7 +722,7 @@ func (h *MembershipHandler) RespondToInvitation(w http.ResponseWriter, r *http.R
 	}
 
 	var req models.RespondToInvitationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

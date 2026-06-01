@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -139,7 +138,7 @@ func (h *MFAHandler) CompleteSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CompleteMFASetupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -299,7 +298,7 @@ func (h *MFAHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req VerifyMFARequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

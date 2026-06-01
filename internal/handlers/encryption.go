@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -49,7 +48,7 @@ func (h *EncryptionHandler) UploadKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateEncryptionKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -113,7 +112,7 @@ func (h *EncryptionHandler) UpdateKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateEncryptionKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -146,7 +145,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.RotateEncryptionKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -315,7 +314,7 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req models.SubmitRekeysRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

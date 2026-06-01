@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -75,7 +74,7 @@ func (h *SecretUpdateHandler) CreateProposal(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req models.CreateSecretProposalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -207,7 +206,7 @@ func (h *SecretUpdateHandler) Vote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.VoteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -315,7 +314,7 @@ func (h *SecretUpdateHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.FinalizeSecretUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

@@ -312,7 +312,7 @@ func main() {
 		"script-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
 		"style-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
 		"img-src 'self' data: blob: https://api.mapbox.com; " +
-		"connect-src 'self' https://api.mapbox.com https://events.mapbox.com; " +
+		"connect-src 'self' https://api.mapbox.com https://events.mapbox.com https://nominatim.openstreetmap.org; " +
 		"worker-src blob:; " +
 		"child-src blob:; " +
 		"object-src 'none'; " +

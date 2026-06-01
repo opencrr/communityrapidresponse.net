@@ -160,7 +160,7 @@ func (s *MFAService) HashBackupCodes(codes []string) (string, error) {
 	for i, code := range codes {
 		// Normalize code: remove dashes and uppercase
 		normalizedCode := strings.ToUpper(strings.ReplaceAll(code, "-", ""))
-		hash, err := bcrypt.GenerateFromPassword([]byte(normalizedCode), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte(normalizedCode), 12)
 		if err != nil {
 			return "", fmt.Errorf("failed to hash backup code: %w", err)
 		}

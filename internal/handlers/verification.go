@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -114,7 +113,7 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 	}
 
 	var req models.PostcardVerificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -388,7 +387,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req models.VerifyCodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -637,7 +636,7 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	}
 
 	var req models.VouchVerificationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -852,7 +851,7 @@ func (h *VerificationHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.VouchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

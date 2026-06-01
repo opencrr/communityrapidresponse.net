@@ -228,7 +228,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateRegionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -391,7 +391,7 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateRegionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

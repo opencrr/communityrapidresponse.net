@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -51,7 +50,7 @@ func (h *SignalGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -326,7 +325,7 @@ func (h *SignalGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

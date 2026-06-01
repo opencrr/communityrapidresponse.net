@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -74,7 +73,7 @@ func (h *BlocklistProposalHandler) CreateProposal(w http.ResponseWriter, r *http
 	}
 
 	var req models.CreateBlocklistProposalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -252,7 +251,7 @@ func (h *BlocklistProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http
 	}
 
 	var req models.VoteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

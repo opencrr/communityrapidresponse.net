@@ -302,7 +302,7 @@ func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.SchoolVouchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -792,7 +792,7 @@ func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request
 	}
 
 	var req models.CreateSchoolSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -1173,7 +1173,7 @@ func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http
 	}
 
 	var req models.CreateSchoolSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

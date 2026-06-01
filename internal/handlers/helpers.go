@@ -37,6 +37,16 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+// decodeJSON decodes the request body as JSON with DisallowUnknownFields enabled.
+// Rejecting unknown fields prevents mass-assignment attacks where a client injects
+// privileged fields (e.g., is_superuser, verification_tier) that map to fields the
+// struct happens to expose but the handler doesn't validate.
+func decodeJSON(r *http.Request, dst interface{}) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+
 // writeError writes an error response
 func writeError(w http.ResponseWriter, status int, errorCode, message string) {
 	writeJSON(w, status, ErrorResponse{

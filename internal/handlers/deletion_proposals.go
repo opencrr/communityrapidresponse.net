@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -121,7 +120,7 @@ func (h *DeletionProposalHandler) CreateProposal(w http.ResponseWriter, r *http.
 	}
 
 	var req models.CreateDeletionProposalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -295,7 +294,7 @@ func (h *DeletionProposalHandler) VoteOnProposal(w http.ResponseWriter, r *http.
 	}
 
 	var req models.VoteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

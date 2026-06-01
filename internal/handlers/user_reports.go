@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -58,7 +57,7 @@ func (h *UserReportHandler) CreateReport(w http.ResponseWriter, r *http.Request)
 
 	// Decode request body
 	var req models.CreateReportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -375,7 +374,7 @@ func (h *UserReportHandler) ResolveReport(w http.ResponseWriter, r *http.Request
 
 	// Decode request
 	var req models.ResolveReportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}

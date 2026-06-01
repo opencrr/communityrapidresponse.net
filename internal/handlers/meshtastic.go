@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -53,7 +52,7 @@ func (h *MeshtasticHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateMeshtasticChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
@@ -443,7 +442,7 @@ func (h *MeshtasticHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateMeshtasticChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
 		return
 	}
