@@ -1,0 +1,93 @@
+name: Dependency Risk Scan
+
+on:
+  schedule:
+    # Mondays at 12:00 UTC
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  GO_VERSION: '1.25.9'
+
+jobs:
+  scan:
+    name: Scan dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run dependency risk scan
+        id: scan
+        run: |
+          set -euo pipefail
+          bash scripts/dependency-risk-scan.sh > dependency-risk-report.md
+          {
+            echo '## Summary (first 30 lines)'
+            head -30 dependency-risk-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Surface counts as outputs for the next step
+          active=$(grep -oE 'Active vulnerabilities .*\| [0-9]+' dependency-risk-report.md | grep -oE '[0-9]+$' || echo 0)
+          echo "active_vulns=${active:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-risk-report
+          path: dependency-risk-report.md
+          retention-days: 90
+
+      - name: Open or update tracking issue (HIGH only)
+        if: steps.scan.outputs.active_vulns != '0'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('dependency-risk-report.md', 'utf8');
+            const today = new Date().toISOString().slice(0, 10);
+            const activeCount = '${{ steps.scan.outputs.active_vulns }}';
+            const title = `Dependency risk: ${activeCount} active vulnerabilit${activeCount === '1' ? 'y' : 'ies'}`;
+
+            // Truncate body for issue size limit
+            const trimmedBody = body.length > 60000
+              ? body.slice(0, 60000) + '\n\n…(truncated; download the `dependency-risk-report` artifact for the full report)'
+              : body;
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'dependency-risk',
+            });
+
+            if (existing.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing[0].number,
+                body: `### Weekly scan — ${today}\n\n${trimmedBody}`,
+              });
+              core.info(`Commented on issue #${existing[0].number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: trimmedBody,
+                labels: ['dependency-risk', 'security'],
+              });
+              core.info(`Opened issue #${created.number}`);
+            }

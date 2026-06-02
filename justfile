@@ -509,6 +509,10 @@ verify:
     @echo "🔍 Verifying module dependencies..."
     go mod verify
 
+# Run the dependency risk scanner and print a Markdown report to stdout
+deps-risk:
+    @bash scripts/dependency-risk-scan.sh
+
 # =============================================================================
 # Docker Management
 # =============================================================================
