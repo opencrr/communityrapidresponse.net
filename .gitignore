@@ -25,8 +25,8 @@ coverage.html
 
 # Environment files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # OS generated files
 .DS_Store
@@ -83,3 +83,14 @@ secrets.*
 *.csv
 *.xlsx
 *.xls
+*.sql.gz
+*.sql.zip
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+
+# JWT signing keys and PKCS#8 private keys
+*.p8
+*.jks
