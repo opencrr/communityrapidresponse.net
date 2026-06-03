@@ -106,8 +106,8 @@ func TestEncryptionKeyRepository_CreateAndGetByUserID(t *testing.T) {
 			UserID:            user.ID,
 			PublicKey:         "test_public_key",
 			WrappedPrivateKey: "test_wrapped_private_key",
-			KeySalt:          "test_salt_123456789012",
-			KeyIV:            "test_iv_12345678",
+			KeySalt:           "test_salt_123456789012",
+			KeyIV:             "test_iv_12345678",
 		}
 
 		if err := repo.Create(ctx, key); err != nil {
@@ -140,8 +140,8 @@ func TestEncryptionKeyRepository_CreateAndGetByUserID(t *testing.T) {
 			UserID:            user.ID,
 			PublicKey:         "updated_public_key",
 			WrappedPrivateKey: "updated_wrapped_key",
-			KeySalt:          "updated_salt_12345678",
-			KeyIV:            "updated_iv_1234",
+			KeySalt:           "updated_salt_12345678",
+			KeyIV:             "updated_iv_1234",
 		}
 
 		if err := repo.Create(ctx, key); err != nil {

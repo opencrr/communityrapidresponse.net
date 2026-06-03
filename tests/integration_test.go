@@ -22,17 +22,17 @@ import (
 
 // IntegrationTestSuite holds all dependencies for integration tests
 type IntegrationTestSuite struct {
-	t               *testing.T
-	db              *database.DB
-	server          *httptest.Server
-	userRepo        *database.UserRepository
-	regionRepo      *database.RegionRepository
-	verifyRepo      *database.VerificationRepository
-	vouchRepo       *database.VouchRepository
-	groupRepo       *database.SignalGroupRepository
-	jwtAuth         *middleware.JWTAuth
-	mockPostgrid    *mocks.MockPostgridService
-	mockMapbox      *mocks.MockMapboxService
+	t            *testing.T
+	db           *database.DB
+	server       *httptest.Server
+	userRepo     *database.UserRepository
+	regionRepo   *database.RegionRepository
+	verifyRepo   *database.VerificationRepository
+	vouchRepo    *database.VouchRepository
+	groupRepo    *database.SignalGroupRepository
+	jwtAuth      *middleware.JWTAuth
+	mockPostgrid *mocks.MockPostgridService
+	mockMapbox   *mocks.MockMapboxService
 }
 
 // SetupIntegrationTest creates a new test suite with mocked external services
@@ -142,17 +142,17 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	server := httptest.NewServer(handler)
 
 	suite := &IntegrationTestSuite{
-		t:               t,
-		db:              db,
-		server:          server,
-		userRepo:        userRepo,
-		regionRepo:      regionRepo,
-		verifyRepo:      verifyRepo,
-		vouchRepo:       vouchRepo,
-		groupRepo:       groupRepo,
-		jwtAuth:         jwtAuth,
-		mockPostgrid:    mockPostgrid,
-		mockMapbox:      mockMapbox,
+		t:            t,
+		db:           db,
+		server:       server,
+		userRepo:     userRepo,
+		regionRepo:   regionRepo,
+		verifyRepo:   verifyRepo,
+		vouchRepo:    vouchRepo,
+		groupRepo:    groupRepo,
+		jwtAuth:      jwtAuth,
+		mockPostgrid: mockPostgrid,
+		mockMapbox:   mockMapbox,
 	}
 
 	t.Cleanup(func() {

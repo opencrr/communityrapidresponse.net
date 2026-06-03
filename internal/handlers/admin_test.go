@@ -877,11 +877,11 @@ func TestAdminHandler_ListUsers_PaginationEdgeCases(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		query         string
-		expectStatus  int
-		expectPage    float64
-		expectLimit   float64
+		name         string
+		query        string
+		expectStatus int
+		expectPage   float64
+		expectLimit  float64
 	}{
 		{"negative page defaults to 1", "page=-5", http.StatusOK, 1, 20},
 		{"negative limit defaults to 20", "limit=-10", http.StatusOK, 1, 20},

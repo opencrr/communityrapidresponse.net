@@ -17,18 +17,18 @@ const (
 // VerificationRequest represents a postcard verification request
 // NOTE: Address is NEVER stored - only tracking info
 type VerificationRequest struct {
-	ID                string             `json:"id" db:"id"`
-	UserID            string             `json:"user_id" db:"user_id"`
-	RegionID          *string            `json:"region_id,omitempty" db:"region_id"`
-	VerificationCode  string             `json:"-" db:"verification_code"` // Never expose in API
-	Status            VerificationStatus `json:"status" db:"status"`
-	PostgridRequestID string             `json:"-" db:"postgrid_request_id"`
-	BoundaryType      string             `json:"boundary_type" db:"boundary_type"`
-	BoundaryName      string             `json:"boundary_name" db:"boundary_name"`
-	BoundaryState     string             `json:"boundary_state" db:"boundary_state"`
-	PostcardRef       *string            `json:"postcard_ref,omitempty" db:"postcard_ref"`
-	CreatedAt         time.Time          `json:"created_at" db:"created_at"`
-	ExpiresAt         time.Time          `json:"expires_at" db:"expires_at"`
+	ID                         string             `json:"id" db:"id"`
+	UserID                     string             `json:"user_id" db:"user_id"`
+	RegionID                   *string            `json:"region_id,omitempty" db:"region_id"`
+	VerificationCode           string             `json:"-" db:"verification_code"` // Never expose in API
+	Status                     VerificationStatus `json:"status" db:"status"`
+	PostgridRequestID          string             `json:"-" db:"postgrid_request_id"`
+	BoundaryType               string             `json:"boundary_type" db:"boundary_type"`
+	BoundaryName               string             `json:"boundary_name" db:"boundary_name"`
+	BoundaryState              string             `json:"boundary_state" db:"boundary_state"`
+	PostcardRef                *string            `json:"postcard_ref,omitempty" db:"postcard_ref"`
+	CreatedAt                  time.Time          `json:"created_at" db:"created_at"`
+	ExpiresAt                  time.Time          `json:"expires_at" db:"expires_at"`
 	VerifiedAt                 *time.Time         `json:"verified_at,omitempty" db:"verified_at"`
 	FailedVerificationAttempts int                `json:"-" db:"failed_verification_attempts"`
 }
@@ -84,8 +84,8 @@ type VerifyCodeRequest struct {
 
 // VerifyCodeResponse represents response after successful code verification
 type VerifyCodeResponse struct {
-	Success bool                   `json:"success"`
-	Token   string                 `json:"token,omitempty"`
+	Success bool                    `json:"success"`
+	Token   string                  `json:"token,omitempty"`
 	User    *UserVerificationResult `json:"user,omitempty"`
 }
 
@@ -108,9 +108,9 @@ type Vouch struct {
 // UserIdentifier can be a user ID (UUID), email, or username
 // RegionID is optional - if not provided, the user's pending vouch region is used
 type VouchRequest struct {
-	VouchedUserID  string `json:"vouched_user_id"`  // Deprecated: use UserIdentifier
-	UserIdentifier string `json:"user_id"`          // Can be UUID, email, or username
-	RegionID       string `json:"region_id"`        // Optional: auto-detected from pending request
+	VouchedUserID  string `json:"vouched_user_id"` // Deprecated: use UserIdentifier
+	UserIdentifier string `json:"user_id"`         // Can be UUID, email, or username
+	RegionID       string `json:"region_id"`       // Optional: auto-detected from pending request
 }
 
 // VouchResponse represents response after vouching

@@ -16,9 +16,9 @@ const (
 type SchoolDistrictType string
 
 const (
-	SchoolDistrictTypeUnified     SchoolDistrictType = "unified"
-	SchoolDistrictTypeElementary  SchoolDistrictType = "elementary"
-	SchoolDistrictTypeSecondary   SchoolDistrictType = "secondary"
+	SchoolDistrictTypeUnified    SchoolDistrictType = "unified"
+	SchoolDistrictTypeElementary SchoolDistrictType = "elementary"
+	SchoolDistrictTypeSecondary  SchoolDistrictType = "secondary"
 )
 
 // SchoolDistrict represents a school district from NCES data
@@ -57,7 +57,7 @@ type SchoolWithDetails struct {
 	AdminCount    int                 `json:"admin_count"`
 	VerifiedCount int                 `json:"verified_count"`
 	BootstrapMode bool                `json:"bootstrap_mode"`
-	SignalGroups  []SignalGroupPublic  `json:"signal_groups,omitempty"`
+	SignalGroups  []SignalGroupPublic `json:"signal_groups,omitempty"`
 	Admins        []SchoolMemberBasic `json:"admins,omitempty"`
 	// Per-user membership fields (set when an authenticated user views the school)
 	IsMember   bool `json:"is_member"`
@@ -171,14 +171,14 @@ type SchoolVouchResponse struct {
 
 // SchoolVouchStatusResponse represents vouch progress for a user
 type SchoolVouchStatusResponse struct {
-	UserID          string       `json:"user_id"`
-	SchoolID        string       `json:"school_id"`
-	VouchesReceived int          `json:"vouches_received"`
-	VouchesNeeded   int          `json:"vouches_needed"`
+	UserID          string        `json:"user_id"`
+	SchoolID        string        `json:"school_id"`
+	VouchesReceived int           `json:"vouches_received"`
+	VouchesNeeded   int           `json:"vouches_needed"`
 	Vouchers        []VoucherInfo `json:"vouchers"`
-	BootstrapMode   bool         `json:"bootstrap_mode"`
-	AdminCount      int          `json:"admin_count"`
-	VouchesRequired int          `json:"vouches_required"`
+	BootstrapMode   bool          `json:"bootstrap_mode"`
+	AdminCount      int           `json:"admin_count"`
+	VouchesRequired int           `json:"vouches_required"`
 }
 
 // VoucherInfo represents info about a voucher (reused from existing codebase)
@@ -221,5 +221,5 @@ type DistrictMember struct {
 type DistrictWithDetails struct {
 	SchoolDistrict
 	Schools      []SchoolSummary     `json:"schools"`
-	SignalGroups []SignalGroupPublic  `json:"signal_groups,omitempty"`
+	SignalGroups []SignalGroupPublic `json:"signal_groups,omitempty"`
 }

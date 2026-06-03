@@ -24,11 +24,11 @@ type EncryptedSecret struct {
 
 // EncryptedSecretKey represents a user's wrapped DEK for an encrypted secret
 type EncryptedSecretKey struct {
-	SecretID   string    `json:"secret_id" db:"secret_id"`
-	UserID     string    `json:"user_id" db:"user_id"`
-	WrappedDEK string    `json:"wrapped_dek" db:"wrapped_dek"`
-	RekeyNeeded bool     `json:"rekey_needed" db:"rekey_needed"`
-	CreatedAt  time.Time `json:"created_at" db:"created_at"`
+	SecretID    string    `json:"secret_id" db:"secret_id"`
+	UserID      string    `json:"user_id" db:"user_id"`
+	WrappedDEK  string    `json:"wrapped_dek" db:"wrapped_dek"`
+	RekeyNeeded bool      `json:"rekey_needed" db:"rekey_needed"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 
 // WrappedKeyEntry represents a wrapped DEK for a single user (used in requests)
@@ -137,26 +137,26 @@ type SecretProposalSummary struct {
 
 // SecretProposalDetailResponse represents full proposal details
 type SecretProposalDetailResponse struct {
-	ID                string                `json:"id"`
-	EncryptedSecretID string                `json:"encrypted_secret_id"`
-	SecretType        string                `json:"secret_type"`
-	ScopeName         string                `json:"scope_name"`
-	GroupName         string                `json:"group_name"`
-	ProposedBy        ProposalUser          `json:"proposed_by"`
-	EncryptedPayload  string                `json:"encrypted_payload,omitempty"`
-	EncryptionIV      string                `json:"encryption_iv,omitempty"`
-	WrappedDEK        string                `json:"wrapped_dek,omitempty"`
-	Reason            string                `json:"reason,omitempty"`
-	Status            string                `json:"status"`
-	VotesNeeded       int                   `json:"votes_needed"`
-	CurrentVotes      int                   `json:"current_votes"`
-	Votes             []SecretVoteDetail    `json:"votes"`
-	CreatedAt         time.Time             `json:"created_at"`
-	ExpiresAt         time.Time             `json:"expires_at"`
-	ResolvedAt        *time.Time            `json:"resolved_at,omitempty"`
-	FinalizedAt       *time.Time            `json:"finalized_at,omitempty"`
-	CanVote           bool                  `json:"can_vote"`
-	HasVoted          bool                  `json:"has_voted"`
+	ID                string             `json:"id"`
+	EncryptedSecretID string             `json:"encrypted_secret_id"`
+	SecretType        string             `json:"secret_type"`
+	ScopeName         string             `json:"scope_name"`
+	GroupName         string             `json:"group_name"`
+	ProposedBy        ProposalUser       `json:"proposed_by"`
+	EncryptedPayload  string             `json:"encrypted_payload,omitempty"`
+	EncryptionIV      string             `json:"encryption_iv,omitempty"`
+	WrappedDEK        string             `json:"wrapped_dek,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
+	Status            string             `json:"status"`
+	VotesNeeded       int                `json:"votes_needed"`
+	CurrentVotes      int                `json:"current_votes"`
+	Votes             []SecretVoteDetail `json:"votes"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ExpiresAt         time.Time          `json:"expires_at"`
+	ResolvedAt        *time.Time         `json:"resolved_at,omitempty"`
+	FinalizedAt       *time.Time         `json:"finalized_at,omitempty"`
+	CanVote           bool               `json:"can_vote"`
+	HasVoted          bool               `json:"has_voted"`
 }
 
 // SecretVoteDetail represents a vote with user details

@@ -95,10 +95,10 @@ func (s *LobService) ValidateAddress(ctx context.Context, address *models.Addres
 		}
 		// Return mock result for development
 		return &AddressValidationResult{
-			IsDeliverable:  true,
-			Deliverability: "deliverable",
-			IsPOBox:        isPOBoxAddress(address.Line1),
-			IsCMRA:         false,
+			IsDeliverable:       true,
+			Deliverability:      "deliverable",
+			IsPOBox:             isPOBoxAddress(address.Line1),
+			IsCMRA:              false,
 			StandardizedAddress: address,
 		}, nil
 	}
@@ -146,8 +146,8 @@ func (s *LobService) ValidateAddress(ctx context.Context, address *models.Addres
 
 	// Parse Lob response
 	var apiResp struct {
-		ID             string `json:"id"`
-		Deliverability string `json:"deliverability"` // "deliverable", "deliverable_missing_unit", "undeliverable", etc.
+		ID                     string `json:"id"`
+		Deliverability         string `json:"deliverability"` // "deliverable", "deliverable_missing_unit", "undeliverable", etc.
 		DeliverabilityAnalysis struct {
 			DPV_CMRA         string `json:"dpv_cmra"`         // "Y" = CMRA, "N" = not CMRA
 			DPV_Confirmation string `json:"dpv_confirmation"` // "Y", "S", "D", "N"
@@ -162,9 +162,9 @@ func (s *LobService) ValidateAddress(ctx context.Context, address *models.Addres
 			State               string `json:"state"`
 			ZipCode             string `json:"zip_code"`
 			ZipCodePlus4        string `json:"zip_code_plus_4"`
-			ZipCodeType         string `json:"zip_code_type"`   // "standard", "po_box", "unique", "military"
-			AddressType         string `json:"address_type"`    // "residential", "commercial", or empty
-			RecordType          string `json:"record_type"`     // "street", "highrise", "po_box", etc.
+			ZipCodeType         string `json:"zip_code_type"` // "standard", "po_box", "unique", "military"
+			AddressType         string `json:"address_type"`  // "residential", "commercial", or empty
+			RecordType          string `json:"record_type"`   // "street", "highrise", "po_box", etc.
 		} `json:"components"`
 		PrimaryLine   string `json:"primary_line"`
 		SecondaryLine string `json:"secondary_line"`
