@@ -409,9 +409,23 @@ curl -X POST http://localhost:8080/api/v1/mfa/verify \
 
 ## Deployment
 
-Deployment infrastructure is maintained in a separate repository. See the deployment repo for provisioning, configuration management, and CI/CD workflows.
+Deployment infrastructure is maintained in a separate repository. See the deployment repo for provisioning, configuration management, and CI/CD workflows. For application-level deploy steps, env vars, and the production checklist, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Documentation
+
+Supplementary documentation lives at the repo root and under [`docs/`](docs/):
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — local setup, testing, code style, PR workflow
+- [SECURITY.md](SECURITY.md) — responsible disclosure policy and security posture
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system architecture overview
+- [docs/API.md](docs/API.md) — REST API reference
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — deployment and operations guide
+- [DESIGN.md](DESIGN.md) — authoritative design specification
+- [CLAUDE.md](CLAUDE.md) — quick reference for AI assistants
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow (prerequisites, local setup, testing, code style, branching, and PR conventions). The short version:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
