@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
@@ -539,7 +540,7 @@ func (h *SecretUpdateHandler) resolveGroupScope(w http.ResponseWriter, r *http.R
 	}
 	if !group.IsActive {
 		writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
-		return nil, nil, nil, 0, errors.New("signal group inactive")
+		return nil, nil, nil, 0, fmt.Errorf("signal group %s is inactive", groupID)
 	}
 
 	if group.RegionID != nil {
@@ -565,7 +566,7 @@ func (h *SecretUpdateHandler) resolveMeshtasticScope(w http.ResponseWriter, r *h
 	}
 	if !channel.IsActive {
 		writeError(w, http.StatusNotFound, "not_found", "Meshtastic channel not found")
-		return nil, nil, nil, 0, errors.New("meshtastic channel inactive")
+		return nil, nil, nil, 0, fmt.Errorf("meshtastic channel %s is inactive", channelID)
 	}
 
 	if channel.RegionID != nil {
@@ -594,7 +595,7 @@ func (h *SecretUpdateHandler) verifyAdminAccess(w http.ResponseWriter, r *http.R
 		return h.verifyDistrictAdmin(w, r, claims, *districtID)
 	}
 	writeError(w, http.StatusBadRequest, "invalid_scope", "Proposal has no valid scope")
-	return 0, errors.New("no scope")
+	return 0, errors.New("proposal has no region, school, or district scope")
 }
 
 // verifyRegionAdmin checks if user is admin of a region and returns admin count
@@ -607,7 +608,7 @@ func (h *SecretUpdateHandler) verifyRegionAdmin(w http.ResponseWriter, r *http.R
 		}
 		if !isAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "Admin access required")
-			return 0, errors.New("not admin")
+			return 0, fmt.Errorf("user %s is not an admin of region %s", claims.UserID, regionID)
 		}
 	}
 	adminCount, err := h.regionRepo.GetAdminCount(r.Context(), regionID)
@@ -628,7 +629,7 @@ func (h *SecretUpdateHandler) verifySchoolAdmin(w http.ResponseWriter, r *http.R
 		}
 		if userSchool == nil || !userSchool.IsAdmin || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
 			writeError(w, http.StatusForbidden, "forbidden", "School admin access required")
-			return 0, errors.New("not school admin")
+			return 0, fmt.Errorf("user %s is not a verified admin of school %s", claims.UserID, schoolID)
 		}
 	}
 	adminCount, err := h.schoolRepo.GetVerifiedAdminCount(r.Context(), schoolID)
@@ -661,7 +662,7 @@ func (h *SecretUpdateHandler) verifyDistrictAdmin(w http.ResponseWriter, r *http
 		}
 		if !isDistrictAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "District admin access required")
-			return 0, errors.New("not district admin")
+			return 0, fmt.Errorf("user %s is not a verified admin of any school in district %s", claims.UserID, districtID)
 		}
 	}
 
