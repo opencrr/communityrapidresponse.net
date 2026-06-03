@@ -73,7 +73,7 @@ func TestCORS(t *testing.T) {
 		}
 	})
 
-	t.Run("allows wildcard origin", func(t *testing.T) {
+	t.Run("wildcard responds with literal * and no credentials", func(t *testing.T) {
 		handler := CORS([]string{"*"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -84,8 +84,27 @@ func TestCORS(t *testing.T) {
 
 		handler.ServeHTTP(rec, req)
 
-		if rec.Header().Get("Access-Control-Allow-Origin") != "https://any-origin.com" {
-			t.Error("Expected Access-Control-Allow-Origin header for wildcard")
+		if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Errorf("Wildcard must respond with literal '*', got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+		}
+		if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Error("Wildcard must not set Access-Control-Allow-Credentials (browsers reject the combination)")
+		}
+	})
+
+	t.Run("exact-match origin sets credentials", func(t *testing.T) {
+		handler := CORS([]string{"https://example.com"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Origin", "https://example.com")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
+			t.Error("Exact-match origin must enable credentials")
 		}
 	})
 
@@ -226,6 +245,10 @@ func TestSecurityHeaders(t *testing.T) {
 		"X-Frame-Options":        "DENY",
 		"X-XSS-Protection":       "1; mode=block",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
+	}
+
+	if pp := rec.Header().Get("Permissions-Policy"); pp == "" {
+		t.Error("Expected Permissions-Policy header to be set")
 	}
 
 	for header, expectedValue := range expectedHeaders {
