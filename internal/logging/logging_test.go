@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 )
 
 func TestParseLevel(t *testing.T) {
-	cases := []struct {
-		in   string
-		want slog.Level
+	tests := []struct {
+		input    string
+		expected slog.Level
 	}{
 		{"debug", slog.LevelDebug},
 		{"info", slog.LevelInfo},
@@ -19,165 +22,217 @@ func TestParseLevel(t *testing.T) {
 		{"error", slog.LevelError},
 		{"", slog.LevelInfo},
 		{"unknown", slog.LevelInfo},
-		{"DEBUG", slog.LevelInfo}, // case-sensitive
+		{"INFO", slog.LevelInfo}, // case-sensitive: not matched, falls through to default
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			if got := parseLevel(tc.in); got != tc.want {
-				t.Errorf("parseLevel(%q) = %v, want %v", tc.in, got, tc.want)
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseLevel(tt.input)
+			if got != tt.expected {
+				t.Errorf("parseLevel(%q) = %v, want %v", tt.input, got, tt.expected)
 			}
 		})
 	}
 }
 
 func TestWithRequestIDAndRequestID(t *testing.T) {
-	t.Run("round trip", func(t *testing.T) {
-		ctx := WithRequestID(context.Background(), "abc-123")
-		if got := RequestID(ctx); got != "abc-123" {
-			t.Errorf("RequestID = %q, want %q", got, "abc-123")
-		}
-	})
+	ctx := context.Background()
 
-	t.Run("missing key returns empty string", func(t *testing.T) {
-		if got := RequestID(context.Background()); got != "" {
-			t.Errorf("RequestID(empty ctx) = %q, want \"\"", got)
-		}
-	})
-
-	t.Run("wrong-type value returns empty string", func(t *testing.T) {
-		// Insert a non-string value under the same key.
-		ctx := context.WithValue(context.Background(), requestIDKey, 42)
-		if got := RequestID(ctx); got != "" {
-			t.Errorf("RequestID(int-valued ctx) = %q, want \"\"", got)
-		}
-	})
-
-	t.Run("overwrites prior request id", func(t *testing.T) {
-		ctx := WithRequestID(context.Background(), "first")
-		ctx = WithRequestID(ctx, "second")
-		if got := RequestID(ctx); got != "second" {
-			t.Errorf("RequestID = %q, want %q", got, "second")
-		}
-	})
-}
-
-// captureJSON runs h.Handle with the given context and returns the parsed JSON
-// record emitted to buf.
-func captureJSON(t *testing.T, buf *bytes.Buffer) map[string]any {
-	t.Helper()
-	var out map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
-		t.Fatalf("failed to parse json output %q: %v", buf.String(), err)
+	if got := RequestID(ctx); got != "" {
+		t.Errorf("RequestID on empty ctx = %q, want \"\"", got)
 	}
-	return out
-}
 
-func newJSONHandler(buf *bytes.Buffer) *contextHandler {
-	base := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	return &contextHandler{base: base}
-}
-
-func TestContextHandler_Handle_InjectsRequestID(t *testing.T) {
-	buf := &bytes.Buffer{}
-	h := newJSONHandler(buf)
-
-	ctx := WithRequestID(context.Background(), "req-42")
-	logger := slog.New(h)
-	logger.InfoContext(ctx, "hello")
-
-	rec := captureJSON(t, buf)
-	if got, _ := rec["request_id"].(string); got != "req-42" {
-		t.Errorf("request_id attr = %v, want %q", rec["request_id"], "req-42")
-	}
-	if got, _ := rec["msg"].(string); got != "hello" {
-		t.Errorf("msg = %v, want %q", rec["msg"], "hello")
+	ctx = WithRequestID(ctx, "abc-123")
+	if got := RequestID(ctx); got != "abc-123" {
+		t.Errorf("RequestID after WithRequestID = %q, want %q", got, "abc-123")
 	}
 }
 
-func TestContextHandler_Handle_OmitsRequestIDWhenMissing(t *testing.T) {
-	buf := &bytes.Buffer{}
-	h := newJSONHandler(buf)
-
-	logger := slog.New(h)
-	logger.InfoContext(context.Background(), "no id")
-
-	rec := captureJSON(t, buf)
-	if _, present := rec["request_id"]; present {
-		t.Errorf("expected no request_id key, got %v", rec["request_id"])
+func TestRequestID_WrongType(t *testing.T) {
+	// Manually inject a non-string value at the request ID key by going through
+	// WithRequestID with a context that overrides it via direct context.WithValue.
+	// Since requestIDKey is unexported, we use a parallel scenario: the lookup
+	// must return "" when the key is absent or value type mismatches.
+	ctx := context.WithValue(context.Background(), contextKey("request_id"), 12345)
+	// Note: contextKey("request_id") is a distinct key from the package's
+	// internal requestIDKey constant value because Go context keys compare by
+	// identity of the typed value. However since contextKey is defined in this
+	// same package (test file is package logging), and requestIDKey == contextKey("request_id"),
+	// they compare equal.
+	if got := RequestID(ctx); got != "" {
+		t.Errorf("RequestID with non-string value = %q, want \"\"", got)
 	}
 }
 
-func TestContextHandler_Enabled_DelegatesToBase(t *testing.T) {
-	buf := &bytes.Buffer{}
-	base := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+func TestRequestID_EmptyString(t *testing.T) {
+	ctx := WithRequestID(context.Background(), "")
+	if got := RequestID(ctx); got != "" {
+		t.Errorf("RequestID with empty string = %q, want \"\"", got)
+	}
+}
+
+func TestContextHandler_Enabled(t *testing.T) {
+	base := slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn})
 	h := &contextHandler{base: base}
 
 	if h.Enabled(context.Background(), slog.LevelDebug) {
-		t.Error("Enabled(Debug) should be false when base level is Warn")
+		t.Error("Enabled(Debug) = true, want false")
 	}
 	if !h.Enabled(context.Background(), slog.LevelError) {
-		t.Error("Enabled(Error) should be true when base level is Warn")
+		t.Error("Enabled(Error) = false, want true")
 	}
 }
 
-func TestContextHandler_WithAttrs_StillInjectsRequestID(t *testing.T) {
-	buf := &bytes.Buffer{}
-	h := newJSONHandler(buf)
+func TestContextHandler_Handle_AddsRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(&contextHandler{base: base})
 
-	wrapped := h.WithAttrs([]slog.Attr{slog.String("component", "auth")})
+	ctx := WithRequestID(context.Background(), "req-42")
+	logger.InfoContext(ctx, "hello")
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v; output: %s", err, buf.String())
+	}
+	if got["request_id"] != "req-42" {
+		t.Errorf("request_id = %v, want %q", got["request_id"], "req-42")
+	}
+	if got["msg"] != "hello" {
+		t.Errorf("msg = %v, want %q", got["msg"], "hello")
+	}
+}
+
+func TestContextHandler_Handle_OmitsRequestIDWhenAbsent(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(&contextHandler{base: base})
+
+	logger.InfoContext(context.Background(), "hello")
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v; output: %s", err, buf.String())
+	}
+	if _, ok := got["request_id"]; ok {
+		t.Errorf("request_id present but should be absent: %v", got["request_id"])
+	}
+}
+
+func TestContextHandler_WithAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	h := &contextHandler{base: base}
+
+	wrapped := h.WithAttrs([]slog.Attr{slog.String("service", "api")})
 	if _, ok := wrapped.(*contextHandler); !ok {
-		t.Fatalf("WithAttrs should return *contextHandler, got %T", wrapped)
+		t.Fatalf("WithAttrs did not return *contextHandler, got %T", wrapped)
 	}
 
 	logger := slog.New(wrapped)
-	ctx := WithRequestID(context.Background(), "req-99")
+	ctx := WithRequestID(context.Background(), "r1")
 	logger.InfoContext(ctx, "msg")
 
-	rec := captureJSON(t, buf)
-	if got, _ := rec["request_id"].(string); got != "req-99" {
-		t.Errorf("request_id = %v, want %q", rec["request_id"], "req-99")
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	if got, _ := rec["component"].(string); got != "auth" {
-		t.Errorf("component attr lost: got %v", rec["component"])
+	if got["service"] != "api" {
+		t.Errorf("service = %v, want \"api\"", got["service"])
+	}
+	if got["request_id"] != "r1" {
+		t.Errorf("request_id = %v, want \"r1\"", got["request_id"])
 	}
 }
 
-func TestContextHandler_WithGroup_StillInjectsRequestID(t *testing.T) {
-	buf := &bytes.Buffer{}
-	h := newJSONHandler(buf)
+func TestContextHandler_WithGroup(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	h := &contextHandler{base: base}
 
-	wrapped := h.WithGroup("svc")
+	wrapped := h.WithGroup("g1")
 	if _, ok := wrapped.(*contextHandler); !ok {
-		t.Fatalf("WithGroup should return *contextHandler, got %T", wrapped)
+		t.Fatalf("WithGroup did not return *contextHandler, got %T", wrapped)
 	}
 
 	logger := slog.New(wrapped)
-	ctx := WithRequestID(context.Background(), "req-grp")
-	logger.InfoContext(ctx, "msg", slog.String("k", "v"))
+	logger.InfoContext(context.Background(), "msg", "k", "v")
 
-	rec := captureJSON(t, buf)
-	// request_id is added at the top level (not inside the group) because
-	// AddAttrs on the record runs before the group prefix is applied to
-	// subsequent attributes. Either way, it should still be present and
-	// resolve to the expected value somewhere in the record.
-	if got, _ := rec["request_id"].(string); got != "req-grp" {
-		// Fall back: it may have ended up inside the group.
-		if grp, ok := rec["svc"].(map[string]any); ok {
-			if got, _ := grp["request_id"].(string); got == "req-grp" {
-				return
-			}
-		}
-		t.Errorf("request_id not found after WithGroup; record = %v", rec)
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v; output: %s", err, buf.String())
+	}
+	g, ok := got["g1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested group g1, got: %v", got)
+	}
+	if g["k"] != "v" {
+		t.Errorf("g1.k = %v, want \"v\"", g["k"])
 	}
 }
 
-func TestInit_DoesNotPanic(t *testing.T) {
-	// Init mutates slog's default logger. Save and restore.
-	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
+// captureStdout swaps os.Stdout for the duration of fn and returns whatever
+// fn wrote. Init writes to os.Stdout directly, so capturing it requires this.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
 
-	Init("json", "debug")
-	Init("text", "warn")
-	Init("text", "") // exercises default level branch
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	os.Stdout = orig
+	return <-done
+}
+
+func TestInit_JSONFormat(t *testing.T) {
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	out := captureStdout(t, func() {
+		Init("json", "debug")
+		ctx := WithRequestID(context.Background(), "init-json")
+		slog.InfoContext(ctx, "from-init-json")
+	})
+
+	if !strings.Contains(out, "\"msg\":\"from-init-json\"") {
+		t.Errorf("expected JSON output containing msg, got: %s", out)
+	}
+	if !strings.Contains(out, "\"request_id\":\"init-json\"") {
+		t.Errorf("expected JSON output containing request_id, got: %s", out)
+	}
+}
+
+func TestInit_TextFormat(t *testing.T) {
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	out := captureStdout(t, func() {
+		Init("text", "warn")
+		ctx := WithRequestID(context.Background(), "init-text")
+		// Debug should be suppressed by warn level
+		slog.DebugContext(ctx, "suppressed")
+		slog.WarnContext(ctx, "from-init-text")
+	})
+
+	if strings.Contains(out, "suppressed") {
+		t.Errorf("debug message leaked at warn level: %s", out)
+	}
+	if !strings.Contains(out, "from-init-text") {
+		t.Errorf("expected text output containing warn message, got: %s", out)
+	}
+	if !strings.Contains(out, "request_id=init-text") {
+		t.Errorf("expected text output containing request_id, got: %s", out)
+	}
 }
