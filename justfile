@@ -495,6 +495,10 @@ tidy:
     @echo "🧹 Tidying modules..."
     go mod tidy
 
+# Detect drift between prose docs (CLAUDE.md/DESIGN.md/README.md) and the real code/schema
+doc-drift *ARGS:
+    @go run ./cmd/doc-drift {{ARGS}}
+
 # Run security scanners (gosec + govulncheck)
 security:
     @echo "🔒 Running security scanners..."
