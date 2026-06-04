@@ -103,16 +103,6 @@ func NewAuthHandler(userRepo *database.UserRepository, jwtAuth *middleware.JWTAu
 	}
 }
 
-// NewAuthHandlerWithConfig creates a new auth handler with configuration
-func NewAuthHandlerWithConfig(userRepo *database.UserRepository, jwtAuth *middleware.JWTAuth, secureCookies bool, mfaRequired bool) *AuthHandler {
-	return &AuthHandler{
-		userRepo:      userRepo,
-		jwtAuth:       jwtAuth,
-		secureCookies: secureCookies,
-		mfaRequired:   mfaRequired,
-	}
-}
-
 // NewAuthHandlerWithEmailService creates a new auth handler with email service
 func NewAuthHandlerWithEmailService(
 	db *database.DB,

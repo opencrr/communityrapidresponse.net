@@ -360,27 +360,11 @@ func (r *MeshtasticChannelRepository) CountByRegionForUpdate(ctx context.Context
 	return count, err
 }
 
-// CountBySchool counts meshtastic channels for a school
-func (r *MeshtasticChannelRepository) CountBySchool(ctx context.Context, schoolID string) (int, error) {
-	query := `SELECT COUNT(*) FROM meshtastic_channels WHERE school_id = ? AND is_active = TRUE`
-	var count int
-	err := r.db.QueryRowContext(ctx, query, schoolID).Scan(&count)
-	return count, err
-}
-
 // CountBySchoolForUpdate counts meshtastic channels for a school with a row lock
 func (r *MeshtasticChannelRepository) CountBySchoolForUpdate(ctx context.Context, tx *sql.Tx, schoolID string) (int, error) {
 	query := `SELECT COUNT(*) FROM meshtastic_channels WHERE school_id = ? AND is_active = TRUE FOR UPDATE`
 	var count int
 	err := tx.QueryRowContext(ctx, query, schoolID).Scan(&count)
-	return count, err
-}
-
-// CountByDistrict counts meshtastic channels for a district
-func (r *MeshtasticChannelRepository) CountByDistrict(ctx context.Context, districtID string) (int, error) {
-	query := `SELECT COUNT(*) FROM meshtastic_channels WHERE district_id = ? AND is_active = TRUE`
-	var count int
-	err := r.db.QueryRowContext(ctx, query, districtID).Scan(&count)
 	return count, err
 }
 

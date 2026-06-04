@@ -162,13 +162,6 @@ func (r *SignalGroupRepository) Update(ctx context.Context, id string, name, des
 	return err
 }
 
-// Deactivate marks a signal group as inactive
-func (r *SignalGroupRepository) Deactivate(ctx context.Context, id string) error {
-	query := `UPDATE signal_groups SET is_active = FALSE WHERE id = ?`
-	_, err := r.db.ExecContext(ctx, query, id)
-	return err
-}
-
 // CountByRegion counts signal groups for a region
 func (r *SignalGroupRepository) CountByRegion(ctx context.Context, regionID string) (int, error) {
 	query := `SELECT COUNT(*) FROM signal_groups WHERE region_id = ? AND is_active = TRUE`

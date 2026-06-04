@@ -33,15 +33,6 @@ type RateLimitConfig struct {
 	Enabled bool
 }
 
-// DefaultRateLimitConfig returns sensible defaults
-func DefaultRateLimitConfig() *RateLimitConfig {
-	return &RateLimitConfig{
-		IPRateLimit:  100,
-		IPRateWindow: time.Minute,
-		Enabled:      true,
-	}
-}
-
 // DBRateLimiter implements RateLimiter using MariaDB/MySQL
 type DBRateLimiter struct {
 	db *sql.DB

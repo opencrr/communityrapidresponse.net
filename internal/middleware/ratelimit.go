@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -57,16 +56,6 @@ func RateLimitMiddleware(limiter services.RateLimiter, limit int, window time.Du
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// RateLimitWithConfig creates rate limit middleware from a config struct
-func RateLimitWithConfig(limiter services.RateLimiter, config *services.RateLimitConfig) func(http.Handler) http.Handler {
-	if config == nil || !config.Enabled {
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
-	return RateLimitMiddleware(limiter, config.IPRateLimit, config.IPRateWindow)
 }
 
 // trustedNets holds parsed CIDR ranges of trusted reverse proxies.
@@ -171,9 +160,3 @@ func RateLimitKey(userID string, action string) string {
 	return fmt.Sprintf("user:%s:%s", userID, action)
 }
 
-// CheckUserRateLimit checks a user-specific rate limit (e.g., for vouches, proposals)
-// This is a helper function for use in handlers, not middleware
-func CheckUserRateLimit(ctx context.Context, limiter services.RateLimiter, userID string, action string, limit int, window time.Duration) (bool, int, time.Time, error) {
-	key := RateLimitKey(userID, action)
-	return limiter.Allow(ctx, key, limit, window)
-}

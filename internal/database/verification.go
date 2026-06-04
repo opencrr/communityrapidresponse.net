@@ -182,20 +182,6 @@ func (r *VerificationRepository) CountRecentByUser(ctx context.Context, userID s
 	return count, err
 }
 
-// ExpireOldRequests marks old pending requests as expired
-func (r *VerificationRepository) ExpireOldRequests(ctx context.Context) (int64, error) {
-	query := `
-		UPDATE verification_requests
-		SET status = 'expired'
-		WHERE status IN ('pending', 'mailed') AND expires_at < NOW()
-	`
-	result, err := r.db.ExecContext(ctx, query)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 // --- Transactional methods for race condition prevention ---
 
 // GetByCodeForUpdate locks and retrieves a verification request by code within a transaction
@@ -355,45 +341,6 @@ func (r *VouchRepository) Create(ctx context.Context, vouch *models.Vouch) error
 	return err
 }
 
-// CountVouchesForUser counts vouches received by a user for a region
-func (r *VouchRepository) CountVouchesForUser(ctx context.Context, userID string, regionID string) (int, error) {
-	query := `SELECT COUNT(*) FROM vouches WHERE vouched_user_id = ? AND region_id = ?`
-	var count int
-	err := r.db.QueryRowContext(ctx, query, userID, regionID).Scan(&count)
-	return count, err
-}
-
-// GetVouchersForUser retrieves vouchers who have vouched for a user
-func (r *VouchRepository) GetVouchersForUser(ctx context.Context, userID string, regionID string) ([]models.VoucherInfo, error) {
-	query := `
-		SELECT u.id, u.username, v.created_at
-		FROM vouches v
-		JOIN users u ON v.voucher_user_id = u.id
-		WHERE v.vouched_user_id = ? AND v.region_id = ?
-		ORDER BY v.created_at
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, userID, regionID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var vouchers []models.VoucherInfo
-	for rows.Next() {
-		var v models.VoucherInfo
-		if err := rows.Scan(&v.UserID, &v.Username, &v.VouchedAt); err != nil {
-			return nil, err
-		}
-		vouchers = append(vouchers, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return vouchers, nil
-}
-
 // HasVouched checks if a user has already vouched for another user
 func (r *VouchRepository) HasVouched(ctx context.Context, voucherID, vouchedID string) (bool, error) {
 	query := `SELECT COUNT(*) > 0 FROM vouches WHERE voucher_user_id = ? AND vouched_user_id = ?`
@@ -421,18 +368,6 @@ func (r *VouchRepository) IsUserBlockedInRegion(ctx context.Context, userID, reg
 	var blocked bool
 	err := r.db.QueryRowContext(ctx, query, userID, regionID).Scan(&blocked)
 	return blocked, err
-}
-
-// UsersShareRegion checks if two users share membership in any region
-func (r *VouchRepository) UsersShareRegion(ctx context.Context, userID1, userID2 string) (bool, error) {
-	query := `
-		SELECT COUNT(*) > 0 FROM user_regions ur1
-		JOIN user_regions ur2 ON ur1.region_id = ur2.region_id
-		WHERE ur1.user_id = ? AND ur2.user_id = ?
-	`
-	var shared bool
-	err := r.db.QueryRowContext(ctx, query, userID1, userID2).Scan(&shared)
-	return shared, err
 }
 
 // GetLastVouchTimeByVoucher retrieves the most recent vouch time for a voucher
@@ -545,14 +480,6 @@ func (r *VouchRepository) CountVouchesThisMonthForUpdate(ctx context.Context, tx
 	`
 	var count int
 	err := tx.QueryRowContext(ctx, query, voucherID).Scan(&count)
-	return count, err
-}
-
-// CountVouchesForUserTx counts vouches received by a user within a transaction
-func (r *VouchRepository) CountVouchesForUserTx(ctx context.Context, tx *sql.Tx, userID string, regionID string) (int, error) {
-	query := `SELECT COUNT(*) FROM vouches WHERE vouched_user_id = ? AND region_id = ?`
-	var count int
-	err := tx.QueryRowContext(ctx, query, userID, regionID).Scan(&count)
 	return count, err
 }
 

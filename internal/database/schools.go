@@ -659,13 +659,6 @@ func (r *SchoolRepository) RemoveUserFromSchool(ctx context.Context, userID, sch
 	return err
 }
 
-// RemoveUserFromSchoolTx removes a user from a school within a transaction
-func (r *SchoolRepository) RemoveUserFromSchoolTx(ctx context.Context, tx *sql.Tx, userID, schoolID string) error {
-	query := `DELETE FROM user_schools WHERE user_id = ? AND school_id = ?`
-	_, err := tx.ExecContext(ctx, query, userID, schoolID)
-	return err
-}
-
 // IsUserInSchool checks if a user is a member of a school
 func (r *SchoolRepository) IsUserInSchool(ctx context.Context, userID, schoolID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM user_schools WHERE user_id = ? AND school_id = ?)`
@@ -772,14 +765,6 @@ func (r *SchoolRepository) IsUserBlockedInSchool(ctx context.Context, userID, sc
 	query := `SELECT EXISTS(SELECT 1 FROM school_blocked_users WHERE user_id = ? AND school_id = ?)`
 	var exists bool
 	err := r.db.QueryRowContext(ctx, query, userID, schoolID).Scan(&exists)
-	return exists, err
-}
-
-// IsUserBlockedInSchoolTx checks if a user is blocked from a school within a transaction
-func (r *SchoolRepository) IsUserBlockedInSchoolTx(ctx context.Context, tx *sql.Tx, userID, schoolID string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM school_blocked_users WHERE user_id = ? AND school_id = ?)`
-	var exists bool
-	err := tx.QueryRowContext(ctx, query, userID, schoolID).Scan(&exists)
 	return exists, err
 }
 
