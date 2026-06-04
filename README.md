@@ -263,11 +263,13 @@ Authorization: Bearer <token>
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v1/regions` | List regions (authenticated, scoped by membership) |
-| POST | `/api/v1/regions` | Create a region (admin only) |
-| GET | `/api/v1/regions/:id` | Get region details with sub-regions |
-| PUT | `/api/v1/regions/:id` | Update region name (admin/superuser) |
-| DELETE | `/api/v1/regions/:id` | Delete region (superuser only) |
+| GET | `/api/v1/communities` | List regions (authenticated, scoped by membership) |
+| POST | `/api/v1/communities` | Create a region (admin only) |
+| GET | `/api/v1/communities/:id` | Get region details with sub-regions |
+| PUT | `/api/v1/communities/:id` | Update region name (admin/superuser) |
+| DELETE | `/api/v1/communities/:id` | Delete region (superuser only) |
+
+The router uses the `communities` prefix even though the domain still calls these "regions".
 
 **Access Control:**
 - All region endpoints require authentication
@@ -275,7 +277,7 @@ Authorization: Bearer <token>
 - Superusers can see and filter all regions
 
 **Sub-Regions:**
-- `GET /api/v1/regions/:id` returns `sub_regions` array using geographic containment
+- `GET /api/v1/communities/:id` returns `sub_regions` array using geographic containment
 - Sub-regions are determined using MariaDB ST_Contains (geometry-based)
 - This allows cities to show as sub-regions of states even without explicit parent_id
 

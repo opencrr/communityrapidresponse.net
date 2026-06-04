@@ -1300,7 +1300,7 @@ Response: 200
 - Superusers can view and filter all regions
 - This prevents unauthorized enumeration of regions and their membership
 
-**GET /api/v1/regions**
+**GET /api/v1/communities**
 ```json
 Query Parameters:
 - type: city_block|neighborhood|town|city
@@ -1336,7 +1336,7 @@ Response: 401 (not authenticated)
 }
 ```
 
-**POST /api/v1/regions** (Admins only)
+**POST /api/v1/communities** (Admins only)
 ```json
 Request:
 {
@@ -1377,7 +1377,7 @@ Response: 403 (if region outside admin's authorized regions)
 - Partial overlap (region extends outside all admin regions) is rejected
 - Superusers bypass this validation and can create regions anywhere
 
-**GET /api/v1/regions/:id**
+**GET /api/v1/communities/:id**
 
 Returns region details including geographically-contained sub-regions. Sub-regions are determined using MariaDB's `ST_Contains` spatial function, which finds all regions whose geometry is fully contained within this region's geometry. This allows proper geographic containment (e.g., cities within states) regardless of the `parent_region_id` relationship.
 
@@ -1431,7 +1431,7 @@ Response: 403 (no access to region)
 - Sub-regions sorted by type (county, city, neighborhood, city_block) then name
 - Note: Spatial indexes are disabled on the `geometry` column due to MariaDB Error 1207 compatibility issues with `ST_Contains` queries
 
-**PUT /api/v1/regions/:id** (Admin or Superuser only)
+**PUT /api/v1/communities/:id** (Admin or Superuser only)
 ```json
 Request:
 {
@@ -1452,7 +1452,7 @@ Response: 403 (if not admin of region and not superuser)
 }
 ```
 
-**DELETE /api/v1/regions/:id** (Superuser only)
+**DELETE /api/v1/communities/:id** (Superuser only)
 
 Deletes a region and all associated data (user_regions, signal_groups, child regions).
 
@@ -1777,7 +1777,7 @@ Response: 200
 
 #### User Blacklist
 
-**POST /api/v1/blacklist-proposals** (Admins only, requires ≥3 admins in region)
+**POST /api/v1/blocklist-proposals** (Admins only, requires ≥3 admins in region)
 ```json
 Request:
 {
@@ -1803,7 +1803,7 @@ Response: 403 (if region has <3 admins)
 }
 ```
 
-**POST /api/v1/blacklist-proposals/:id/vote** (Admins only)
+**POST /api/v1/blocklist-proposals/:id/vote** (Admins only)
 ```json
 Request:
 {
@@ -1820,7 +1820,7 @@ Response: 200
 }
 ```
 
-**GET /api/v1/blacklist-proposals**
+**GET /api/v1/blocklist-proposals**
 ```json
 Query Parameters:
 - status: pending|approved|rejected
@@ -1847,7 +1847,7 @@ Response: 200
 }
 ```
 
-**GET /api/v1/regions/:id/blacklist**
+**GET /api/v1/communities/:id/blacklist**
 ```json
 Response: 200
 {
@@ -1944,7 +1944,7 @@ Create a Signal group for a school district.
 
 These endpoints manage membership requests for admin-created sub-regions (city blocks, custom neighborhoods) where users aren't automatically assigned via geocoding.
 
-**POST /api/v1/regions/:id/membership-requests** (Verified users only)
+**POST /api/v1/communities/:id/membership-requests** (Verified users only)
 
 Request membership in a sub-region. User must be a member of the parent region.
 ```json
@@ -2005,7 +2005,7 @@ Response: 200
 }
 ```
 
-**GET /api/v1/regions/:id/membership-requests** (Region admins only)
+**GET /api/v1/communities/:id/membership-requests** (Region admins only)
 
 List pending membership requests for a region.
 ```json
@@ -2107,7 +2107,7 @@ Response: 200 (approved - consensus reached)
 }
 ```
 
-**POST /api/v1/regions/:id/invitations** (Region admins only)
+**POST /api/v1/communities/:id/invitations** (Region admins only)
 
 Invite a user to join a sub-region. User must be in parent region.
 ```json

@@ -42,7 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Database Schema (MariaDB)
 
-Key tables: `users`, `geographic_regions`, `user_regions`, `verification_requests`, `vouches`, `signal_groups`, `deletion_proposals`, `deletion_votes`, `invite_link_update_proposals`, `invite_link_update_votes`, `blacklist_proposals`, `blacklist_votes`, `blacklisted_users`, `email_notifications`, `audit_log`, `sub_region_membership_requests`, `sub_region_membership_votes`, `school_districts`, `schools`, `user_schools`, `school_vouches`, `school_blocked_users`
+Key tables: `users`, `geographic_regions`, `user_regions`, `admin_boundaries`, `verification_requests`, `vouches`, `signal_groups`, `deletion_proposals`, `deletion_votes`, `secret_update_proposals`, `secret_update_votes`, `proposal_wrapped_keys`, `encrypted_secrets`, `encrypted_secret_keys`, `user_encryption_keys`, `blocklist_proposals`, `blocklist_votes`, `blocked_users`, `blocked_addresses`, `meshtastic_channels`, `password_reset_tokens`, `rate_limits`, `user_reports`, `email_notifications`, `audit_log`, `sub_region_membership_requests`, `sub_region_membership_votes`, `school_districts`, `schools`, `user_schools`, `school_vouches`, `school_blocked_users`
 
 Geographic regions use MariaDB spatial `GEOMETRY SRID 4326` for boundary storage (nullable for regions without boundaries). UUIDs are `CHAR(36)` generated at the application layer.
 
@@ -78,30 +78,63 @@ just db-migrate-status       # Show applied/pending migrations
 REST API with JWT authentication (24-hour expiration, httpOnly cookies). All authenticated endpoints require `Authorization: Bearer <token>` header.
 
 Key endpoint groups:
-- `/api/v1/auth/*` - registration, login
+- `/api/v1/health` - liveness probe (no auth)
+- `/api/v1/auth/*` - registration, login, logout, email verification, password reset
+  - POST `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/logout`
+  - GET `/api/v1/auth/verify-email`, `/api/v1/auth/validate-reset-token`
+  - POST `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`
+  - POST `/api/v1/auth/change-password` (auth), `/api/v1/auth/resend-verification` (email-unverified token)
 - `/api/v1/mfa/*` - MFA setup and verification
+- `/api/v1/users/me` - current user info
+  - GET `/api/v1/users/me/deletion-preflight` - preview account deletion impact
 - `/api/v1/verification/*` - postcard and vouch verification
-- `/api/v1/regions/*` - geographic region management (all require authentication)
-  - GET `/api/v1/regions` - list regions (scoped by user membership; superusers see all)
-  - GET `/api/v1/regions/:id` - get region with sub-regions (uses ST_Contains for geographic containment)
-  - PUT `/api/v1/regions/:id` - update region name (admin/superuser)
-  - DELETE `/api/v1/regions/:id` - delete region with cascade (superuser only)
+  - GET `/api/v1/verification/status` - current verification state
+  - POST `/api/v1/verification/vouch/request` - request vouch verification for an address
+  - GET `/api/v1/verification/vouch/pending` - list inbound vouch requests
+- `/api/v1/communities/*` - geographic region management (all require authentication; handler routes use the `communities` prefix even though the domain still calls them regions)
+  - GET `/api/v1/communities` - list regions (scoped by user membership; superusers see all)
+  - GET `/api/v1/communities/admin` - list regions where the caller is an admin
+  - GET `/api/v1/communities/:id` - get region with sub-regions (uses ST_Contains for geographic containment)
+  - PUT `/api/v1/communities/:id` - update region name (admin/superuser)
+  - DELETE `/api/v1/communities/:id` - delete region with cascade (superuser only)
 - `/api/v1/signal-groups/*` - Signal group CRUD
-- `/api/v1/signal-groups/:id/invite-link-proposals` - propose invite link update (3-admin consensus)
-- `/api/v1/signal-groups/invite-link-proposals/:id/vote` - vote on invite link proposal
+  - GET `/api/v1/signal-groups/admin` - list signal groups for the caller's admin regions
+  - POST `/api/v1/signal-groups/:id/secret-proposals` - propose invite-link/secret rotation (replaces the old invite-link-proposals route)
+- `/api/v1/secret-proposals/*` - consensus-based Signal/Meshtastic secret rotation proposals (replaces invite-link-update-proposals)
+  - GET `/api/v1/secret-proposals` - list proposals; GET `/api/v1/secret-proposals/:id` - proposal detail
+  - POST `/api/v1/secret-proposals/:id/vote`, `/api/v1/secret-proposals/:id/expire`
+- `/api/v1/encrypted-secrets/:id/finalize` - finalize a proposal's wrapped-key distribution
+- `/api/v1/encryption/*` - per-user keypair management for end-to-end-encrypted secrets
+  - GET/POST/PUT `/api/v1/encryption/keys`, POST `/api/v1/encryption/keys/rotate`
+  - GET `/api/v1/encryption/public-keys`, `/api/v1/encryption/pending-rekeys`
+  - POST `/api/v1/encryption/rekey`
+- `/api/v1/meshtastic-channels/*` - Meshtastic channel CRUD (mirrors signal-groups)
+  - GET/POST `/api/v1/meshtastic-channels`, PUT `/api/v1/meshtastic-channels/:id`
+  - GET `/api/v1/meshtastic-channels/admin` - list channels for the caller's admin regions
 - `/api/v1/deletion-proposals/*` - consensus-based asset deletion
-- `/api/v1/blacklist-proposals/*` - user blacklisting (requires ≥3 admins in region)
+  - GET/POST `/api/v1/deletion-proposals`, GET `/api/v1/deletion-proposals/:id`
+  - POST `/api/v1/deletion-proposals/:id/vote`, `/api/v1/deletion-proposals/:id/expire`
+- `/api/v1/blocklist-proposals/*` - user blocklisting (requires ≥3 admins in region; renamed from blacklist-proposals)
+  - GET `/api/v1/blocklist-proposals`, GET `/api/v1/blocklist-proposals/:id`
+  - POST `/api/v1/blocklist-proposals/:id/vote`, `/api/v1/blocklist-proposals/:id/expire`
+  - POST `/api/v1/communities/:id/blocklist-proposals` - create proposal for a region
+- `/api/v1/reports/*` - user reports created via region/school/district sub-routes; admins list and resolve them here
+  - GET `/api/v1/reports`, GET `/api/v1/reports/:id`, POST `/api/v1/reports/:id/resolve`
+  - POST `/api/v1/communities/:id/reports`, `/api/v1/schools/:id/reports`, `/api/v1/school-districts/:id/reports`
 - `/api/v1/admin/users` - search users (superuser only)
 - `/api/v1/admin/users/:id/grant-vouch` - grant vouch verification (superuser only)
 - `/api/v1/admin/users/:id/revoke-vouch` - revoke vouch verification (superuser only)
+- `/api/v1/admin/audit-logs` - read audit log entries (superuser only)
+- `/api/v1/admin/audit-logs/export` - export audit log as CSV (superuser only)
+- `/api/v1/admin/blocked-addresses` - list addresses blocked from verification (superuser only)
 - `/api/v1/membership-requests/*` - sub-region membership management
-  - POST `/api/v1/regions/:id/membership-requests` - request to join sub-region (verified users)
+  - POST `/api/v1/communities/:id/membership-requests` - request to join sub-region (verified users)
   - GET `/api/v1/membership-requests` - list user's own requests
   - GET `/api/v1/membership-requests/admin` - list pending requests for admin's regions
   - GET/DELETE `/api/v1/membership-requests/:id` - get/cancel request
   - POST `/api/v1/membership-requests/:id/vote` - vote on request (2+ approvals needed)
 - `/api/v1/invitations/*` - admin invitations to sub-regions
-  - POST `/api/v1/regions/:id/invitations` - invite user to sub-region (admin only)
+  - POST `/api/v1/communities/:id/invitations` - invite user to sub-region (admin only)
   - GET `/api/v1/invitations` - list user's pending invitations
   - POST `/api/v1/invitations/:id/respond` - accept/decline invitation
 - `/api/v1/schools/*` - school management

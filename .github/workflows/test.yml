@@ -204,3 +204,20 @@ jobs:
 
       - name: Run gosec
         run: gosec -exclude=G117,G404,G704,G706 -exclude-dir=tests ./...
+
+  doc-drift:
+    name: Doc Drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check documentation against router and migrations
+        run: go run ./cmd/doc-drift
