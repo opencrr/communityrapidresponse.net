@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrRegionNotFound      = errors.New("region not found")
-	ErrRegionOutsideUS     = errors.New("region must be within the United States or its territories")
+	ErrRegionNotFound  = errors.New("region not found")
+	ErrRegionOutsideUS = errors.New("region must be within the United States or its territories")
 )
 
 // RegionRepository handles region database operations

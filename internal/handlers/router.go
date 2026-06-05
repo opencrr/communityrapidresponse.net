@@ -22,13 +22,13 @@ type Router struct {
 	verification       *VerificationHandler
 	admin              *AdminHandler
 	membership         *MembershipHandler
-	blocklistProposals  *BlocklistProposalHandler
-	deletionProposals   *DeletionProposalHandler
-	schools             *SchoolHandler
-	userReports         *UserReportHandler
-	encryption          *EncryptionHandler
-	secretUpdates       *SecretUpdateHandler
-	meshtastic          *MeshtasticHandler
+	blocklistProposals *BlocklistProposalHandler
+	deletionProposals  *DeletionProposalHandler
+	schools            *SchoolHandler
+	userReports        *UserReportHandler
+	encryption         *EncryptionHandler
+	secretUpdates      *SecretUpdateHandler
+	meshtastic         *MeshtasticHandler
 	jwtAuth            *middleware.JWTAuth
 	rateLimiter        services.RateLimiter
 	rateLimitConfig    *RateLimitOptions
@@ -39,8 +39,8 @@ type Router struct {
 
 // RateLimitOptions configures rate limiting for the router
 type RateLimitOptions struct {
-	Enabled  bool
-	Limit    int
+	Enabled    bool
+	Limit      int
 	WindowSecs int
 }
 
@@ -83,13 +83,13 @@ func NewRouter(
 		verification:       verification,
 		admin:              admin,
 		membership:         membership,
-		blocklistProposals:  blocklistProposals,
-		deletionProposals:   deletionProposals,
-		schools:             schools,
-		userReports:         userReports,
-		encryption:          encryption,
-		secretUpdates:       secretUpdates,
-		meshtastic:          meshtastic,
+		blocklistProposals: blocklistProposals,
+		deletionProposals:  deletionProposals,
+		schools:            schools,
+		userReports:        userReports,
+		encryption:         encryption,
+		secretUpdates:      secretUpdates,
+		meshtastic:         meshtastic,
 		jwtAuth:            jwtAuth,
 		rateLimiter:        rateLimiter,
 		rateLimitConfig:    rateLimitConfig,

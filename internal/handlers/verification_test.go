@@ -758,7 +758,7 @@ func TestVerificationHandler_RequestPostcardVerification(t *testing.T) {
 		suite.postgridService.Reset()
 		suite.mapboxService.Reset()
 		// Set mock coordinates that are outside the test region
-		suite.mapboxService.DefaultLatitude = 40.7128  // New York
+		suite.mapboxService.DefaultLatitude = 40.7128 // New York
 		suite.mapboxService.DefaultLongitude = -74.006
 
 		body := map[string]interface{}{
@@ -822,7 +822,9 @@ func TestVerificationHandler_VerifyCode(t *testing.T) {
 	t.Run("successful code verification", func(t *testing.T) {
 		verificationCode := "abc12345"
 		verReq := suite.createVerificationRequest(user.ID, region.ID, verificationCode, models.VerificationStatusMailed)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
 
 		body := map[string]interface{}{
 			"verification_code": verificationCode,
@@ -912,7 +914,9 @@ func TestVerificationHandler_VerifyCode(t *testing.T) {
 
 		verificationCode := "other123"
 		verReq := suite.createVerificationRequest(otherUser.ID, region.ID, verificationCode, models.VerificationStatusMailed)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
 
 		body := map[string]interface{}{
 			"verification_code": verificationCode,
@@ -963,7 +967,9 @@ func TestVerificationHandler_VerifyCode(t *testing.T) {
 		_, _ = suite.db.ExecContext(context.Background(), query,
 			verReq.ID, verReq.UserID, verReq.RegionID, verReq.VerificationCode, verReq.Status,
 			verReq.PostgridRequestID, verReq.BoundaryType, verReq.BoundaryName, verReq.BoundaryState, verReq.CreatedAt, verReq.ExpiresAt)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
 
 		body := map[string]interface{}{
 			"verification_code": verificationCode,
@@ -992,7 +998,9 @@ func TestVerificationHandler_VerifyCode(t *testing.T) {
 	t.Run("already verified code fails", func(t *testing.T) {
 		verificationCode := "alreadyv"
 		verReq := suite.createVerificationRequest(user.ID, region.ID, verificationCode, models.VerificationStatusVerified)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
 
 		body := map[string]interface{}{
 			"verification_code": verificationCode,
@@ -1149,7 +1157,9 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 	t.Run("cannot vouch for self", func(t *testing.T) {
 		// Add self as pending to test self-vouch rejection
 		suite.addUserToRegionPending(verifiedUser.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", verifiedUser.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", verifiedUser.ID)
+		}()
 
 		body := map[string]interface{}{
 			"vouched_user_id": verifiedUser.ID,
@@ -1266,7 +1276,9 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 	t.Run("vouch limit enforced", func(t *testing.T) {
 		// Add voucher to region
 		suite.addUserToRegion(verifiedUser.ID, region.ID, true)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", verifiedUser.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", verifiedUser.ID)
+		}()
 
 		// Create 10 vouches (the monthly limit)
 		for i := 0; i < 10; i++ {
@@ -1274,12 +1286,16 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 			suite.createVouch(verifiedUser.ID, targetUserN.ID, region.ID)
 			defer suite.cleanup(targetUserN.ID)
 		}
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ?", verifiedUser.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ?", verifiedUser.ID)
+		}()
 
 		newTarget := suite.createTestUser("vouch_over_limit", models.TierUnverified)
 		suite.addUserToRegionPending(newTarget.ID, region.ID)
 		defer suite.cleanup(newTarget.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", newTarget.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", newTarget.ID)
+		}()
 
 		body := map[string]interface{}{
 			"vouched_user_id": newTarget.ID,
@@ -1317,11 +1333,15 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 		// Add both users to the region as verified, but also add them as pending for the vouch test
 		suite.addUserToRegion(userA.ID, region.ID, true)
 		suite.addUserToRegion(userB.ID, region.ID, true)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", userA.ID, userB.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", userA.ID, userB.ID)
+		}()
 
 		// User A vouches for User B
 		suite.createVouch(userA.ID, userB.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ? OR vouched_user_id = ?", userA.ID, userA.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE voucher_user_id = ? OR vouched_user_id = ?", userA.ID, userA.ID)
+		}()
 
 		// Create a pending entry for User A so User B can attempt to vouch
 		// First remove A's verified entry and add pending
@@ -1370,7 +1390,9 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 
 		// Add vouchee as pending in region, but voucher is NOT in any region
 		suite.addUserToRegionPending(vouchee.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", vouchee.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", vouchee.ID)
+		}()
 
 		body := map[string]interface{}{
 			"vouched_user_id": vouchee.ID,
@@ -1454,7 +1476,9 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 		// Add both users to region - vouchee as pending
 		suite.addUserToRegion(voucher.ID, region.ID, true)
 		suite.addUserToRegionPending(blockedUser.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, blockedUser.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id IN (?, ?)", voucher.ID, blockedUser.ID)
+		}()
 
 		// Block the vouchee in this region
 		suite.blockUserInRegion(blockedUser.ID, region.ID)
@@ -1508,7 +1532,9 @@ func TestVerificationHandler_Vouch(t *testing.T) {
 
 		// Create first vouch
 		suite.createVouch(verifiedUser.ID, autoUpgradeTarget.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE vouched_user_id = ?", autoUpgradeTarget.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE vouched_user_id = ?", autoUpgradeTarget.ID)
+		}()
 
 		// Second vouch should trigger auto-upgrade
 		body := map[string]interface{}{
@@ -1579,7 +1605,9 @@ func TestVerificationHandler_GetVouchStatus(t *testing.T) {
 		// Create vouches
 		suite.createVouch(voucher1.ID, targetUser.ID, region.ID)
 		suite.createVouch(voucher2.ID, targetUser.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE vouched_user_id = ?", targetUser.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM vouches WHERE vouched_user_id = ?", targetUser.ID)
+		}()
 
 		// getPathParam uses query params, so include user_id as query param
 		path := fmt.Sprintf("/api/v1/verification/vouch/status?user_id=%s&region_id=%s", targetUser.ID, region.ID)
@@ -1727,7 +1755,9 @@ func TestVerificationHandler_GetStatus(t *testing.T) {
 
 	t.Run("get status with pending request", func(t *testing.T) {
 		verReq := suite.createVerificationRequest(user.ID, region.ID, "pending12", models.VerificationStatusMailed)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM verification_requests WHERE id = ?", verReq.ID)
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/verification/status", nil)
 
@@ -1911,7 +1941,9 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 
 		// Create initial pending request
 		suite.addUserToRegionPending(user.ID, region.ID)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID)
+		}()
 
 		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
@@ -1945,7 +1977,9 @@ func TestVerificationHandler_RequestVouchVerification(t *testing.T) {
 
 		// Create verified membership
 		suite.addUserToRegion(user.ID, region.ID, false)
-		defer func() { _, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID) }()
+		defer func() {
+			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_regions WHERE user_id = ?", user.ID)
+		}()
 
 		bodyBytes := makeAddressPayload("123 Main St", "Portland", "OR", "97204")
 
@@ -2053,9 +2087,9 @@ func TestVerificationHandler_Vouch_FullyVerifiedRequired(t *testing.T) {
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@vouchfulltest.com'")
 
 	// Create users with specific verification flags
-	fullyVerifiedUser := suite.createTestUserWithFlags("full_verified", true, true)   // Both postcard and vouch verified
-	postcardOnlyUser := suite.createTestUserWithFlags("postcard_only", true, false)   // Postcard only
-	vouchOnlyUser := suite.createTestUserWithFlags("vouch_only", false, true)         // Vouch only
+	fullyVerifiedUser := suite.createTestUserWithFlags("full_verified", true, true) // Both postcard and vouch verified
+	postcardOnlyUser := suite.createTestUserWithFlags("postcard_only", true, false) // Postcard only
+	vouchOnlyUser := suite.createTestUserWithFlags("vouch_only", false, true)       // Vouch only
 	targetUser := suite.createTestUser("vouch_target_full", models.TierUnverified)
 	region := suite.createTestRegion("Test Full Vouch Region", models.RegionTypeCity, nil, fullyVerifiedUser.ID)
 
@@ -2415,7 +2449,7 @@ func TestVerificationHandler_PostcardVerification_RegionAssignment(t *testing.T)
 		defer cleanupHierarchy()
 
 		// Query regions containing the test coordinates
-		lat := 40.0  // Within all three nested test regions (rural Nevada)
+		lat := 40.0 // Within all three nested test regions (rural Nevada)
 		lng := -117.0
 
 		regions, err := suite.regionRepo.GetRegionsContainingPoint(context.Background(), lat, lng)
@@ -4048,4 +4082,3 @@ func TestGenerateVerificationCode_Length(t *testing.T) {
 		}
 	}
 }
-

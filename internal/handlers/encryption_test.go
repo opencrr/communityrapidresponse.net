@@ -18,11 +18,11 @@ import (
 
 // encryptionTestSuite holds shared test dependencies for encryption handler tests.
 type encryptionTestSuite struct {
-	handler         *EncryptionHandler
-	keyMock         sqlmock.Sqlmock
-	secretMock      sqlmock.Sqlmock
-	keyRepo         *database.EncryptionKeyRepository
-	secretRepo      *database.EncryptedSecretRepository
+	handler    *EncryptionHandler
+	keyMock    sqlmock.Sqlmock
+	secretMock sqlmock.Sqlmock
+	keyRepo    *database.EncryptionKeyRepository
+	secretRepo *database.EncryptedSecretRepository
 }
 
 // setupEncryptionTestSuite creates an EncryptionHandler backed by sqlmock databases.

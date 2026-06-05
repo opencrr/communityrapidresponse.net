@@ -43,9 +43,9 @@ func TestExtractDocumentedPaths(t *testing.T) {
 	}
 	got := extractDocumentedPaths(docs)
 	want := map[string]struct{}{
-		"/api/v1/regions/:id":       {},
-		"/api/v1/auth/login":        {},
-		"/api/v1/schools/:id/join":  {},
+		"/api/v1/regions/:id":      {},
+		"/api/v1/auth/login":       {},
+		"/api/v1/schools/:id/join": {},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("documented paths mismatch:\n got %v\nwant %v", keys(got), keys(want))
@@ -54,12 +54,12 @@ func TestExtractDocumentedPaths(t *testing.T) {
 
 func TestNormalizeDocPath(t *testing.T) {
 	cases := map[string]string{
-		"/api/v1/foo/:id":          "/api/v1/foo/:id",
-		"/api/v1/foo/{id}":         "/api/v1/foo/:id",
-		"/api/v1/foo/{user_id}":    "/api/v1/foo/:id",
-		"/api/v1/foo/:user_id":     "/api/v1/foo/:id",
-		"/api/v1/foo/":             "/api/v1/foo",
-		"/api/v1/foo,":             "/api/v1/foo",
+		"/api/v1/foo/:id":       "/api/v1/foo/:id",
+		"/api/v1/foo/{id}":      "/api/v1/foo/:id",
+		"/api/v1/foo/{user_id}": "/api/v1/foo/:id",
+		"/api/v1/foo/:user_id":  "/api/v1/foo/:id",
+		"/api/v1/foo/":          "/api/v1/foo",
+		"/api/v1/foo,":          "/api/v1/foo",
 	}
 	for in, want := range cases {
 		if got := normalizeDocPath(in); got != want {
@@ -140,10 +140,10 @@ func TestExtractDocumentedTables(t *testing.T) {
 func TestDiffTables_DetectsRenameDrift(t *testing.T) {
 	// Docs still list the pre-rename names; code reflects post-rename.
 	real := map[string]struct{}{
-		"users":                {},
-		"blocklist_proposals":  {},
-		"meshtastic_channels":  {},
-		"schema_migrations":    {}, // ignored
+		"users":               {},
+		"blocklist_proposals": {},
+		"meshtastic_channels": {},
+		"schema_migrations":   {}, // ignored
 	}
 	doc := map[string]struct{}{
 		"users":               {},
