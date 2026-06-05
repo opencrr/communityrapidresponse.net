@@ -69,7 +69,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	query := r.URL.Query().Get("q")
 	page, err := strconv.Atoi(r.URL.Query().Get("page"))
-	if err != nil || page < 1 || page > 1000000 {
+	if err != nil || page < 1 || page > 10000 {
 		page = 1
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

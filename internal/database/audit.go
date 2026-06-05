@@ -43,6 +43,7 @@ func (r *AuditRepository) Log(ctx context.Context, userID *string, action string
 	if userAgent != "" {
 		// Truncate user agent if too long
 		if len(userAgent) > 512 {
+			slog.DebugContext(ctx, "audit user_agent truncated", "original_length", len(userAgent))
 			userAgent = userAgent[:512]
 		}
 		uaPtr = &userAgent
