@@ -18,11 +18,12 @@ import (
 type category string
 
 const (
-	catAnnotation   category = "annotation"
-	catSize         category = "size"
-	catComplexity   category = "complexity"
-	catTestDebt     category = "test-debt"
-	catSecurityNote category = "security-note"
+	catAnnotation    category = "annotation"
+	catSize          category = "size"
+	catComplexity    category = "complexity"
+	catTestDebt      category = "test-debt"
+	catSecurityNote  category = "security-note"
+	catErrorHandling category = "error-handling"
 )
 
 type priority string
@@ -98,9 +99,11 @@ func main() {
 }
 
 var (
-	annotationRe = regexp.MustCompile(`(?i)//\s*(TODO|FIXME|XXX|HACK|DEPRECATED)\b[: ]?(.*)`)
-	funcDeclRe   = regexp.MustCompile(`^\s*func\b`)
-	skipRe       = regexp.MustCompile(`\bt\.Skip(Now)?\s*\(`)
+	annotationRe   = regexp.MustCompile(`(?i)//\s*(TODO|FIXME|XXX|HACK|DEPRECATED)\b[: ]?(.*)`)
+	funcDeclRe     = regexp.MustCompile(`^\s*func\b`)
+	skipRe         = regexp.MustCompile(`\bt\.Skip(Now)?\s*\(`)
+	discardedErrRe = regexp.MustCompile(`^\s*_\s*=\s*[A-Za-z_].*\(`)
+	barePanicRe    = regexp.MustCompile(`^\s*panic\(`)
 )
 
 // skipDirs lists directories we never scan.
@@ -200,6 +203,31 @@ func scanFile(relPath, content string, cfg config) []finding {
 				Tag:      "t.Skip",
 				Snippet:  snippet(line),
 			})
+		}
+
+		if !isTestFile {
+			if discardedErrRe.MatchString(line) {
+				out = append(out, finding{
+					File:     relPath,
+					Line:     ln,
+					Pkg:      pkg,
+					Category: catErrorHandling,
+					Priority: classifyErrorHandlingPriority(pkg),
+					Tag:      "discarded-error",
+					Snippet:  snippet(line),
+				})
+			}
+			if barePanicRe.MatchString(line) {
+				out = append(out, finding{
+					File:     relPath,
+					Line:     ln,
+					Pkg:      pkg,
+					Category: catErrorHandling,
+					Priority: classifyErrorHandlingPriority(pkg),
+					Tag:      "bare-panic",
+					Snippet:  snippet(line),
+				})
+			}
 		}
 	}
 
@@ -411,6 +439,13 @@ func classifyComplexityPriority(pkg string, isTest bool) priority {
 	return prMedium
 }
 
+func classifyErrorHandlingPriority(pkg string) priority {
+	if isSensitivePkg(pkg) {
+		return prHigh
+	}
+	return prMedium
+}
+
 func classifySkipPriority(pkg string) priority {
 	// Skipped tests in handlers/services indicate disabled coverage in core paths.
 	if strings.Contains(pkg, "handlers") || strings.Contains(pkg, "services") {
@@ -469,10 +504,11 @@ func renderMarkdown(fs []finding, highCount int) string {
 	b.WriteString("- `security-note` — `FIXME` / `HACK` / `XXX` comments, which historically flag risky behavior.\n")
 	b.WriteString("- `size` — files over 500 lines or functions over 80 lines.\n")
 	b.WriteString("- `complexity` — functions with brace nesting depth greater than 5.\n")
-	b.WriteString("- `test-debt` — `t.Skip` calls disabling coverage in `_test.go` files.\n\n")
+	b.WriteString("- `test-debt` — `t.Skip` calls disabling coverage in `_test.go` files.\n")
+	b.WriteString("- `error-handling` — discarded errors (`_ = call(...)`) and bare `panic(...)` outside `_test.go` files.\n\n")
 	b.WriteString("**Priorities**\n\n")
-	b.WriteString("- **HIGH** — `FIXME`/`HACK`/`XXX` in non-test code, deep nesting in security-sensitive packages (handlers, services, middleware, auth, security), and skipped tests in handlers/services.\n")
-	b.WriteString("- **MEDIUM** — `TODO` in core packages, oversized files, long functions in core packages, and `FIXME`/`HACK`/`XXX` in tests or mocks.\n")
+	b.WriteString("- **HIGH** — `FIXME`/`HACK`/`XXX` in non-test code, deep nesting in security-sensitive packages (handlers, services, middleware, auth, security), skipped tests in handlers/services, and discarded errors or bare panics in security-sensitive packages.\n")
+	b.WriteString("- **MEDIUM** — `TODO` in core packages, oversized files, long functions in core packages, `FIXME`/`HACK`/`XXX` in tests or mocks, and discarded errors or bare panics in non-sensitive packages.\n")
 	b.WriteString("- **LOW** — `TODO` in tests/mocks, `DEPRECATED` annotations, oversized or complex test code.\n\n")
 	b.WriteString("## Summary\n\n")
 	b.WriteString(renderSummaryTable(fs))
@@ -487,7 +523,7 @@ func renderMarkdown(fs []finding, highCount int) string {
 }
 
 func renderSummaryTable(fs []finding) string {
-	cats := []category{catAnnotation, catSecurityNote, catSize, catComplexity, catTestDebt}
+	cats := []category{catAnnotation, catSecurityNote, catSize, catComplexity, catTestDebt, catErrorHandling}
 
 	counts := map[category]map[priority]int{}
 	for _, c := range cats {
