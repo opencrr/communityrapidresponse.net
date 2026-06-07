@@ -92,6 +92,19 @@ This is a short summary of the controls in place. See [DESIGN.md](DESIGN.md) and
 - **Audit logging**: All administrative actions are written to an audit log with
   a 90-day retention.
 
+## Dependency Risk
+
+We run a defensive dependency audit (`just deps-scan`) against `go.mod`/`go.sum`
+using `govulncheck` and `go list -m -u all`. The most recent triaged snapshot —
+direct/indirect inventory, risk tiers, and a prioritized remediation list — is
+maintained in
+[docs/security/dependency-risk-report.md](docs/security/dependency-risk-report.md).
+Re-run the audit with:
+
+```bash
+just deps-scan
+```
+
 ## Coordinated Disclosure
 
 We support coordinated disclosure. Once a fix has been released and deployed, we

@@ -508,6 +508,24 @@ security:
     govulncheck ./...
     @echo "✅ Security scan complete"
 
+# Audit Go module dependencies for outdated versions and known CVEs.
+# See docs/security/dependency-risk-report.md for the latest triaged snapshot.
+deps-scan:
+    @echo "📦 Dependency risk scan"
+    @echo "======================="
+    @echo ""
+    @echo "→ go mod verify"
+    go mod verify
+    @echo ""
+    @echo "→ go list -m -u all  (outdated modules show [latest] in brackets)"
+    go list -m -u all
+    @echo ""
+    @command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
+    @echo "→ govulncheck ./..."
+    govulncheck ./...
+    @echo ""
+    @echo "✅ Dependency scan complete (triage in docs/security/dependency-risk-report.md)"
+
 # Verify module dependency integrity
 verify:
     @echo "🔍 Verifying module dependencies..."
