@@ -87,7 +87,8 @@ func (h *AuthHandler) checkAuthRateLimit(w http.ResponseWriter, r *http.Request,
 	}
 
 	if !allowed {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many requests. Please try again later.")
+		writeError(w, http.StatusTooManyRequests, "rate_limited",
+			"Too many requests from this address. Wait a few minutes before trying again.")
 		return false
 	}
 	return true
@@ -152,29 +153,39 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	var req models.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body could not be parsed as JSON")
 		return
 	}
 
-	// Validate request
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Username, email, and password are required")
+	// Validate request — name the missing field so the client can highlight it
+	switch {
+	case req.Username == "":
+		writeValidationError(w, "username", "Username is required")
+		return
+	case req.Email == "":
+		writeValidationError(w, "email", "Email is required")
+		return
+	case req.Password == "":
+		writeValidationError(w, "password", "Password is required")
 		return
 	}
 
 	if len(req.Password) < 12 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must be at least 12 characters")
+		writeValidationError(w, "password",
+			fmt.Sprintf("Password must be at least 12 characters (received %d)", len(req.Password)))
 		return
 	}
 
 	if len(req.Password) > 128 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
+		writeValidationError(w, "password",
+			fmt.Sprintf("Password must not exceed 128 characters (received %d)", len(req.Password)))
 		return
 	}
 
 	// Check for '+' alias in email (reject outright)
 	if services.ContainsEmailAlias(req.Email) {
-		writeError(w, http.StatusBadRequest, "validation_error", "Email aliases with '+' are not allowed")
+		writeValidationError(w, "email",
+			"Email aliases containing '+' are not allowed; use your primary address (e.g. you@example.com, not you+tag@example.com)")
 		return
 	}
 
@@ -182,10 +193,11 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	normalizedEmail, err := services.NormalizeEmail(req.Email)
 	if err != nil {
 		if errors.Is(err, services.ErrAliasedEmailNotAllowed) {
-			writeError(w, http.StatusBadRequest, "validation_error", "Email aliases with '+' are not allowed")
+			writeValidationError(w, "email",
+				"Email aliases containing '+' are not allowed; use your primary address (e.g. you@example.com, not you+tag@example.com)")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "validation_error", "Invalid email format")
+		writeValidationError(w, "email", "Email is not a valid address (e.g. you@example.com)")
 		return
 	}
 
@@ -264,13 +276,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body could not be parsed as JSON")
 		return
 	}
 
-	// Validate request
-	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Email or username and password are required")
+	// Validate request — name the missing field so the client can focus it
+	switch {
+	case req.Email == "":
+		writeValidationError(w, "email", "Email or username is required")
+		return
+	case req.Password == "":
+		writeValidationError(w, "password", "Password is required")
 		return
 	}
 
@@ -310,7 +326,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Check if account is locked
 	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
 		appSentry.IncrementCounter("auth.login_failure", 1, "reason", "account_locked")
-		writeError(w, http.StatusTooManyRequests, "account_locked", "Account is temporarily locked due to too many failed login attempts. Please try again later.")
+		writeError(w, http.StatusTooManyRequests, "account_locked",
+			"This account is temporarily locked after too many failed login attempts. Wait a short while and try again, or use 'Forgot password' to reset it.")
 		return
 	}
 
@@ -569,17 +586,20 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	claims, err := h.validateEmailVerificationToken(token)
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			writeError(w, http.StatusBadRequest, "expired_token", "Verification link has expired. Please request a new one.")
+			writeError(w, http.StatusBadRequest, "expired_token",
+				"This verification link has expired. Sign in and use 'Resend verification email' to receive a fresh link.")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid_token", "Invalid verification token")
+		writeError(w, http.StatusBadRequest, "invalid_token",
+			"This verification link is not valid. Check that you opened the full URL from the email, or request a new link from 'Resend verification email'.")
 		return
 	}
 
 	// Get the user
 	user, err := h.userRepo.GetByID(r.Context(), claims.UserID)
 	if errors.Is(err, database.ErrUserNotFound) {
-		writeError(w, http.StatusBadRequest, "invalid_token", "Invalid verification token")
+		writeError(w, http.StatusBadRequest, "invalid_token",
+			"This verification link is not valid. The account it references no longer exists — register again to get a new link.")
 		return
 	}
 	if err != nil {
@@ -674,18 +694,24 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.CurrentPassword == "" || req.NewPassword == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Current password and new password are required")
+	switch {
+	case req.CurrentPassword == "":
+		writeValidationError(w, "current_password", "Current password is required")
+		return
+	case req.NewPassword == "":
+		writeValidationError(w, "new_password", "New password is required")
 		return
 	}
 
 	if len(req.NewPassword) < 12 {
-		writeError(w, http.StatusBadRequest, "validation_error", "New password must be at least 12 characters")
+		writeValidationError(w, "new_password",
+			fmt.Sprintf("New password must be at least 12 characters (received %d)", len(req.NewPassword)))
 		return
 	}
 
 	if len(req.NewPassword) > 128 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
+		writeValidationError(w, "new_password",
+			fmt.Sprintf("New password must not exceed 128 characters (received %d)", len(req.NewPassword)))
 		return
 	}
 
@@ -865,18 +891,24 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Token == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Token and password are required")
+	switch {
+	case req.Token == "":
+		writeValidationError(w, "token", "Reset token is required")
+		return
+	case req.Password == "":
+		writeValidationError(w, "password", "New password is required")
 		return
 	}
 
 	if len(req.Password) < 12 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must be at least 12 characters")
+		writeValidationError(w, "password",
+			fmt.Sprintf("Password must be at least 12 characters (received %d)", len(req.Password)))
 		return
 	}
 
 	if len(req.Password) > 128 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must not exceed 128 characters")
+		writeValidationError(w, "password",
+			fmt.Sprintf("Password must not exceed 128 characters (received %d)", len(req.Password)))
 		return
 	}
 
@@ -893,11 +925,13 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	resetToken, err := h.passwordResetRepo.GetByTokenHash(r.Context(), tokenHash)
 	if err != nil {
 		if errors.Is(err, database.ErrResetTokenNotFound) || errors.Is(err, database.ErrResetTokenUsed) {
-			writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired reset token")
+			writeError(w, http.StatusBadRequest, "invalid_token",
+				"This reset link is not valid. It may have already been used or the URL was copied incorrectly — request a new one from 'Forgot password'.")
 			return
 		}
 		if errors.Is(err, database.ErrResetTokenExpired) {
-			writeError(w, http.StatusBadRequest, "expired_token", "This reset link has expired. Please request a new one.")
+			writeError(w, http.StatusBadRequest, "expired_token",
+				"This reset link has expired. Request a new one from 'Forgot password' to receive a fresh link.")
 			return
 		}
 		writeServerError(w, r, err, "Failed to validate reset token", "auth", "reset_password")
@@ -978,10 +1012,12 @@ func (h *AuthHandler) ValidateResetToken(w http.ResponseWriter, r *http.Request)
 	_, err := h.passwordResetRepo.GetByTokenHash(r.Context(), tokenHash)
 	if err != nil {
 		if errors.Is(err, database.ErrResetTokenExpired) {
-			writeError(w, http.StatusBadRequest, "expired_token", "This reset link has expired. Please request a new one.")
+			writeError(w, http.StatusBadRequest, "expired_token",
+				"This reset link has expired. Request a new one from 'Forgot password' to receive a fresh link.")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid_token", "Invalid or expired reset token")
+		writeError(w, http.StatusBadRequest, "invalid_token",
+			"This reset link is not valid. It may have already been used or the URL was copied incorrectly — request a new one from 'Forgot password'.")
 		return
 	}
 

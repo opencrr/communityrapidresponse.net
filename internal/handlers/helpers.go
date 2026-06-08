@@ -24,10 +24,14 @@ var (
 	errProposalMissingRegion      = errors.New("proposal has no associated region")
 )
 
-// ErrorResponse represents an error response
+// ErrorResponse represents an error response. Field and Details are optional
+// hints that clients can surface to users — Field names the input that caused
+// a validation_error, Details carries supplementary context where helpful.
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
+	Field   string `json:"field,omitempty"`
+	Details string `json:"details,omitempty"`
 }
 
 // writeJSON writes a JSON response
@@ -42,6 +46,16 @@ func writeError(w http.ResponseWriter, status int, errorCode, message string) {
 	writeJSON(w, status, ErrorResponse{
 		Error:   errorCode,
 		Message: message,
+	})
+}
+
+// writeValidationError writes a 400 validation_error response that names the
+// offending field so clients can attach the message to the right input.
+func writeValidationError(w http.ResponseWriter, field, message string) {
+	writeJSON(w, http.StatusBadRequest, ErrorResponse{
+		Error:   "validation_error",
+		Message: message,
+		Field:   field,
 	})
 }
 

@@ -16,6 +16,58 @@ func makeRepeatedByte(b byte, n int) []byte {
 }
 
 // =============================================================================
+// writeValidationError Tests
+// =============================================================================
+
+func TestWriteValidationError_PopulatesFieldAndOmitsDetails(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeValidationError(rec, "email", "Email is required")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Expected Content-Type application/json, got %q", ct)
+	}
+
+	// Decode into ErrorResponse to verify structured fields.
+	var resp ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if resp.Error != "validation_error" {
+		t.Errorf("Expected error=validation_error, got %q", resp.Error)
+	}
+	if resp.Field != "email" {
+		t.Errorf("Expected field=email, got %q", resp.Field)
+	}
+	if resp.Message != "Email is required" {
+		t.Errorf("Expected message='Email is required', got %q", resp.Message)
+	}
+	if resp.Details != "" {
+		t.Errorf("Expected details to be empty, got %q", resp.Details)
+	}
+}
+
+func TestWriteValidationError_OmitsEmptyFieldsInJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeValidationError(rec, "username", "Username is required")
+
+	// Decode into a generic map to confirm the JSON wire format omits empty
+	// optional fields (no "details" key in the payload).
+	var raw map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&raw); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	if _, present := raw["details"]; present {
+		t.Errorf("Expected 'details' to be omitted from JSON when empty, got %v", raw)
+	}
+	if raw["field"] != "username" {
+		t.Errorf("Expected field=username in JSON, got %v", raw["field"])
+	}
+}
+
+// =============================================================================
 // isValidUUID Tests
 // =============================================================================
 

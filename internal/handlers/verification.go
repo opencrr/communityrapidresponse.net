@@ -115,13 +115,15 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 
 	var req models.PostcardVerificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body could not be parsed as JSON")
 		return
 	}
 
 	// Validate address fields (region_id is now optional)
-	if req.Address.Line1 == "" || req.Address.City == "" || req.Address.State == "" || req.Address.PostalCode == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Complete address is required")
+	if missing := missingAddressFields(&req.Address); len(missing) > 0 {
+		writeValidationError(w, missing[0],
+			fmt.Sprintf("A complete address is required for postcard delivery. Missing: %s.",
+				strings.Join(missing, ", ")))
 		return
 	}
 
@@ -132,7 +134,8 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		return
 	}
 	if recentCount >= maxVerificationRequestsPer30Days {
-		writeError(w, http.StatusTooManyRequests, "rate_limit", "Maximum verification requests exceeded. Please wait before requesting again.")
+		writeError(w, http.StatusTooManyRequests, "rate_limit",
+			"You have used your 3 postcard verification requests for the last 30 days. Wait until an earlier request rolls off the 30-day window before requesting a new postcard.")
 		return
 	}
 
@@ -308,7 +311,8 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		})
 		if txErr != nil {
 			if errors.Is(txErr, database.ErrRateLimited) {
-				writeError(w, http.StatusTooManyRequests, "rate_limit", "Maximum verification requests exceeded. Please wait before requesting again.")
+				writeError(w, http.StatusTooManyRequests, "rate_limit",
+					"You have used your 3 postcard verification requests for the last 30 days. Wait until an earlier request rolls off the 30-day window before requesting a new postcard.")
 				return
 			}
 			writeServerError(w, r, txErr, "Failed to create verification request", "verification", "request_verification")
@@ -389,12 +393,13 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 
 	var req models.VerifyCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body could not be parsed as JSON")
 		return
 	}
 
 	if req.VerificationCode == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Verification code is required")
+		writeValidationError(w, "verification_code",
+			"Verification code is required (the 16-character code printed on your postcard)")
 		return
 	}
 
@@ -483,19 +488,22 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		if txErr != nil {
 			if errors.Is(txErr, database.ErrVerificationLocked) {
 				writeError(w, http.StatusTooManyRequests, "verification_code_locked",
-					"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+					"This verification code is locked after too many failed attempts. Request a new postcard from the verification page — the locked code can no longer be used.")
 				return
 			}
 			if errors.Is(txErr, database.ErrVerificationNotFound) {
-				writeError(w, http.StatusNotFound, "invalid_code", "Invalid verification code")
+				writeError(w, http.StatusNotFound, "invalid_code",
+					"That verification code does not match any postcard we have sent. Double-check the 16-character code from your postcard, or request a new one if you cannot find it.")
 				return
 			}
 			if txErr.Error() == "code_expired" {
-				writeError(w, http.StatusGone, "code_expired", "Verification code has expired. Please request a new postcard.")
+				writeError(w, http.StatusGone, "code_expired",
+					"This verification code has expired (codes are valid for 30 days). Request a new postcard from the verification page.")
 				return
 			}
 			if errors.Is(txErr, database.ErrAlreadyVerified) {
-				writeError(w, http.StatusConflict, "already_verified", "This code has already been used")
+				writeError(w, http.StatusConflict, "already_verified",
+					"This code has already been used. You are already postcard-verified — no further action is needed.")
 				return
 			}
 			writeServerError(w, r, txErr, "Failed to verify code", "verification", "confirm_verification")
@@ -506,7 +514,8 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		var err error
 		verificationReq, err = h.verificationRepo.GetByCode(r.Context(), code)
 		if errors.Is(err, database.ErrVerificationNotFound) {
-			writeError(w, http.StatusNotFound, "invalid_code", "Invalid verification code")
+			writeError(w, http.StatusNotFound, "invalid_code",
+				"That verification code does not match any postcard we have sent. Double-check the 16-character code from your postcard, or request a new one if you cannot find it.")
 			return
 		}
 		if err != nil {
@@ -516,7 +525,7 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 		// Check if code is already locked out
 		if verificationReq.FailedVerificationAttempts >= verificationCodeLockoutThreshold {
 			writeError(w, http.StatusTooManyRequests, "verification_code_locked",
-				"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+				"This verification code is locked after too many failed attempts. Request a new postcard from the verification page — the locked code can no longer be used.")
 			return
 		}
 		if verificationReq.UserID != claims.UserID {
@@ -524,18 +533,21 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 			newCount, incrementErr := h.verificationRepo.IncrementFailedVerificationAttempts(r.Context(), verificationReq.ID)
 			if incrementErr != nil || newCount >= verificationCodeLockoutThreshold {
 				writeError(w, http.StatusTooManyRequests, "verification_code_locked",
-					"Too many failed attempts. This verification code has been locked. Please request a new postcard.")
+					"This verification code is locked after too many failed attempts. Request a new postcard from the verification page — the locked code can no longer be used.")
 				return
 			}
-			writeError(w, http.StatusForbidden, "invalid_code", "Invalid verification code")
+			writeError(w, http.StatusForbidden, "invalid_code",
+				"That verification code does not match any postcard we have sent. Double-check the 16-character code from your postcard, or request a new one if you cannot find it.")
 			return
 		}
 		if time.Now().After(verificationReq.ExpiresAt) {
-			writeError(w, http.StatusGone, "code_expired", "Verification code has expired. Please request a new postcard.")
+			writeError(w, http.StatusGone, "code_expired",
+				"This verification code has expired (codes are valid for 30 days). Request a new postcard from the verification page.")
 			return
 		}
 		if verificationReq.Status == models.VerificationStatusVerified {
-			writeError(w, http.StatusConflict, "already_verified", "This code has already been used")
+			writeError(w, http.StatusConflict, "already_verified",
+				"This code has already been used. You are already postcard-verified — no further action is needed.")
 			return
 		}
 		if err := h.verificationRepo.MarkVerified(r.Context(), verificationReq.ID); err != nil {
@@ -643,8 +655,10 @@ func (h *VerificationHandler) RequestVouchVerification(w http.ResponseWriter, r 
 	}
 
 	// Validate address fields
-	if req.Address.Line1 == "" || req.Address.City == "" || req.Address.State == "" || req.Address.PostalCode == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Complete address is required (street, city, state, postal code)")
+	if missing := missingAddressFields(&req.Address); len(missing) > 0 {
+		writeValidationError(w, missing[0],
+			fmt.Sprintf("A complete address is required to identify your community. Missing: %s.",
+				strings.Join(missing, ", ")))
 		return
 	}
 
@@ -1840,6 +1854,25 @@ func (h *VerificationHandler) getOrCreateNeighborhoodRegion(ctx context.Context,
 	hasGeometry := neighborhoodBoundary.GeoJSON != ""
 	slog.Info("created neighborhood region", "name", newNeighborhood.Name, "region_id", newNeighborhood.ID, "has_geometry", hasGeometry)
 	return newNeighborhood.ID, nil
+}
+
+// missingAddressFields returns the snake_case names of required address fields
+// that are empty, in the same order they appear in the JSON payload.
+func missingAddressFields(addr *models.Address) []string {
+	var missing []string
+	if addr.Line1 == "" {
+		missing = append(missing, "line1")
+	}
+	if addr.City == "" {
+		missing = append(missing, "city")
+	}
+	if addr.State == "" {
+		missing = append(missing, "state")
+	}
+	if addr.PostalCode == "" {
+		missing = append(missing, "postal_code")
+	}
+	return missing
 }
 
 // generateVerificationCode generates a random 16-character hex code (8 bytes of entropy)
