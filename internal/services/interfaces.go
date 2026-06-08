@@ -19,12 +19,12 @@ type PostgridServiceInterface interface {
 
 // CityBoundary represents a city/place boundary polygon
 type CityBoundary struct {
-	PlaceID   string
-	Name      string
-	State     string
-	Type      string // "city", "county"
-	GeoJSON   string // GeoJSON Polygon string
-	Center    [2]float64
+	PlaceID string
+	Name    string
+	State   string
+	Type    string // "city", "county"
+	GeoJSON string // GeoJSON Polygon string
+	Center  [2]float64
 }
 
 // StateBoundary represents a state boundary polygon
@@ -50,7 +50,7 @@ type LocalityBoundary struct {
 	Name    string
 	State   string
 	City    string
-	GeoJSON string     // May be empty if no boundary available
+	GeoJSON string // May be empty if no boundary available
 	Center  [2]float64
 }
 
@@ -60,8 +60,8 @@ type NeighborhoodBoundary struct {
 	Name     string
 	State    string
 	City     string
-	Locality string     // Parent locality if applicable
-	GeoJSON  string     // Usually empty (~92% of neighborhoods lack polygon boundaries)
+	Locality string // Parent locality if applicable
+	GeoJSON  string // Usually empty (~92% of neighborhoods lack polygon boundaries)
 	Center   [2]float64
 }
 

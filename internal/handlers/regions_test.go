@@ -355,11 +355,11 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 	defer suite.cleanup([]string{user.ID}, []string{neighborhood.ID, city.ID})
 
 	testCases := []struct {
-		name        string
-		regionType  models.RegionType
-		parentID    *string
-		shouldFail  bool
-		errorMsg    string
+		name       string
+		regionType models.RegionType
+		parentID   *string
+		shouldFail bool
+		errorMsg   string
 	}{
 		{
 			name:       "city with city parent should fail",

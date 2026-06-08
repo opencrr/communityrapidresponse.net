@@ -86,11 +86,11 @@ func main() {
 	}
 
 	report := renderMarkdown(findings, highCount)
-	if err := os.MkdirAll(filepath.Dir(cfg.OutputPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.OutputPath), 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(cfg.OutputPath, []byte(report), 0o644); err != nil {
+	if err := os.WriteFile(cfg.OutputPath, []byte(report), 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "write failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -140,6 +140,7 @@ func scan(cfg config) ([]finding, error) {
 		if strings.HasPrefix(rel, filepath.Join("cmd", "tech-debt-classify")+string(filepath.Separator)) {
 			return nil
 		}
+		// #nosec G304,G122 -- path comes from filepath.WalkDir over the user-supplied repo root in this internal CLI tool; symlink TOCTOU is not a concern here.
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
@@ -552,6 +553,7 @@ func renderFindingsByPriority(b *strings.Builder, fs []finding) {
 // readBaselineHigh parses the HIGH baseline marker out of an existing report,
 // returning (count, true) if present.
 func readBaselineHigh(path string) (int, bool) {
+	// #nosec G304 -- path is the --out flag from this internal CLI tool, pointing at the existing report.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, false
@@ -562,6 +564,8 @@ func readBaselineHigh(path string) (int, bool) {
 		return 0, false
 	}
 	var n int
-	fmt.Sscanf(m[1], "%d", &n)
+	if _, err := fmt.Sscanf(m[1], "%d", &n); err != nil {
+		return 0, false
+	}
 	return n, true
 }

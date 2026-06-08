@@ -142,14 +142,14 @@ type MockMapboxService struct {
 	mu sync.Mutex
 
 	// Control mock behavior - custom functions for fine-grained control
-	GeocodeAddressFunc            func(ctx context.Context, address *models.Address) (*services.GeocodeResult, error)
-	ReverseGeocodeFunc            func(ctx context.Context, lat, lng float64) (*services.GeocodeResult, error)
-	GetCityBoundaryFunc           func(ctx context.Context, lat, lng float64, geocodeResult *services.GeocodeResult, address *models.Address) (*services.CityBoundary, error)
-	GetStateBoundaryFunc          func(ctx context.Context, stateName string, lat, lng float64) (*services.StateBoundary, error)
-	GetCountyBoundaryFunc         func(ctx context.Context, countyName, stateName string, lat, lng float64) (*services.CountyBoundary, error)
-	GetCountyForCoordinatesFunc   func(ctx context.Context, lat, lng float64, stateName string) (*services.CountyBoundary, error)
-	GetLocalityBoundaryFunc       func(ctx context.Context, localityName, cityName, stateName string, lat, lng float64) (*services.LocalityBoundary, error)
-	GetNeighborhoodBoundaryFunc   func(ctx context.Context, neighborhoodName, localityName, cityName, stateName string, lat, lng float64) (*services.NeighborhoodBoundary, error)
+	GeocodeAddressFunc          func(ctx context.Context, address *models.Address) (*services.GeocodeResult, error)
+	ReverseGeocodeFunc          func(ctx context.Context, lat, lng float64) (*services.GeocodeResult, error)
+	GetCityBoundaryFunc         func(ctx context.Context, lat, lng float64, geocodeResult *services.GeocodeResult, address *models.Address) (*services.CityBoundary, error)
+	GetStateBoundaryFunc        func(ctx context.Context, stateName string, lat, lng float64) (*services.StateBoundary, error)
+	GetCountyBoundaryFunc       func(ctx context.Context, countyName, stateName string, lat, lng float64) (*services.CountyBoundary, error)
+	GetCountyForCoordinatesFunc func(ctx context.Context, lat, lng float64, stateName string) (*services.CountyBoundary, error)
+	GetLocalityBoundaryFunc     func(ctx context.Context, localityName, cityName, stateName string, lat, lng float64) (*services.LocalityBoundary, error)
+	GetNeighborhoodBoundaryFunc func(ctx context.Context, neighborhoodName, localityName, cityName, stateName string, lat, lng float64) (*services.NeighborhoodBoundary, error)
 
 	// Track calls for assertions
 	GeocodeAddressCalls []GeocodeAddressCall

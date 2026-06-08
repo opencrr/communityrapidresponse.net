@@ -94,10 +94,10 @@ func (s *PostgridService) ValidateAddress(ctx context.Context, address *models.A
 	if s.addverAPIKey == "" {
 		// Return mock result for development
 		return &AddressValidationResult{
-			IsDeliverable:  true,
-			Deliverability: "deliverable",
-			IsPOBox:        isPOBoxAddress(address.Line1),
-			IsCMRA:         false,
+			IsDeliverable:       true,
+			Deliverability:      "deliverable",
+			IsPOBox:             isPOBoxAddress(address.Line1),
+			IsCMRA:              false,
 			StandardizedAddress: address,
 		}, nil
 	}
@@ -146,16 +146,16 @@ func (s *PostgridService) ValidateAddress(ctx context.Context, address *models.A
 	var apiResp struct {
 		Status string `json:"status"`
 		Data   struct {
-			Status            string `json:"status"` // "verified", "corrected", "failed"
-			Line1             string `json:"line1"`
-			Line2             string `json:"line2"`
-			City              string `json:"city"`
-			ProvinceOrState   string `json:"provinceOrState"`
-			PostalOrZip       string `json:"postalOrZip"`
-			Country           string `json:"country"`
-			AddressType       string `json:"addressType"`
-			CMRA              bool   `json:"cmra"`
-			Errors            map[string][]string `json:"errors"`
+			Status          string              `json:"status"` // "verified", "corrected", "failed"
+			Line1           string              `json:"line1"`
+			Line2           string              `json:"line2"`
+			City            string              `json:"city"`
+			ProvinceOrState string              `json:"provinceOrState"`
+			PostalOrZip     string              `json:"postalOrZip"`
+			Country         string              `json:"country"`
+			AddressType     string              `json:"addressType"`
+			CMRA            bool                `json:"cmra"`
+			Errors          map[string][]string `json:"errors"`
 		} `json:"data"`
 	}
 

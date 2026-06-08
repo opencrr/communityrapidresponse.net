@@ -63,31 +63,31 @@ type CreateReportResponse struct {
 
 // ReportSummary represents a report in list views
 type ReportSummary struct {
-	ID               string    `json:"id"`
-	ReportedUser     string    `json:"reported_user"`
-	ReportedUserID   string    `json:"reported_user_id"`
-	ScopeType        string    `json:"scope_type"`
-	ScopeName        string    `json:"scope_name"`
-	ScopeID          string    `json:"scope_id"`
-	Reason           string    `json:"reason"`
-	Status           string    `json:"status"`
-	ReportCount      int       `json:"report_count"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	ReportedUser   string    `json:"reported_user"`
+	ReportedUserID string    `json:"reported_user_id"`
+	ScopeType      string    `json:"scope_type"`
+	ScopeName      string    `json:"scope_name"`
+	ScopeID        string    `json:"scope_id"`
+	Reason         string    `json:"reason"`
+	Status         string    `json:"status"`
+	ReportCount    int       `json:"report_count"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ReportDetailResponse represents the full detail of a report
 type ReportDetailResponse struct {
 	ID                  string     `json:"id"`
-	ReporterUsername     string     `json:"reporter_username"`
+	ReporterUsername    string     `json:"reporter_username"`
 	ReportedUserID      string     `json:"reported_user_id"`
-	ReportedUsername     string     `json:"reported_username"`
+	ReportedUsername    string     `json:"reported_username"`
 	ScopeType           string     `json:"scope_type"`
 	ScopeID             string     `json:"scope_id"`
 	ScopeName           string     `json:"scope_name"`
 	Reason              string     `json:"reason"`
 	Details             *string    `json:"details,omitempty"`
 	Status              string     `json:"status"`
-	ResolvedByUsername   *string    `json:"resolved_by_username,omitempty"`
+	ResolvedByUsername  *string    `json:"resolved_by_username,omitempty"`
 	ResolutionNote      *string    `json:"resolution_note,omitempty"`
 	BlocklistProposalID *string    `json:"blocklist_proposal_id,omitempty"`
 	CreatedAt           time.Time  `json:"created_at"`

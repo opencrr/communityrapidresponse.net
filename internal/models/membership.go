@@ -68,17 +68,17 @@ type RespondToInvitationRequest struct {
 
 // MembershipRequestResponse represents the response after creating/voting on a request
 type MembershipRequestResponse struct {
-	RequestID     string    `json:"request_id"`
-	UserID        string    `json:"user_id"`
-	RegionID      string    `json:"region_id"`
-	RequestType   string    `json:"request_type"`
-	Status        string    `json:"status"`
-	VotesNeeded   int       `json:"votes_needed"`
-	CurrentVotes  int       `json:"current_votes"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	YourVote      *bool     `json:"your_vote,omitempty"`
-	MembershipGranted bool  `json:"membership_granted,omitempty"`
-	Message       string    `json:"message,omitempty"`
+	RequestID         string    `json:"request_id"`
+	UserID            string    `json:"user_id"`
+	RegionID          string    `json:"region_id"`
+	RequestType       string    `json:"request_type"`
+	Status            string    `json:"status"`
+	VotesNeeded       int       `json:"votes_needed"`
+	CurrentVotes      int       `json:"current_votes"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	YourVote          *bool     `json:"your_vote,omitempty"`
+	MembershipGranted bool      `json:"membership_granted,omitempty"`
+	Message           string    `json:"message,omitempty"`
 }
 
 // MembershipRequestListResponse represents the response for listing membership requests
@@ -88,39 +88,39 @@ type MembershipRequestListResponse struct {
 
 // MembershipRequestSummary represents a summary of a membership request for listings
 type MembershipRequestSummary struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"user_id"`
-	Username     string    `json:"username"`
-	RegionID     string    `json:"region_id"`
-	RegionName   string    `json:"region_name"`
-	RequestType  string    `json:"request_type"`
-	Status       string    `json:"status"`
-	Votes        int       `json:"votes"`
-	VotesNeeded  int       `json:"votes_needed"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Username    string    `json:"username"`
+	RegionID    string    `json:"region_id"`
+	RegionName  string    `json:"region_name"`
+	RequestType string    `json:"request_type"`
+	Status      string    `json:"status"`
+	Votes       int       `json:"votes"`
+	VotesNeeded int       `json:"votes_needed"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // MembershipRequestDetailResponse represents full request details
 type MembershipRequestDetailResponse struct {
-	ID               string                     `json:"id"`
-	UserID           string                     `json:"user_id"`
-	Username         string                     `json:"username"`
-	RegionID         string                     `json:"region_id"`
-	RegionName       string                     `json:"region_name"`
-	ParentRegionID   string                     `json:"parent_region_id"`
-	ParentRegionName string                     `json:"parent_region_name"`
-	RequestType      string                     `json:"request_type"`
-	InitiatedBy      ProposalUser               `json:"initiated_by"`
-	Status           string                     `json:"status"`
-	VotesNeeded      int                        `json:"votes_needed"`
-	CurrentVotes     int                        `json:"current_votes"`
-	Votes            []MembershipVoteDetail     `json:"votes"`
-	CreatedAt        time.Time                  `json:"created_at"`
-	ExpiresAt        time.Time                  `json:"expires_at"`
-	ResolvedAt       *time.Time                 `json:"resolved_at,omitempty"`
-	CanVote          bool                       `json:"can_vote"`
-	HasVoted         bool                       `json:"has_voted"`
+	ID               string                 `json:"id"`
+	UserID           string                 `json:"user_id"`
+	Username         string                 `json:"username"`
+	RegionID         string                 `json:"region_id"`
+	RegionName       string                 `json:"region_name"`
+	ParentRegionID   string                 `json:"parent_region_id"`
+	ParentRegionName string                 `json:"parent_region_name"`
+	RequestType      string                 `json:"request_type"`
+	InitiatedBy      ProposalUser           `json:"initiated_by"`
+	Status           string                 `json:"status"`
+	VotesNeeded      int                    `json:"votes_needed"`
+	CurrentVotes     int                    `json:"current_votes"`
+	Votes            []MembershipVoteDetail `json:"votes"`
+	CreatedAt        time.Time              `json:"created_at"`
+	ExpiresAt        time.Time              `json:"expires_at"`
+	ResolvedAt       *time.Time             `json:"resolved_at,omitempty"`
+	CanVote          bool                   `json:"can_vote"`
+	HasVoted         bool                   `json:"has_voted"`
 }
 
 // MembershipVoteDetail represents a vote with user details

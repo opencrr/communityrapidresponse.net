@@ -32,9 +32,9 @@ const (
 )
 
 type report struct {
-	check                 string
-	documentedButMissing  []string
-	realButUndocumented   []string
+	check                string
+	documentedButMissing []string
+	realButUndocumented  []string
 }
 
 func (r report) hasDrift() bool {
@@ -42,21 +42,21 @@ func (r report) hasDrift() bool {
 }
 
 func (r report) print(w *os.File) {
-	fmt.Fprintf(w, "== %s ==\n", r.check)
+	_, _ = fmt.Fprintf(w, "== %s ==\n", r.check)
 	if !r.hasDrift() {
-		fmt.Fprintln(w, "  no drift detected")
+		_, _ = fmt.Fprintln(w, "  no drift detected")
 		return
 	}
 	if len(r.documentedButMissing) > 0 {
-		fmt.Fprintln(w, "  documented but missing in code:")
+		_, _ = fmt.Fprintln(w, "  documented but missing in code:")
 		for _, s := range r.documentedButMissing {
-			fmt.Fprintf(w, "    - %s\n", s)
+			_, _ = fmt.Fprintf(w, "    - %s\n", s)
 		}
 	}
 	if len(r.realButUndocumented) > 0 {
-		fmt.Fprintln(w, "  in code but undocumented:")
+		_, _ = fmt.Fprintln(w, "  in code but undocumented:")
 		for _, s := range r.realButUndocumented {
-			fmt.Fprintf(w, "    - %s\n", s)
+			_, _ = fmt.Fprintf(w, "    - %s\n", s)
 		}
 	}
 }
@@ -78,6 +78,7 @@ func main() {
 		os.Exit(exitFailure)
 	}
 
+	// #nosec G304 -- root is a CLI-controlled flag in this internal doc-drift tool.
 	routerSrc, err := os.ReadFile(filepath.Join(root, "internal", "handlers", "router.go"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "doc-drift: %v\n", err)
@@ -110,6 +111,7 @@ func main() {
 func loadDocs(root string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, name := range []string{"CLAUDE.md", "DESIGN.md", "README.md"} {
+		// #nosec G304 -- root is a CLI-controlled flag, name is a hardcoded literal.
 		b, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -131,6 +133,7 @@ func loadMigrations(dir string) ([]string, error) {
 	sort.Strings(matches)
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
+		// #nosec G304 -- m is from filepath.Glob over the CLI-supplied migrations dir in this internal tool.
 		b, err := os.ReadFile(m)
 		if err != nil {
 			return nil, err
