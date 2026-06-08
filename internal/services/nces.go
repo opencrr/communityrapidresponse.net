@@ -69,8 +69,10 @@ type NCESServiceInterface interface {
 
 // NCESService handles NCES ArcGIS API interactions
 type NCESService struct {
-	client  *http.Client
-	baseURL string
+	client              *http.Client
+	baseURL             string
+	districtBaseURL     string
+	districtBoundaryURL string
 }
 
 // Compile-time assertion that NCESService implements NCESServiceInterface
@@ -82,7 +84,9 @@ func NewNCESService() *NCESService {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		baseURL: ncesDefaultBaseURL,
+		baseURL:             ncesDefaultBaseURL,
+		districtBaseURL:     ncesDistrictBaseURL,
+		districtBoundaryURL: ncesDistrictBoundaryBaseURL,
 	}
 }
 
@@ -157,12 +161,12 @@ func (s *NCESService) fetchSchools(ctx context.Context, whereClause string, offs
 
 // fetchDistricts is the internal method for district queries.
 func (s *NCESService) fetchDistricts(ctx context.Context, whereClause string, offset, limit int) ([]NCESDistrict, int, error) {
-	totalCount, err := s.fetchCount(ctx, ncesDistrictBaseURL, whereClause)
+	totalCount, err := s.fetchCount(ctx, s.districtBaseURL, whereClause)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch district count: %w", err)
 	}
 
-	records, err := s.fetchPage(ctx, ncesDistrictBaseURL, whereClause, ncesDistrictOutFields, offset, limit)
+	records, err := s.fetchPage(ctx, s.districtBaseURL, whereClause, ncesDistrictOutFields, offset, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch districts: %w", err)
 	}
@@ -227,7 +231,7 @@ func (s *NCESService) FetchDistrictBoundary(ctx context.Context, geoid string) (
 	params.Set("outSR", "4326")
 	params.Set("f", "geojson")
 
-	requestURL := ncesDistrictBoundaryBaseURL + "?" + params.Encode()
+	requestURL := s.districtBoundaryURL + "?" + params.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
