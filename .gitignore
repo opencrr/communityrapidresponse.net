@@ -64,6 +64,9 @@ build-errors.log
 # Compiled seed schools binary
 /seed-schools
 
+# Compiled seed fixtures binary
+/seed-fixtures
+
 # Security audit (sensitive - never commit)
 SECURITY_AUDIT.md
 

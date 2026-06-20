@@ -48,6 +48,7 @@ func TestCSRFProtection_SetsCookieOnGET(t *testing.T) {
 
 	if csrfCookie == nil {
 		t.Fatal("expected csrf_token cookie to be set")
+		return
 	}
 
 	if csrfCookie.HttpOnly {
@@ -244,6 +245,7 @@ func TestCSRFProtection_SecureCookieFlag(t *testing.T) {
 
 	if csrfCookie == nil {
 		t.Fatal("expected csrf_token cookie to be set")
+		return
 	}
 
 	if !csrfCookie.Secure {

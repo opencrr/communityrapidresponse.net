@@ -49,6 +49,12 @@ func validateStruct(s interface{}) string {
 	return "Invalid request"
 }
 
+// isUsernameChar reports whether c is allowed in a username: ASCII letters,
+// digits, or underscore.
+func isUsernameChar(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
 // isValidHTTPURL reports whether rawURL is a well-formed absolute http(s) URL.
 // User-supplied resource/channel URLs are rendered into href attributes on the
 // frontend, so non-http(s) schemes (notably javascript:) must be rejected at the
@@ -82,11 +88,9 @@ func formatFieldError(fe validator.FieldError) string {
 	}
 }
 
-// Sentinel errors for configuration-level issues (no runtime err variable available).
-var (
-	errPasswordResetNotConfigured = errors.New("password reset not configured")
-	errProposalMissingRegion      = errors.New("proposal has no associated region")
-)
+// errPasswordResetNotConfigured is a sentinel for the config-level case where
+// password reset has no runtime error value available.
+var errPasswordResetNotConfigured = errors.New("password reset not configured")
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {

@@ -164,7 +164,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Username format: letters, numbers, underscores only
 	for _, c := range req.Username {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+		if !isUsernameChar(c) {
 			writeError(w, http.StatusBadRequest, "validation_error", "Username must contain only letters, numbers, and underscores")
 			return
 		}

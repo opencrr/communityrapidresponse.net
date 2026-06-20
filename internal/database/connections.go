@@ -274,7 +274,7 @@ func (r *ConnectionRepository) formConnection(ctx context.Context, tx *sql.Tx, p
 	if err != nil {
 		return "", fmt.Errorf("get accepted groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groupIDs []string
 	for rows.Next() {
@@ -317,7 +317,7 @@ func (r *ConnectionRepository) expandConnection(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return fmt.Errorf("find new groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var newGroupIDs []string
 	for rows.Next() {
@@ -357,7 +357,7 @@ func (r *ConnectionRepository) loadProposalGroups(ctx context.Context, tx *sql.T
 	if err != nil {
 		return nil, fmt.Errorf("load proposal groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.ConnectionProposalGroup
 	for rows.Next() {
@@ -382,7 +382,7 @@ func (r *ConnectionRepository) ListConnectionsForGroup(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("list connections for group: %w", err)
 	}
-	defer connectionRows.Close()
+	defer func() { _ = connectionRows.Close() }()
 
 	var connections []models.ConnectionWithDetails
 	for connectionRows.Next() {
@@ -392,7 +392,7 @@ func (r *ConnectionRepository) ListConnectionsForGroup(ctx context.Context, grou
 		}
 		connections = append(connections, cwd)
 	}
-	if err = connectionRows.Err(); err != nil {
+	if err := connectionRows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -443,7 +443,7 @@ func (r *ConnectionRepository) getConnectionMembers(ctx context.Context, connect
 	if err != nil {
 		return nil, fmt.Errorf("get connection members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var members []models.ConnectionMemberGroup
 	for rows.Next() {
@@ -527,7 +527,7 @@ func (r *ConnectionRepository) InviteToConnection(ctx context.Context, connectio
 		if queryErr != nil {
 			return fmt.Errorf("get existing members: %w", queryErr)
 		}
-		defer memberRows.Close()
+		defer func() { _ = memberRows.Close() }()
 
 		var existingMemberIDs []string
 		for memberRows.Next() {
@@ -649,7 +649,7 @@ func (r *ConnectionRepository) CheckUnanimousBlock(ctx context.Context, connecti
 	if err != nil {
 		return false, fmt.Errorf("get other members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var otherGroupIDs []string
 	for rows.Next() {
@@ -659,7 +659,7 @@ func (r *ConnectionRepository) CheckUnanimousBlock(ctx context.Context, connecti
 		}
 		otherGroupIDs = append(otherGroupIDs, otherGroupID)
 	}
-	if err = rows.Err(); err != nil {
+	if err := rows.Err(); err != nil {
 		return false, err
 	}
 
@@ -697,7 +697,7 @@ func (r *ConnectionRepository) ListPendingProposalsForGroup(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("list pending proposals: %w", err)
 	}
-	defer proposalRows.Close()
+	defer func() { _ = proposalRows.Close() }()
 
 	var proposals []models.ConnectionProposalWithGroups
 	for proposalRows.Next() {
@@ -709,7 +709,7 @@ func (r *ConnectionRepository) ListPendingProposalsForGroup(ctx context.Context,
 		}
 		proposals = append(proposals, p)
 	}
-	if err = proposalRows.Err(); err != nil {
+	if err := proposalRows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -727,12 +727,12 @@ func (r *ConnectionRepository) ListPendingProposalsForGroup(ctx context.Context,
 		for groupRows.Next() {
 			var g models.ConnectionProposalGroup
 			if scanErr := groupRows.Scan(&g.ID, &g.ProposalID, &g.GroupID, &g.Status, &g.RespondedAt); scanErr != nil {
-				groupRows.Close()
+				_ = groupRows.Close()
 				return nil, fmt.Errorf("scan proposal group: %w", scanErr)
 			}
 			groups = append(groups, g)
 		}
-		groupRows.Close()
+		_ = groupRows.Close()
 		if rowsErr := groupRows.Err(); rowsErr != nil {
 			return nil, rowsErr
 		}
@@ -848,7 +848,7 @@ func (r *ConnectionRepository) ProposeSignalChat(ctx context.Context, connection
 		if queryErr != nil {
 			return fmt.Errorf("get member groups: %w", queryErr)
 		}
-		defer memberRows.Close()
+		defer func() { _ = memberRows.Close() }()
 
 		var memberGroupIDs []string
 		for memberRows.Next() {
@@ -1067,7 +1067,7 @@ func (r *ConnectionRepository) ListConnectionSignalGroups(ctx context.Context, c
 	if err != nil {
 		return nil, fmt.Errorf("list connection signal groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []*models.SignalGroup
 	for rows.Next() {
@@ -1103,7 +1103,7 @@ func (r *ConnectionRepository) ListChatProposals(ctx context.Context, connection
 	if err != nil {
 		return nil, fmt.Errorf("list chat proposals: %w", err)
 	}
-	defer proposalRows.Close()
+	defer func() { _ = proposalRows.Close() }()
 
 	var proposals []models.ConnectionChatProposalWithVotes
 	for proposalRows.Next() {
@@ -1134,12 +1134,12 @@ func (r *ConnectionRepository) ListChatProposals(ctx context.Context, connection
 		for voteRows.Next() {
 			var v models.ConnectionChatProposalVote
 			if scanErr := voteRows.Scan(&v.ID, &v.ProposalID, &v.GroupID, &v.Status, &v.RespondedAt); scanErr != nil {
-				voteRows.Close()
+				_ = voteRows.Close()
 				return nil, fmt.Errorf("scan vote: %w", scanErr)
 			}
 			votes = append(votes, v)
 		}
-		voteRows.Close()
+		_ = voteRows.Close()
 		if rowsErr := voteRows.Err(); rowsErr != nil {
 			return nil, rowsErr
 		}
@@ -1179,7 +1179,7 @@ func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sq
 	if err != nil {
 		return nil, fmt.Errorf("load chat proposal votes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var votes []models.ConnectionChatProposalVote
 	for rows.Next() {
@@ -1291,7 +1291,7 @@ func (r *ConnectionRepository) ListConnectionResources(ctx context.Context, conn
 	if err != nil {
 		return nil, fmt.Errorf("list connection resources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var resources []models.ConnectionSharedResourceWithDetails
 	for rows.Next() {

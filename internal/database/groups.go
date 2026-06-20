@@ -271,7 +271,7 @@ func (r *GroupRepository) ListByUser(ctx context.Context, userID string) ([]mode
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.GroupWithDetails
 	for rows.Next() {
@@ -326,7 +326,7 @@ func (r *GroupRepository) ListByRegion(ctx context.Context, regionID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.GroupWithDetails
 	for rows.Next() {
@@ -445,7 +445,7 @@ func (r *GroupRepository) BrowseByRegion(ctx context.Context, regionID string, i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.GroupWithDetails
 	for rows.Next() {
@@ -486,7 +486,7 @@ func (r *GroupRepository) BrowseAll(ctx context.Context) ([]models.GroupWithDeta
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.GroupWithDetails
 	for rows.Next() {
@@ -628,7 +628,7 @@ func (r *GroupRepository) GetMembers(ctx context.Context, groupID string) ([]mod
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var members []models.GroupMemberWithUser
 	for rows.Next() {
@@ -686,7 +686,7 @@ func (r *GroupRepository) GetTopicTags(ctx context.Context, groupID string) ([]s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tags []string
 	for rows.Next() {
@@ -721,7 +721,7 @@ func (r *GroupRepository) GetRegions(ctx context.Context, groupID string) ([]mod
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var regions []models.RegionSummary
 	for rows.Next() {
@@ -798,7 +798,7 @@ func (r *GroupRepository) GetSignalGroups(ctx context.Context, groupID string) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var signalGroups []models.SignalGroupPublic
 	for rows.Next() {
@@ -945,7 +945,7 @@ func (r *GroupRepository) ListInviteLinks(ctx context.Context, groupID string) (
 	if err != nil {
 		return nil, fmt.Errorf("list invite links: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var links []models.GroupInviteLink
 	for rows.Next() {
@@ -1032,7 +1032,7 @@ func (r *GroupRepository) ListPendingInvitationsForUser(ctx context.Context, use
 	if err != nil {
 		return nil, fmt.Errorf("list pending invitations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var invitations []models.GroupInvitationWithDetails
 	for rows.Next() {
@@ -1064,7 +1064,7 @@ func (r *GroupRepository) ListPendingInvitationsForGroup(ctx context.Context, gr
 	if err != nil {
 		return nil, fmt.Errorf("list pending invitations for group: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var invitations []models.GroupInvitation
 	for rows.Next() {
@@ -1351,7 +1351,7 @@ func (r *GroupRepository) ListTrustVouchesForUser(ctx context.Context, groupID, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var vouches []models.GroupTrustVouch
 	for rows.Next() {
@@ -1457,7 +1457,7 @@ func (r *GroupRepository) ListResources(ctx context.Context, groupID string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list group resources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var resources []models.GroupResource
 	for rows.Next() {
@@ -1593,7 +1593,7 @@ func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string)
 	if err != nil {
 		return nil, fmt.Errorf("list blocked groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var groups []models.Group
 	for rows.Next() {
@@ -1630,7 +1630,7 @@ func (r *GroupRepository) DeriveRegionLabel(ctx context.Context, groupID string)
 	if err != nil {
 		return "", fmt.Errorf("query group regions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type regionInfo struct {
 		id             string
@@ -1813,7 +1813,7 @@ func (r *GroupRepository) GetPosting(ctx context.Context, groupID string) (*mode
 	if err != nil {
 		return nil, fmt.Errorf("get posting tags: %w", err)
 	}
-	defer tagRows.Close()
+	defer func() { _ = tagRows.Close() }()
 
 	var tags []string
 	for tagRows.Next() {
@@ -1895,7 +1895,7 @@ func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, b
 	if err != nil {
 		return nil, fmt.Errorf("browse postings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var postings []models.TopicBoardPostingWithTags
 	for rows.Next() {
@@ -1927,12 +1927,12 @@ func (r *GroupRepository) BrowsePostings(ctx context.Context, topicTag string, b
 		for tagRows.Next() {
 			var tag string
 			if err := tagRows.Scan(&tag); err != nil {
-				tagRows.Close()
+				_ = tagRows.Close()
 				return nil, fmt.Errorf("scan browse posting tag: %w", err)
 			}
 			tags = append(tags, tag)
 		}
-		tagRows.Close()
+		_ = tagRows.Close()
 		if err := tagRows.Err(); err != nil {
 			return nil, fmt.Errorf("iterate browse posting tags: %w", err)
 		}

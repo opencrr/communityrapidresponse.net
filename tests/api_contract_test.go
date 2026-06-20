@@ -199,10 +199,6 @@ func (s *APIContractTestSuite) addUserToRegion(userID, regionID string, isAdmin 
 	}
 }
 
-func (s *APIContractTestSuite) cleanupVouches(voucherID, vouchedID string) {
-	_, _ = s.db.Exec("DELETE FROM vouches WHERE voucher_user_id = ? AND vouched_user_id = ?", voucherID, vouchedID)
-}
-
 func (s *APIContractTestSuite) generateToken(user *models.User) string {
 	token, err := s.jwtAuth.GenerateToken(user)
 	if err != nil {

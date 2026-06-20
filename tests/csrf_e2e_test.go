@@ -295,6 +295,7 @@ func TestCSRFIntegration_CookieAttributes(t *testing.T) {
 
 	if csrfCookie == nil {
 		t.Fatal("expected csrf_token cookie in response")
+		return
 	}
 
 	if csrfCookie.HttpOnly {

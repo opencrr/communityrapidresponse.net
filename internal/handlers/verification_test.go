@@ -128,48 +128,6 @@ func (s *verificationTestSuite) createVerificationRequest(userID, regionID strin
 	return req
 }
 
-func (s *verificationTestSuite) addUserToRegion(userID, regionID string, isAdmin bool) {
-	id := uuid.New().String()
-	query := `INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (?, ?, ?, ?, 'verified', ?)`
-	_, err := s.db.ExecContext(context.Background(), query, id, userID, regionID, isAdmin, time.Now().UTC())
-	if err != nil {
-		s.t.Fatalf("Failed to add user to region: %v", err)
-	}
-}
-
-func (s *verificationTestSuite) createTestUserWithFlags(username string, postcardVerified, vouchVerified bool) *models.User {
-	tier := models.TierUnverified
-	if postcardVerified && vouchVerified {
-		tier = models.TierPostcard // Has both, will be treated as admin
-	} else if postcardVerified {
-		tier = models.TierPostcard
-	} else if vouchVerified {
-		tier = models.TierVouched
-	}
-
-	user := &models.User{
-		Username:         username,
-		Email:            username + "@verificationtest.com",
-		PasswordHash:     "$2a$12$test.hash.for.testing.only",
-		VerificationTier: tier,
-		PostcardVerified: postcardVerified,
-		VouchVerified:    vouchVerified,
-	}
-	if err := s.userRepo.Create(context.Background(), user); err != nil {
-		s.t.Fatalf("Failed to create test user: %v", err)
-	}
-
-	// Update the flags directly in case Create doesn't set them
-	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE users SET postcard_verified = ?, vouch_verified = ? WHERE id = ?",
-		postcardVerified, vouchVerified, user.ID)
-	if err != nil {
-		s.t.Fatalf("Failed to update user flags: %v", err)
-	}
-
-	return user
-}
-
 func (s *verificationTestSuite) cleanup(userIDs ...string) {
 	ctx := context.Background()
 	for _, id := range userIDs {

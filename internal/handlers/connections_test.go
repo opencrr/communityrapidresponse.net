@@ -535,6 +535,7 @@ func TestConnectionHandler_Leave_Success(t *testing.T) {
 		t.Fatal("Expected connection to be formed")
 	}
 	connectionID := *result.ConnectionID
+	defer s.cleanup(nil, nil, nil, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/"+connectionID+"/leave?id="+connectionID+"&group_id="+groupA.ID, nil)
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
@@ -555,7 +556,6 @@ func TestConnectionHandler_Leave_Success(t *testing.T) {
 	if len(conn.MemberGroups) != 2 {
 		t.Errorf("Expected 2 remaining members, got %d", len(conn.MemberGroups))
 	}
-	defer s.cleanup(nil, nil, nil, []string{connectionID})
 }
 
 // --- Signal Chat Proposal Tests ---

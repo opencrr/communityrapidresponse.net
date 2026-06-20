@@ -234,14 +234,6 @@ func (s *E2ETestSuite) makeUserFullyVerified(userID string) {
 	}
 }
 
-func (s *E2ETestSuite) makeUserPostcardVerified(userID string) {
-	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE users SET postcard_verified = TRUE, verification_tier = 2 WHERE id = ?", userID)
-	if err != nil {
-		s.t.Fatalf("Failed to make user postcard-verified: %v", err)
-	}
-}
-
 // registerOrGetUser registers a new user or retrieves existing one, disables MFA, logs in, and returns userID + token
 func (s *E2ETestSuite) registerOrGetUser(username, email, password string) (string, string) {
 	resp := s.request("POST", "/api/v1/auth/register", map[string]string{
@@ -305,128 +297,6 @@ func (s *E2ETestSuite) reloginUser(email, password string) string {
 		s.t.Fatalf("reloginUser: failed to get token for %s", email)
 	}
 	return login.Token
-}
-
-// School-specific helpers
-
-func (s *E2ETestSuite) createSchool(name, state string) string {
-	schoolID := fmt.Sprintf("e2e-school-%s-%d", name[:4], time.Now().UnixNano())
-	ncesID := fmt.Sprintf("%012d", time.Now().UnixNano()%1000000000000)
-	_, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO schools (id, nces_id, name, state, created_at) VALUES (?, ?, ?, ?, NOW())",
-		schoolID, ncesID, name, state)
-	if err != nil {
-		s.t.Fatalf("Failed to create test school: %v", err)
-	}
-	return schoolID
-}
-
-func (s *E2ETestSuite) createDistrict(name, state string) string {
-	districtID := fmt.Sprintf("e2e-dist-%s-%d", name[:4], time.Now().UnixNano())
-	ncesID := fmt.Sprintf("%07d", time.Now().UnixNano()%10000000)
-	_, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO school_districts (id, nces_id, name, state, district_type, created_at) VALUES (?, ?, ?, ?, 'unified', NOW())",
-		districtID, ncesID, name, state)
-	if err != nil {
-		s.t.Fatalf("Failed to create test district: %v", err)
-	}
-	return districtID
-}
-
-func (s *E2ETestSuite) linkSchoolToDistrict(schoolID, districtID string) {
-	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE schools SET district_id = ? WHERE id = ?", districtID, schoolID)
-	if err != nil {
-		s.t.Fatalf("Failed to link school to district: %v", err)
-	}
-}
-
-func (s *E2ETestSuite) addUserToSchool(userID, schoolID string, status string, isAdmin bool) {
-	membershipID := fmt.Sprintf("e2e-us-%d", time.Now().UnixNano())
-	query := "INSERT INTO user_schools (id, user_id, school_id, is_admin, verification_status) VALUES (?, ?, ?, ?, ?)"
-	if status == "verified" {
-		query = "INSERT INTO user_schools (id, user_id, school_id, is_admin, verification_status, verified_at) VALUES (?, ?, ?, ?, ?, NOW())"
-	}
-	_, err := s.db.ExecContext(context.Background(), query, membershipID, userID, schoolID, isAdmin, status)
-	if err != nil {
-		s.t.Fatalf("Failed to add user to school: %v", err)
-	}
-}
-
-func (s *E2ETestSuite) cleanupSchools(schoolIDs ...string) {
-	ctx := context.Background()
-	for _, schoolID := range schoolIDs {
-		// Clean up meshtastic channel encrypted secrets and channels
-		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
-			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
-			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
-			WHERE mc.school_id = ?`, schoolID)
-		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
-			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
-			WHERE mc.school_id = ?`, schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE school_id = ?", schoolID)
-		// Clean up signal group encrypted secrets
-		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
-			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
-			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
-			WHERE sg.school_id = ?`, schoolID)
-		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
-			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
-			WHERE sg.school_id = ?`, schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_blocked_users WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_schools WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM schools WHERE id = ?", schoolID)
-	}
-}
-
-func (s *E2ETestSuite) cleanupDistricts(districtIDs ...string) {
-	ctx := context.Background()
-	for _, districtID := range districtIDs {
-		// Clean up meshtastic channel encrypted secrets and channels
-		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
-			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
-			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
-			WHERE mc.district_id = ?`, districtID)
-		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
-			INNER JOIN meshtastic_channels mc ON es.meshtastic_channel_id = mc.id
-			WHERE mc.district_id = ?`, districtID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE district_id = ?", districtID)
-		// Clean up signal group encrypted secrets
-		_, _ = s.db.ExecContext(ctx, `DELETE esk FROM encrypted_secret_keys esk
-			INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
-			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
-			WHERE sg.district_id = ?`, districtID)
-		_, _ = s.db.ExecContext(ctx, `DELETE es FROM encrypted_secrets es
-			INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
-			WHERE sg.district_id = ?`, districtID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE district_id = ?", districtID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_districts WHERE id = ?", districtID)
-	}
-}
-
-// exitSchoolBootstrapMode creates 3 verified admin users in a school
-// Returns the user IDs for cleanup
-func (s *E2ETestSuite) exitSchoolBootstrapMode(schoolID string) []string {
-	ctx := context.Background()
-	var userIDs []string
-	for i := 0; i < 3; i++ {
-		user := &models.User{
-			Username:         fmt.Sprintf("e2e_school_admin_%d_%s", i, schoolID[:8]),
-			Email:            fmt.Sprintf("e2e_school_admin_%d_%s@test.com", i, schoolID[:8]),
-			PasswordHash:     "$2a$12$test.hash.only",
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    true,
-		}
-		if err := s.userRepo.Create(ctx, user); err != nil {
-			s.t.Fatalf("Failed to create school bootstrap admin: %v", err)
-		}
-		s.addUserToSchool(user.ID, schoolID, "verified", true)
-		userIDs = append(userIDs, user.ID)
-	}
-	return userIDs
 }
 
 // Tests
@@ -4428,11 +4298,11 @@ func TestE2E_Connections(t *testing.T) {
 	suite := SetupE2ETest(t)
 
 	// Create two users with groups
-	userAID, tokenA := suite.registerOrGetUser("conn_e2e_a", "conn_e2e_a@test.com", "password12345")
+	userAID, _ := suite.registerOrGetUser("conn_e2e_a", "conn_e2e_a@test.com", "password12345")
 	userBID, _ := suite.registerOrGetUser("conn_e2e_b", "conn_e2e_b@test.com", "password12345")
 	suite.makeUserFullyVerified(userAID)
 	suite.makeUserFullyVerified(userBID)
-	tokenA = suite.reloginUser("conn_e2e_a@test.com", "password12345")
+	tokenA := suite.reloginUser("conn_e2e_a@test.com", "password12345")
 	tokenB := suite.reloginUser("conn_e2e_b@test.com", "password12345")
 
 	regionAID := suite.createTestRegionForGroups(userAID)

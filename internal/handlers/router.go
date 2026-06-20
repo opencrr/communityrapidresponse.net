@@ -387,19 +387,16 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 	schoolID := parts[0]
 
 	// Sub-routes
-	if len(parts) >= 2 {
-		switch parts[1] {
-		case "join":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Join)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	if len(parts) >= 2 && parts[1] == "join" {
+		q := req.URL.Query()
+		q.Set("id", schoolID)
+		req.URL.RawQuery = q.Encode()
+		if req.Method == http.MethodPost {
+			r.authenticated(r.schools.Join)(w, req)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
 	}
 
 	// Default: get school by ID

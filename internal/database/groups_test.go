@@ -1490,6 +1490,7 @@ func TestGroupRepository_GetMember(t *testing.T) {
 		}
 		if member == nil {
 			t.Fatal("Expected member, got nil")
+			return
 		}
 		if member.UserID != userID {
 			t.Errorf("Expected user_id %s, got %s", userID, member.UserID)
@@ -2327,15 +2328,11 @@ func TestGroupRepository_BrowseAll(t *testing.T) {
 	})
 
 	t.Run("returns empty for no discoverable groups", func(t *testing.T) {
-		groups, err := groupRepo.BrowseAll(ctx)
-		if err != nil {
+		// BrowseAll may include pre-existing rows on a shared test DB, so we only
+		// assert it returns without error rather than asserting an exact count.
+		if _, err := groupRepo.BrowseAll(ctx); err != nil {
 			t.Fatalf("BrowseAll failed: %v", err)
 		}
-		if len(groups) != 0 {
-			// There might be pre-existing data, but for a clean test DB this should be 0.
-			// We'll verify our specific groups below.
-		}
-		_ = groups
 	})
 
 	t.Run("returns only discoverable groups with open-tier signal groups", func(t *testing.T) {

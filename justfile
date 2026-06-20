@@ -671,8 +671,10 @@ build-frontend: _check-esbuild
     echo "  JS:  $JS_FILE"
     echo "  CSS: $CSS_FILE"
 
-    # Update index.html to reference hashed bundles (handles both source and previous dist paths)
-    sed -i '' -E "s|src=\"/static/[^\"]+\.js\"|src=\"/static/dist/$JS_FILE\"|" templates/index.html
+    # Update index.html to reference hashed bundles. Only the application module
+    # script is rewritten — the non-module config.js / env-banner.js scripts must
+    # keep their source paths (they are intentionally external for CSP, not bundled).
+    sed -i '' -E "s|(<script type=\"module\" src=\")/static/[^\"]+\.js(\"></script>)|\1/static/dist/$JS_FILE\2|" templates/index.html
     sed -i '' -E "s|href=\"/static/[^\"]+\.css\"|href=\"/static/dist/$CSS_FILE\"|" templates/index.html
     sed -i '' -E "s|(/static/images/[^\"?]*)(\?v=[^\"]*)?|\1?v=$FAVICON_V|g" templates/index.html
 

@@ -237,34 +237,6 @@ func (s *IntegrationTestSuite) cleanupRegion(regionID string) {
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", regionID)
 }
 
-// exitBootstrapMode creates 3 full admins in a region to take it out of bootstrap mode
-// Returns the user IDs for cleanup
-func (s *IntegrationTestSuite) exitBootstrapMode(regionID string) []string {
-	if regionID == "" {
-		s.t.Fatal("exitBootstrapMode called with empty regionID")
-	}
-	ctx := context.Background()
-	var userIDs []string
-	for i := 0; i < 3; i++ {
-		user := &models.User{
-			Username:         fmt.Sprintf("bootstrap_admin_%d_%s", i, regionID[:8]),
-			Email:            fmt.Sprintf("bootstrap_admin_%d_%s@test.com", i, regionID[:8]),
-			PasswordHash:     "$2a$12$test.hash.only",
-			VerificationTier: models.TierPostcard,
-			PostcardVerified: true,
-			VouchVerified:    true,
-		}
-		if err := s.userRepo.Create(ctx, user); err != nil {
-			s.t.Fatalf("Failed to create bootstrap admin: %v", err)
-		}
-		if err := s.regionRepo.AddUserToRegion(ctx, user.ID, regionID, true); err != nil {
-			s.t.Fatalf("Failed to add bootstrap admin to region: %v", err)
-		}
-		userIDs = append(userIDs, user.ID)
-	}
-	return userIDs
-}
-
 // Tests
 
 func TestIntegration_VerificationFlow_Success(t *testing.T) {
