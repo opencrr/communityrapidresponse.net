@@ -57,6 +57,11 @@ func (h *EncryptionHandler) UploadKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	if req.PublicKey == "" || req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
 		return
@@ -121,6 +126,11 @@ func (h *EncryptionHandler) UpdateKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	if req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
 		return
@@ -151,6 +161,11 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	var req models.RotateEncryptionKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 

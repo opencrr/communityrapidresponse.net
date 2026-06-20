@@ -241,6 +241,11 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	// Convert geometry to GeoJSON string
 	geoJSON, err := json.Marshal(req.Geometry)
 	if err != nil {
@@ -402,6 +407,11 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "Community name is required")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 

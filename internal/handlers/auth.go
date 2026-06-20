@@ -280,6 +280,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	// Validate request
 	if req.Email == "" || req.Password == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "Email or username and password are required")

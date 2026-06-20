@@ -104,6 +104,11 @@ func (h *VerificationHandler) RequestPostcardVerification(w http.ResponseWriter,
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	// Validate address fields (region_id is now optional)
 	if req.Address.Line1 == "" || req.Address.City == "" || req.Address.State == "" || req.Address.PostalCode == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "Complete address is required")
@@ -375,6 +380,11 @@ func (h *VerificationHandler) VerifyCode(w http.ResponseWriter, r *http.Request)
 	var req models.VerifyCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 

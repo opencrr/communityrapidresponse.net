@@ -503,7 +503,7 @@ func TestE2E_PostcardVerification_TriggersNotification(t *testing.T) {
 	_, err := suite.db.ExecContext(ctx, `
 		INSERT INTO verification_requests (id, user_id, verification_code, status, region_id, postgrid_request_id, boundary_type, boundary_name, boundary_state, created_at, expires_at)
 		VALUES (?, ?, ?, 'pending', ?, 'test-postgrid-id', 'neighborhood', 'Test Neighborhood', 'NY', NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))
-	`, "e2e-verify-request", user.ID, "123456", region.ID)
+	`, "e2e-verify-request", user.ID, "a1b2c3d4e5f6a7b8", region.ID)
 	if err != nil {
 		t.Fatalf("Failed to create verification request: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestE2E_PostcardVerification_TriggersNotification(t *testing.T) {
 
 	// Verify the code
 	resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]interface{}{
-		"verification_code": "123456",
+		"verification_code": "a1b2c3d4e5f6a7b8",
 	}, token)
 	defer func() { _ = resp.Body.Close() }()
 
