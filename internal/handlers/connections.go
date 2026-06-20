@@ -340,6 +340,35 @@ func (h *ConnectionHandler) InviteToConnection(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Mirror the formation-path block check across the whole membership: an
+	// expansion must not pull in a group that is blocked by, or blocks, any
+	// current connection member, otherwise blocking is bypassed via invitation.
+	connection, err := h.connectionRepo.GetConnection(r.Context(), connectionID)
+	if err != nil {
+		if errors.Is(err, database.ErrConnectionNotFound) {
+			writeError(w, http.StatusNotFound, "connection_not_found", "Connection not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to load connection", "connection", "invite")
+		return
+	}
+	for _, member := range connection.MemberGroups {
+		blocked, blockErr := h.groupRepo.IsGroupBlocked(r.Context(), member.GroupID, req.GroupID)
+		if blockErr != nil {
+			writeServerError(w, r, blockErr, "Failed to check block status", "connection", "invite")
+			return
+		}
+		blockedReverse, blockRevErr := h.groupRepo.IsGroupBlocked(r.Context(), req.GroupID, member.GroupID)
+		if blockRevErr != nil {
+			writeServerError(w, r, blockRevErr, "Failed to check block status", "connection", "invite")
+			return
+		}
+		if blocked || blockedReverse {
+			writeError(w, http.StatusForbidden, "group_blocked", "Cannot invite a group that is blocked by, or has blocked, a current connection member")
+			return
+		}
+	}
+
 	proposal, err := h.connectionRepo.InviteToConnection(r.Context(), connectionID, proposerGroupID, req.GroupID)
 	if err != nil {
 		if errors.Is(err, database.ErrNotConnectionMember) {

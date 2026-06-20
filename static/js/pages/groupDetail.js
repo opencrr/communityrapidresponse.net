@@ -360,7 +360,9 @@ async function loadResources(groupId) {
                     <div class="resource-item">
                         <div>
                             <div class="resource-item__title">${escapeHtml(resource.title)}</div>
-                            ${resource.url ? `<a href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer" class="resource-item__url">${escapeHtml(resource.url)}</a>` : ''}
+                            ${resource.url ? (safeUrl(resource.url)
+                                ? `<a href="${escapeHtml(safeUrl(resource.url))}" target="_blank" rel="noopener noreferrer" class="resource-item__url">${escapeHtml(resource.url)}</a>`
+                                : `<span class="resource-item__url">${escapeHtml(resource.url)}</span>`) : ''}
                             ${resource.description ? `<div class="resource-item__description">${escapeHtml(resource.description)}</div>` : ''}
                         </div>
                         ${resource.access_tier ? `<span class="tier-badge tier-badge--${resource.access_tier}">${formatAccessTier(resource.access_tier)}</span>` : ''}
@@ -533,6 +535,21 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Return the URL only if it is an http(s) URL, else ''. Defense-in-depth against
+ * javascript:/data: scheme XSS when a stored URL is rendered into an href.
+ * @param {string} rawUrl
+ * @returns {string}
+ */
+function safeUrl(rawUrl) {
+    if (!rawUrl) return '';
+    try {
+        const parsed = new URL(rawUrl, window.location.origin);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return rawUrl;
+    } catch (e) { /* malformed URL */ }
+    return '';
 }
 
 export function cleanup() {}

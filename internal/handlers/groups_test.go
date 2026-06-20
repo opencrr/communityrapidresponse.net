@@ -2203,7 +2203,23 @@ func TestGroupHandler_ListSignalGroups_NonMemberSeesOnlyOpen(t *testing.T) {
 	ctx := context.Background()
 	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
 
-	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	// Listed (discoverable) group: open-tier content is intentionally visible to
+	// non-members. Unlisted groups are fully hidden from non-members — that case
+	// is covered by TestGroupHandler_ListSignalGroups_UnlistedHiddenFromNonMember.
+	listedGroup, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "SG NM Listed Group",
+		Visibility: "listed",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	// Provisional groups are forced unlisted at creation; visibility is applied on
+	// graduation. Set both here to simulate a graduated, listed group.
+	if _, err := suite.db.ExecContext(ctx, "UPDATE `groups` SET status = 'active', visibility = 'listed', graduated_at = NOW() WHERE id = ?", listedGroup.ID); err != nil {
+		t.Fatalf("Failed to activate group: %v", err)
+	}
+	groupID := listedGroup.ID
 	defer suite.cleanup([]string{admin.ID, outsider.ID}, []string{region.ID}, []string{groupID})
 
 	// Create signal groups at different tiers
@@ -2643,6 +2659,111 @@ func TestGroupHandler_CreateResource_MemberCanCreate(t *testing.T) {
 
 	if rec.Code != http.StatusCreated {
 		t.Errorf("Expected 201 for member creating resource, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_CreateResource_RejectsNonHTTPURL(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpres_xss_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpResXSSRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Resource XSS Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	defer suite.cleanup([]string{admin.ID}, []string{region.ID}, []string{group.ID})
+
+	claims := suite.claimsForUser(admin)
+	badURLs := []string{
+		"javascript:alert(document.cookie)",
+		"data:text/html,<script>alert(1)</script>",
+		"  javascript:alert(1)", // leading whitespace must not bypass
+		"vbscript:msgbox(1)",
+		"notaurl",
+		"/relative/path",
+	}
+	for _, badURL := range badURLs {
+		body := models.CreateResourceRequest{
+			Title:      "Bad Resource",
+			URL:        badURL,
+			AccessTier: "member",
+		}
+		bodyBytes, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/resources?id="+group.ID, bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+		rec := httptest.NewRecorder()
+		suite.handler.CreateResource(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("URL %q: expected 400, got %d: %s", badURL, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A valid https URL still succeeds.
+	okBody, _ := json.Marshal(models.CreateResourceRequest{
+		Title: "Good Resource", URL: "https://example.com/help", AccessTier: "member",
+	})
+	req := httptest.NewRequest("POST", "/resources?id="+group.ID, bytes.NewReader(okBody))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+	rec := httptest.NewRecorder()
+	suite.handler.CreateResource(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("valid https URL: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_ListSignalGroups_UnlistedHiddenFromNonMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpls_unl_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	outsider := suite.createTestUser("grpls_unl_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	region := suite.createTestRegion("GrpLsUnlistedRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	// Outsider is a verified resident of the region but NOT a member of the group.
+	_ = suite.regionRepo.AddUserToRegion(ctx, outsider.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name:       "Unlisted Signal Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	defer suite.cleanup([]string{admin.ID, outsider.ID}, []string{region.ID}, []string{group.ID})
+
+	// Non-member (even a region resident) must not learn the unlisted group exists.
+	req := httptest.NewRequest("GET", "/signal-groups?id="+group.ID, nil)
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), suite.claimsForUser(outsider)))
+	rec := httptest.NewRecorder()
+	suite.handler.ListSignalGroups(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member listing unlisted group, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The admin (a member) can list normally.
+	req2 := httptest.NewRequest("GET", "/signal-groups?id="+group.ID, nil)
+	req2 = req2.WithContext(middleware.ContextWithUser(req2.Context(), suite.claimsForUser(admin)))
+	rec2 := httptest.NewRecorder()
+	suite.handler.ListSignalGroups(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected 200 for member listing unlisted group, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 }
 

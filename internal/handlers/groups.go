@@ -91,6 +91,38 @@ func (h *GroupHandler) verifySuperuser(w http.ResponseWriter, r *http.Request, u
 	return isSuperuser, true
 }
 
+// guardUnlistedGroup enforces the same visibility invariant as the Get handler
+// for sub-resource list endpoints: an unlisted group must not disclose its
+// existence or contents to non-member, non-superuser callers. Returns true if
+// the caller may proceed; otherwise it writes the response and returns false.
+func (h *GroupHandler) guardUnlistedGroup(w http.ResponseWriter, r *http.Request, groupID, userID string, isSuperuser bool, op string) bool {
+	if isSuperuser {
+		return true
+	}
+	group, err := h.groupRepo.GetByID(r.Context(), groupID)
+	if errors.Is(err, database.ErrGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return false
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group", "group", op)
+		return false
+	}
+	if group.Visibility != models.GroupVisibilityUnlisted {
+		return true
+	}
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, userID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check membership", "group", op)
+		return false
+	}
+	if !isMember {
+		writeError(w, http.StatusNotFound, "not_found", "Group not found")
+		return false
+	}
+	return true
+}
+
 // Browse handles GET /api/v1/groups/browse
 func (h *GroupHandler) Browse(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -1150,6 +1182,11 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Don't disclose unlisted groups (or their contents) to non-members
+	if !h.guardUnlistedGroup(w, r, groupID, claims.UserID, isSuperuser, "list_signal_groups") {
+		return
+	}
+
 	// Get all signal groups for this owner group
 	signalGroups, err := h.signalGroupRepo.ListByOwnerGroup(r.Context(), groupID)
 	if err != nil {
@@ -1259,6 +1296,11 @@ func (h *GroupHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !isValidHTTPURL(req.URL) {
+		writeError(w, http.StatusBadRequest, "validation_error", "URL must be a valid http or https URL")
+		return
+	}
+
 	resource, err := h.groupRepo.CreateResource(r.Context(), groupID, claims.UserID, &req)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to create resource", "group", "create_resource")
@@ -1295,6 +1337,11 @@ func (h *GroupHandler) ListResources(w http.ResponseWriter, r *http.Request) {
 	// Re-check superuser from DB
 	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
 	if !ok {
+		return
+	}
+
+	// Don't disclose unlisted groups (or their contents) to non-members
+	if !h.guardUnlistedGroup(w, r, groupID, claims.UserID, isSuperuser, "list_resources") {
 		return
 	}
 
@@ -1406,6 +1453,11 @@ func (h *GroupHandler) UpdateResource(w http.ResponseWriter, r *http.Request) {
 
 	if validationMsg := validateStruct(&req); validationMsg != "" {
 		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
+	if req.URL != nil && !isValidHTTPURL(*req.URL) {
+		writeError(w, http.StatusBadRequest, "validation_error", "URL must be a valid http or https URL")
 		return
 	}
 
@@ -1999,6 +2051,11 @@ func (h *GroupHandler) ListMeshtasticChannels(w http.ResponseWriter, r *http.Req
 	// Re-check superuser from DB
 	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
 	if !ok {
+		return
+	}
+
+	// Don't disclose unlisted groups (or their contents) to non-members
+	if !h.guardUnlistedGroup(w, r, groupID, claims.UserID, isSuperuser, "list_meshtastic_channels") {
 		return
 	}
 

@@ -354,15 +354,28 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Authorize against the exact set of (secret, target) pairs the server
+	// advertised to this caller as pending. GetPendingRekeys guarantees the
+	// caller holds a valid (non-rekey-needed) key for the secret AND the target
+	// genuinely needs re-keying. Without this, any member holding a secret could
+	// overwrite an arbitrary entitled member's wrapped DEK with a forged blob.
+	pending, err := h.encryptedSecretRepo.GetPendingRekeys(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to load pending re-keys", "encryption", "submit_rekeys")
+		return
+	}
+	allowed := make(map[string]bool, len(pending))
+	for _, p := range pending {
+		allowed[p.SecretID+"\x00"+p.TargetUserID] = true
+	}
+
 	successCount := 0
 	for _, entry := range req.Rekeys {
 		if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
 			continue
 		}
-		// Verify the caller has a valid (non-rekey-needed) wrapped DEK for this secret
-		_, dekErr := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), entry.SecretID, claims.UserID)
-		if dekErr != nil {
-			slog.WarnContext(r.Context(), "rejecting re-key: caller has no valid key", "secret_id", entry.SecretID, "caller_id", claims.UserID)
+		if !allowed[entry.SecretID+"\x00"+entry.TargetUserID] {
+			slog.WarnContext(r.Context(), "rejecting re-key: pair not in caller's pending set", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "caller_id", claims.UserID)
 			continue
 		}
 		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {

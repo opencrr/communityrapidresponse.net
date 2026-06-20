@@ -899,18 +899,17 @@ func TestEncryptionHandler_GetPendingRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_Success(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// For each entry, the handler first checks GetWrappedDEK to verify the caller has a valid key
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-1", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+	// The handler authorizes each entry against the caller's advertised
+	// pending-rekey set (GetPendingRekeys), loaded once up front.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "target-user-1", "pub-1", "caller-dek-1").
+			AddRow("secret-2", "target-user-2", "pub-2", "caller-dek-2"))
 
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-1", sqlmock.AnyArg(), "secret-1", "target-user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-2", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-2"))
 
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-2", sqlmock.AnyArg(), "secret-2", "target-user-2").
@@ -954,6 +953,41 @@ func TestEncryptionHandler_SubmitRekeys_Success(t *testing.T) {
 	}
 }
 
+func TestEncryptionHandler_SubmitRekeys_RejectsForgedTarget(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Caller is legitimately offered a rekey for (secret-1, victim) only.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "victim", "pub-victim", "caller-dek-1"))
+
+	// Attacker submits a rekey for a DIFFERENT, unadvertised target for the same
+	// secret. No UPDATE must be issued — the (secret, target) pair is not in the
+	// caller's pending set, so the forged blob is rejected (key-injection guard).
+	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
+		Rekeys: []models.RekeyEntry{
+			{SecretID: "secret-1", TargetUserID: "other-user", WrappedDEK: "forged-blob"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitRekeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	body := parseResponseBody(t, recorder)
+	if c, _ := body["rekeyed"].(float64); int(c) != 0 {
+		t.Errorf("expected rekeyed=0 (forged target rejected), got %v", c)
+	}
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestEncryptionHandler_SubmitRekeys_EmptyArray(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
@@ -979,22 +1013,21 @@ func TestEncryptionHandler_SubmitRekeys_EmptyArray(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_PartialFailures(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// First entry: caller has valid key, succeeds
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-1", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+	// Pending set advertised to the caller: secret-1/target-1 and secret-3/target-3
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "target-1", "pub-1", "caller-dek-1").
+			AddRow("secret-3", "target-3", "pub-3", "caller-dek-3"))
 
+	// First entry: in pending set, succeeds
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-1", sqlmock.AnyArg(), "secret-1", "target-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Second entry: skipped (empty SecretID) — no GetWrappedDEK call
+	// Second entry: skipped (empty SecretID) — no UPDATE
 
-	// Third entry: caller has valid key, but DB returns error on update
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-3", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-3"))
-
+	// Third entry: in pending set, but DB returns error on update
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-3", sqlmock.AnyArg(), "secret-3", "target-3").
 		WillReturnError(context.DeadlineExceeded)
@@ -1595,13 +1628,14 @@ func TestEncryptionHandler_SubmitRekeys_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestEncryptionHandler_SubmitRekeys_CallerNoValidKey(t *testing.T) {
+func TestEncryptionHandler_SubmitRekeys_RejectsPairNotInPendingSet(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// GetWrappedDEK returns no rows — caller doesn't have a valid key for this secret
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-1", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"})) // empty result
+	// GetPendingRekeys returns nothing — the (secret, target) pair was never
+	// advertised to this caller, so it must be rejected (key-injection guard).
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"})) // empty result
 
 	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
 		Rekeys: []models.RekeyEntry{
@@ -1628,7 +1662,7 @@ func TestEncryptionHandler_SubmitRekeys_CallerNoValidKey(t *testing.T) {
 		t.Fatalf("expected rekeyed to be a number, got %T", body["rekeyed"])
 	}
 	if int(rekeyedCount) != 0 {
-		t.Errorf("expected rekeyed=0 (caller has no valid key), got %v", rekeyedCount)
+		t.Errorf("expected rekeyed=0 (pair not in pending set), got %v", rekeyedCount)
 	}
 
 	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
@@ -1666,7 +1700,13 @@ func TestEncryptionHandler_UpdateKeys_DBError(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_SkipsEntriesWithMissingFields(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// All entries have missing required fields — none should hit the DB
+	// The pending set is loaded once up front; every entry is then skipped for
+	// missing required fields before any UPDATE.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}))
+
+	// All entries have missing required fields — none should hit an UPDATE
 	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
 		Rekeys: []models.RekeyEntry{
 			{SecretID: "", TargetUserID: "u1", WrappedDEK: "d1"},

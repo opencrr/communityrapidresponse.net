@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -46,6 +47,18 @@ func validateStruct(s interface{}) string {
 	}
 
 	return "Invalid request"
+}
+
+// isValidHTTPURL reports whether rawURL is a well-formed absolute http(s) URL.
+// User-supplied resource/channel URLs are rendered into href attributes on the
+// frontend, so non-http(s) schemes (notably javascript:) must be rejected at the
+// source to prevent stored XSS.
+func isValidHTTPURL(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // formatFieldError converts a single field validation error into a readable message.

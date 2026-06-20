@@ -3451,6 +3451,11 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		gradUserB, gradUserC := suite.graduateGroup(groupID, adminToken, regionID, "gsg_ls")
 		defer suite.cleanup(gradUserB, gradUserC)
 
+		// Make the group listed so the non-member (resident) open-tier visibility
+		// check below is exercised. Unlisted groups are hidden from non-members
+		// (see TestE2E / TestGroupHandler unlisted-visibility tests).
+		_, _ = suite.db.ExecContext(ctx, "UPDATE `groups` SET visibility = 'listed' WHERE id = ?", groupID)
+
 		// Create 3 signal groups with different tiers
 		for _, sg := range []struct {
 			name string
