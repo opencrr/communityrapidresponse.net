@@ -883,7 +883,10 @@ func (h *ConnectionHandler) ListConnectionResources(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Check if user is a member of any connected group and whether they're admin of any
+	// Any member of a connected group may view shared resources; admins of a
+	// connected group additionally see admin_only resources. Non-members are
+	// rejected. The repository filters to all_members-only when isAdminOfAny is
+	// false.
 	hasAccess := false
 	isAdminOfAny := false
 	for _, member := range connection.MemberGroups {
@@ -897,10 +900,18 @@ func (h *ConnectionHandler) ListConnectionResources(w http.ResponseWriter, r *ht
 			isAdminOfAny = true
 			break
 		}
+		isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), member.GroupID, claims.UserID)
+		if memberErr != nil {
+			writeServerError(w, r, memberErr, "Failed to check membership", "connection", "list_resources")
+			return
+		}
+		if isMember {
+			hasAccess = true
+		}
 	}
 
 	if !hasAccess {
-		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		writeError(w, http.StatusForbidden, "forbidden", "Must be a member of a connected group")
 		return
 	}
 

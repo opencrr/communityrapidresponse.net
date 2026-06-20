@@ -576,6 +576,97 @@ func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 	}
 }
 
+func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "vote_chat_adminonly1")
+	regionID := createConnectionTestRegion(t, db, "Vote Chat AdminOnly Region")
+	groupAID := createConnectionTestGroup(t, db, "Vote Chat AdminOnly A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Vote Chat AdminOnly B", userID, regionID)
+
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Propose an admin_only chat.
+	chatProposal, _ := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "Admin Only Chat",
+		AccessLevel: "admin_only",
+	})
+
+	result, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("VoteOnChatProposal failed: %v", err)
+	}
+	if result.Status != "approved" {
+		t.Fatalf("Expected status=approved, got %s", result.Status)
+	}
+
+	signalGroups, err := repo.ListConnectionSignalGroups(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 1 {
+		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+	// The approved admin_only proposal must NOT become member-visible.
+	if signalGroups[0].AccessTier == models.AccessTierMember {
+		t.Errorf("admin_only proposal created a member-tier signal group; access level was discarded")
+	}
+	if signalGroups[0].AccessTier != models.AccessTierAdminOnly {
+		t.Errorf("Expected access_tier=admin_only, got %s", signalGroups[0].AccessTier)
+	}
+}
+
+func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "vote_chat_allmembers1")
+	regionID := createConnectionTestRegion(t, db, "Vote Chat AllMembers Region")
+	groupAID := createConnectionTestGroup(t, db, "Vote Chat AllMembers A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Vote Chat AllMembers B", userID, regionID)
+
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	chatProposal, _ := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:   "All Members Chat",
+		AccessLevel: "all_members",
+	})
+
+	if _, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, true); err != nil {
+		t.Fatalf("VoteOnChatProposal failed: %v", err)
+	}
+
+	signalGroups, err := repo.ListConnectionSignalGroups(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 1 {
+		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+	if signalGroups[0].AccessTier != models.AccessTierMember {
+		t.Errorf("Expected all_members to map to access_tier=member, got %s", signalGroups[0].AccessTier)
+	}
+}
+
 func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
 	db := testDB(t)
 	repo := NewConnectionRepository(db)

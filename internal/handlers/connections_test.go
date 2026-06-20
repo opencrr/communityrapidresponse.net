@@ -984,3 +984,92 @@ func TestConnectionHandler_ListConnectionResources_VisibilityFiltering(t *testin
 		t.Errorf("Non-admin resource should be all_members, got %s", nonAdminResources[0].Visibility)
 	}
 }
+
+// TestConnectionHandler_ListConnectionResources_NonAdminMemberAllowed verifies a
+// regular (non-admin) member of a connected group reaches the handler (not 403)
+// and receives only all_members resources.
+func TestConnectionHandler_ListConnectionResources_NonAdminMemberAllowed(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	adminUser := s.createTestUser("conn_list_res_nm_admin", 1, false)
+	adminUser.VouchVerified = true
+	memberUser := s.createTestUser("conn_list_res_nm_member", 1, false)
+	memberUser.VouchVerified = true
+	region := s.createTestRegion("Conn List Res NM Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group List Res NM A", adminUser.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group List Res NM B", adminUser.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	adminResource := s.createTestResource(groupA.ID, adminUser.ID, "Admin Only Resource NM")
+	memberResource := s.createTestResource(groupA.ID, adminUser.ID, "All Members Resource NM")
+	defer s.cleanup([]string{adminUser.ID, memberUser.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	// memberUser is a non-admin member of connected group A.
+	if err := s.groupRepo.AddMember(context.Background(), groupA.ID, memberUser.ID, false, false); err != nil {
+		t.Fatalf("AddMember failed: %v", err)
+	}
+
+	_, err := s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: adminResource.ID,
+		Visibility: "admin_only",
+	})
+	if err != nil {
+		t.Fatalf("Share admin resource failed: %v", err)
+	}
+	_, err = s.connectionRepo.ShareResource(context.Background(), connectionID, groupA.ID, &models.ShareResourceRequest{
+		ResourceID: memberResource.ID,
+		Visibility: "all_members",
+	})
+	if err != nil {
+		t.Fatalf("Share member resource failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(memberUser)))
+
+	rr := httptest.NewRecorder()
+	s.handler.ListConnectionResources(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Non-admin member expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+	resources, ok := response["shared_resources"].([]interface{})
+	if !ok {
+		t.Fatal("Expected shared_resources array in response")
+	}
+	if len(resources) != 1 {
+		t.Fatalf("Non-admin member should see 1 (all_members) resource, got %d", len(resources))
+	}
+	res := resources[0].(map[string]interface{})
+	if res["visibility"] != "all_members" {
+		t.Errorf("Non-admin member should only see all_members resource, got visibility=%v", res["visibility"])
+	}
+}
+
+// TestConnectionHandler_ListConnectionResources_NonMemberRejected verifies a user
+// who belongs to no connected group is rejected with 403.
+func TestConnectionHandler_ListConnectionResources_NonMemberRejected(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	adminUser := s.createTestUser("conn_list_res_nonmem_admin", 1, false)
+	adminUser.VouchVerified = true
+	outsider := s.createTestUser("conn_list_res_outsider", 1, false)
+	outsider.VouchVerified = true
+	region := s.createTestRegion("Conn List Res Outsider Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group List Res Outsider A", adminUser.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group List Res Outsider B", adminUser.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	defer s.cleanup([]string{adminUser.ID, outsider.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/shared-resources?id="+connectionID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(outsider)))
+
+	rr := httptest.NewRecorder()
+	s.handler.ListConnectionResources(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("Non-member expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

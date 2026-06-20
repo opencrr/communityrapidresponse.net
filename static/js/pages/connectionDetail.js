@@ -209,7 +209,7 @@ async function loadResources(connectionId) {
 
     try {
         const response = await listConnectionResources(connectionId);
-        const resources = response.resources || [];
+        const resources = response.shared_resources || [];
 
         if (loadingEl) loadingEl.remove();
 
