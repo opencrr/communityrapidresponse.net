@@ -229,6 +229,7 @@ func main() {
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
 	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler.SetRateLimiter(rateLimiter)
 
 	// Initialize school handler
 	schoolHandler := handlers.NewSchoolHandler(
@@ -260,7 +261,12 @@ func main() {
 		SecureCookies: cfg.Server.SecureCookies,
 	}
 
-	// Build Content-Security-Policy directives
+	// Build Content-Security-Policy directives.
+	// NOTE: script-src has NO 'unsafe-inline' (inline scripts were externalized to
+	// config.js / env-banner.js). style-src DOES retain 'unsafe-inline' because
+	// Mapbox GL JS sets inline style attributes on map elements at runtime;
+	// removing it breaks map rendering. Keep these directives in sync with
+	// nginx.conf / nginx.test.conf, which serve the SPA document.
 	cspDirectives := "default-src 'self'; " +
 		"script-src 'self' https://api.mapbox.com; " +
 		"style-src 'self' https://api.mapbox.com 'unsafe-inline'; " +

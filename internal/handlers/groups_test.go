@@ -14,6 +14,7 @@ import (
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
+	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
 type GroupTestSuite struct {
@@ -2764,6 +2765,99 @@ func TestGroupHandler_ListSignalGroups_UnlistedHiddenFromNonMember(t *testing.T)
 	suite.handler.ListSignalGroups(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Errorf("expected 200 for member listing unlisted group, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+// TestGroupHandler_JoinViaLink_RateLimited verifies the per-user join_via_link
+// limit fires once a rate limiter is wired (regression for the limiter never
+// being attached in main.go). The rate-limit check runs before token validation,
+// so bogus tokens still consume the budget.
+func TestGroupHandler_JoinViaLink_RateLimited(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	suite.handler.SetRateLimiter(services.NewInMemoryRateLimiter())
+
+	user := suite.createTestUser("grp_join_rl", models.TierVouched, false)
+	user.VouchVerified = true
+	defer suite.cleanup([]string{user.ID}, nil, nil)
+
+	claims := suite.claimsForUser(user)
+
+	call := func() int {
+		req := httptest.NewRequest("POST", "/api/v1/groups/join/bogus-token?token=bogus-token", nil)
+		req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+		rec := httptest.NewRecorder()
+		suite.handler.JoinViaLink(rec, req)
+		return rec.Code
+	}
+
+	// First joinViaLinkLimit calls consume the budget (each 404 for bogus token,
+	// but the limiter increments before validation).
+	for i := 0; i < joinViaLinkLimit; i++ {
+		if code := call(); code == http.StatusTooManyRequests {
+			t.Fatalf("hit rate limit early at attempt %d", i+1)
+		}
+	}
+
+	// The next call must be rejected with 429.
+	if code := call(); code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after exhausting join_via_link limit, got %d", code)
+	}
+}
+
+// TestGroupHandler_BlockedUserCannotRejoin verifies the per-group user ban
+// (issue #7): an admin blocks a member, which removes them, and the blocked user
+// can no longer join via an invite link.
+func TestGroupHandler_BlockedUserCannotRejoin(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	suite.handler.SetRateLimiter(services.NewInMemoryRateLimiter())
+	ctx := context.Background()
+
+	admin := suite.createTestUser("grp_ban_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	target := suite.createTestUser("grp_ban_target", models.TierVouched, false)
+	target.VouchVerified = true
+	region := suite.createTestRegion("GrpBanRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Ban Test Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	defer suite.cleanup([]string{admin.ID, target.ID}, []string{region.ID}, []string{group.ID})
+
+	// target joins as a member.
+	if err := suite.groupRepo.AddMember(ctx, group.ID, target.ID, false, false); err != nil {
+		t.Fatalf("AddMember failed: %v", err)
+	}
+
+	// Admin bans target via the handler.
+	banBody, _ := json.Marshal(map[string]string{"user_id": target.ID, "reason": "abuse"})
+	banReq := httptest.NewRequest("POST", "/api/v1/groups/"+group.ID+"/blocked-users?id="+group.ID, bytes.NewReader(banBody))
+	banReq = banReq.WithContext(middleware.ContextWithUser(banReq.Context(), suite.claimsForUser(admin)))
+	banRec := httptest.NewRecorder()
+	suite.handler.BlockMember(banRec, banReq)
+	if banRec.Code != http.StatusOK {
+		t.Fatalf("BlockMember expected 200, got %d: %s", banRec.Code, banRec.Body.String())
+	}
+
+	// target should no longer be a member.
+	if isMember, _ := suite.groupRepo.IsUserMember(ctx, group.ID, target.ID); isMember {
+		t.Error("blocked user should have been removed from the group")
+	}
+
+	// target tries to rejoin via an invite link → 403 blocked.
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("CreateInviteLink failed: %v", err)
+	}
+	joinReq := httptest.NewRequest("POST", "/api/v1/groups/join/"+link.Token+"?token="+link.Token, nil)
+	joinReq = joinReq.WithContext(middleware.ContextWithUser(joinReq.Context(), suite.claimsForUser(target)))
+	joinRec := httptest.NewRecorder()
+	suite.handler.JoinViaLink(joinRec, joinReq)
+	if joinRec.Code != http.StatusForbidden {
+		t.Fatalf("blocked user join expected 403, got %d: %s", joinRec.Code, joinRec.Body.String())
 	}
 }
 

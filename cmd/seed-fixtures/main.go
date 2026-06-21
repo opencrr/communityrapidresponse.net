@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -58,6 +59,16 @@ const (
 func main() {
 	ctx := context.Background()
 	cfg := config.Load()
+
+	// Safety guard: this tool inserts known fixture accounts (including a
+	// superuser with a hard-coded password) and connects to whatever the
+	// resolved environment points at. Refuse to run outside development unless
+	// explicitly confirmed, so it can never silently seed a staging/prod DB.
+	if cfg.Env != config.EnvDevelopment && os.Getenv("SEED_FIXTURES_CONFIRM") != "1" {
+		log.Fatalf("refusing to seed fixtures: ENVIRONMENT=%q is not development; "+
+			"set SEED_FIXTURES_CONFIRM=1 to override (this inserts a known superuser "+
+			"with a default password and must never touch staging/production)", cfg.Env)
+	}
 
 	db, err := database.New(&cfg.Database)
 	if err != nil {

@@ -576,6 +576,51 @@ func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 	}
 }
 
+// TestGroupRepository_BlockGroup_EvictsSharedConnection verifies a single block
+// severs the connection edge directly (issue #10): blocking a group removes it
+// from connections the blocker shares with it, dissolving 2-member connections.
+func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
+	db := testDB(t)
+	connRepo := NewConnectionRepository(db)
+	groupRepo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "block_evict_user")
+	regionID := createConnectionTestRegion(t, db, "Block Evict Region")
+	groupA := createConnectionTestGroup(t, db, "Block Evict A", userID, regionID)
+	groupB := createConnectionTestGroup(t, db, "Block Evict B", userID, regionID)
+	groupC := createConnectionTestGroup(t, db, "Block Evict C", userID, regionID)
+
+	// 3-group connection so it survives one eviction (drops to 2, not dissolved).
+	proposal, _ := connRepo.ProposeConnection(ctx, groupA, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupB, groupC},
+	})
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupB, true)
+	formResult, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupC, true)
+	connectionID := *formResult.ConnectionID
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupA, groupB, groupC}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// A blocks C — C must be evicted from the shared connection.
+	if err := groupRepo.BlockGroup(ctx, groupA, groupC); err != nil {
+		t.Fatalf("BlockGroup failed: %v", err)
+	}
+
+	conn, err := connRepo.GetConnection(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("GetConnection failed: %v", err)
+	}
+	for _, m := range conn.MemberGroups {
+		if m.GroupID == groupC {
+			t.Fatalf("blocked group C was not evicted from the shared connection")
+		}
+	}
+	if len(conn.MemberGroups) != 2 {
+		t.Errorf("expected 2 remaining members after eviction, got %d", len(conn.MemberGroups))
+	}
+}
+
 func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	db := testDB(t)
 	repo := NewConnectionRepository(db)

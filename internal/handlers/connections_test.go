@@ -985,6 +985,108 @@ func TestConnectionHandler_ListConnectionResources_VisibilityFiltering(t *testin
 	}
 }
 
+// TestConnectionHandler_GetConnection_NonAdminMemberAllowed verifies the access
+// model is consistent: a non-admin member of a connected group can fetch
+// connection detail (so the detail page renders), while a non-member gets 403.
+func TestConnectionHandler_GetConnection_NonAdminMemberAllowed(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	admin := s.createTestUser("conn_get_nm_admin", 1, false)
+	admin.VouchVerified = true
+	member := s.createTestUser("conn_get_nm_member", 1, false)
+	member.VouchVerified = true
+	outsider := s.createTestUser("conn_get_nm_outsider", 1, false)
+	outsider.VouchVerified = true
+	region := s.createTestRegion("Conn Get NM Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Get NM A", admin.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Get NM B", admin.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	defer s.cleanup([]string{admin.ID, member.ID, outsider.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	if err := s.groupRepo.AddMember(context.Background(), groupA.ID, member.ID, false, false); err != nil {
+		t.Fatalf("AddMember failed: %v", err)
+	}
+
+	// Non-admin member of a connected group: 200.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"?id="+connectionID, nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(member)))
+	rr := httptest.NewRecorder()
+	s.handler.GetConnection(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("non-admin member expected 200 from GetConnection, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Non-member of any connected group: 403.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"?id="+connectionID, nil)
+	req2 = req2.WithContext(context.WithValue(req2.Context(), middleware.UserContextKey, s.claimsForUser(outsider)))
+	rr2 := httptest.NewRecorder()
+	s.handler.GetConnection(rr2, req2)
+	if rr2.Code != http.StatusForbidden {
+		t.Fatalf("non-member expected 403 from GetConnection, got %d", rr2.Code)
+	}
+}
+
+// TestConnectionHandler_ListConnectionSignalGroups_TierFiltering verifies a
+// non-admin member sees only all_members (member-tier) chats, while an admin sees
+// admin_only chats too.
+func TestConnectionHandler_ListConnectionSignalGroups_TierFiltering(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	ctx := context.Background()
+	admin := s.createTestUser("conn_sg_tier_admin", 1, false)
+	admin.VouchVerified = true
+	member := s.createTestUser("conn_sg_tier_member", 1, false)
+	member.VouchVerified = true
+	region := s.createTestRegion("Conn SG Tier Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group SG Tier A", admin.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group SG Tier B", admin.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+	defer s.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	if err := s.groupRepo.AddMember(ctx, groupA.ID, member.ID, false, false); err != nil {
+		t.Fatalf("AddMember failed: %v", err)
+	}
+
+	// Two connection chats: one member-tier (all_members), one admin_only.
+	for _, c := range []struct{ name, tier string }{
+		{"Members Chat", "member"},
+		{"Admins Chat", "admin_only"},
+	} {
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, access_tier, created_by, created_at, is_active)
+			 VALUES (UUID(), NULL, NULL, NULL, NULL, ?, ?, ?, NULL, NOW(), TRUE)`,
+			connectionID, c.name, c.tier)
+		if err != nil {
+			t.Fatalf("insert connection chat %q failed: %v", c.name, err)
+		}
+	}
+
+	listAs := func(u *models.User) []interface{} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups?id="+connectionID, nil)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(u)))
+		rr := httptest.NewRecorder()
+		s.handler.ListConnectionSignalGroups(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&body)
+		sgs, _ := body["signal_groups"].([]interface{})
+		return sgs
+	}
+
+	// Admin sees both chats.
+	if got := len(listAs(admin)); got != 2 {
+		t.Errorf("admin should see 2 connection chats, got %d", got)
+	}
+	// Non-admin member sees only the member-tier chat.
+	memberChats := listAs(member)
+	if len(memberChats) != 1 {
+		t.Fatalf("non-admin member should see 1 (member-tier) chat, got %d", len(memberChats))
+	}
+	if tier := memberChats[0].(map[string]interface{})["access_tier"]; tier == "admin_only" {
+		t.Errorf("non-admin member must not see admin_only chat")
+	}
+}
+
 // TestConnectionHandler_ListConnectionResources_NonAdminMemberAllowed verifies a
 // regular (non-admin) member of a connected group reaches the handler (not 403)
 // and receives only all_members resources.

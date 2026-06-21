@@ -332,6 +332,27 @@ func (r *ConnectionRepository) expandConnection(ctx context.Context, tx *sql.Tx,
 	}
 
 	for _, groupID := range newGroupIDs {
+		// Re-check blocks at finalize time (TOCTOU): a current member may have
+		// blocked this group, or vice-versa, after voting to accept. Skip rather
+		// than add a group that is now block-incompatible with the connection.
+		var blocked bool
+		blockErr := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM connection_members cm
+				JOIN group_blocks gb
+					ON (gb.blocker_group_id = cm.group_id AND gb.blocked_group_id = ?)
+					OR (gb.blocker_group_id = ? AND gb.blocked_group_id = cm.group_id)
+				WHERE cm.connection_id = ?
+			)`,
+			groupID, groupID, connectionID,
+		).Scan(&blocked)
+		if blockErr != nil {
+			return fmt.Errorf("check expansion block: %w", blockErr)
+		}
+		if blocked {
+			continue
+		}
+
 		memberID := uuid.New().String()
 		_, err = tx.ExecContext(ctx,
 			"INSERT INTO connection_members (id, connection_id, group_id, joined_at) VALUES (?, ?, ?, ?)",
@@ -638,6 +659,7 @@ func (r *ConnectionRepository) LeaveConnection(ctx context.Context, connectionID
 		return nil
 	})
 }
+
 
 // CheckUnanimousBlock checks if ALL other member groups in the connection have blocked the given group.
 func (r *ConnectionRepository) CheckUnanimousBlock(ctx context.Context, connectionID, groupID string) (bool, error) {

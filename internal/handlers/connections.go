@@ -264,22 +264,24 @@ func (h *ConnectionHandler) GetConnection(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Verify user is admin of at least one member group
+	// Any member of a connected group may view connection detail (name + member
+	// roster) so the detail page can render. Admin-only content (admin_only chats
+	// and resources) is filtered by its own endpoints. Non-members are rejected.
 	hasAccess := false
 	for _, member := range connection.MemberGroups {
-		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
-		if adminErr != nil {
-			writeServerError(w, r, adminErr, "Failed to check admin status", "connection", "get")
+		isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), member.GroupID, claims.UserID)
+		if memberErr != nil {
+			writeServerError(w, r, memberErr, "Failed to check membership", "connection", "get")
 			return
 		}
-		if isAdmin {
+		if isMember {
 			hasAccess = true
 			break
 		}
 	}
 
 	if !hasAccess {
-		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		writeError(w, http.StatusForbidden, "forbidden", "Must be a member of a connected group")
 		return
 	}
 
@@ -623,8 +625,10 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		return
 	}
 
-	// Verify user is admin of at least one member group
+	// Any member of a connected group may list connection chats; admins of a
+	// connected group additionally see admin_only chats. Non-members are rejected.
 	hasAccess := false
+	isAdminOfAny := false
 	for _, member := range connection.MemberGroups {
 		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
 		if adminErr != nil {
@@ -633,12 +637,21 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		}
 		if isAdmin {
 			hasAccess = true
+			isAdminOfAny = true
 			break
+		}
+		isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), member.GroupID, claims.UserID)
+		if memberErr != nil {
+			writeServerError(w, r, memberErr, "Failed to check membership", "connection", "list_signal_groups")
+			return
+		}
+		if isMember {
+			hasAccess = true
 		}
 	}
 
 	if !hasAccess {
-		writeError(w, http.StatusForbidden, "forbidden", "Must be admin of a member group")
+		writeError(w, http.StatusForbidden, "forbidden", "Must be a member of a connected group")
 		return
 	}
 
@@ -648,12 +661,17 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		return
 	}
 
-	if groups == nil {
-		groups = []*models.SignalGroup{}
+	// Non-admins only see all_members (member-tier) chats; admin_only chats are
+	// withheld unless the caller is an admin of a connected group.
+	filtered := make([]*models.SignalGroup, 0, len(groups))
+	for _, g := range groups {
+		if isAdminOfAny || g.AccessTier != models.AccessTierAdminOnly {
+			filtered = append(filtered, g)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"signal_groups": groups,
+		"signal_groups": filtered,
 	})
 }
 

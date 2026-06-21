@@ -1538,14 +1538,85 @@ func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blocke
 		return ErrCannotBlockSelf
 	}
 
-	id := uuid.New().String()
-	query := `INSERT INTO group_blocks (id, blocker_group_id, blocked_group_id) VALUES (?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, query, id, blockerGroupID, blockedGroupID)
-	if err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
-			return ErrGroupAlreadyBlocked
+	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		id := uuid.New().String()
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO group_blocks (id, blocker_group_id, blocked_group_id) VALUES (?, ?, ?)`,
+			id, blockerGroupID, blockedGroupID,
+		)
+		if err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return ErrGroupAlreadyBlocked
+			}
+			return fmt.Errorf("block group: %w", err)
 		}
-		return fmt.Errorf("block group: %w", err)
+
+		// Sever the connection edge directly: remove the blocked group from every
+		// connection the blocker also belongs to (a single block is enough — we do
+		// not wait for a unanimous block). Dissolve connections that fall below two
+		// members.
+		if err := evictBlockedFromSharedConnectionsTx(ctx, tx, blockerGroupID, blockedGroupID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// evictBlockedFromSharedConnectionsTx removes blockedGroupID from every connection
+// that blockerGroupID also belongs to, dissolving any that drop below two members.
+func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blockerGroupID, blockedGroupID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT cm_blocker.connection_id
+		FROM connection_members cm_blocker
+		JOIN connection_members cm_blocked
+			ON cm_blocker.connection_id = cm_blocked.connection_id
+		WHERE cm_blocker.group_id = ? AND cm_blocked.group_id = ?
+	`, blockerGroupID, blockedGroupID)
+	if err != nil {
+		return fmt.Errorf("find shared connections: %w", err)
+	}
+	var connectionIDs []string
+	for rows.Next() {
+		var cid string
+		if scanErr := rows.Scan(&cid); scanErr != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan shared connection: %w", scanErr)
+		}
+		connectionIDs = append(connectionIDs, cid)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return rowsErr
+	}
+	_ = rows.Close()
+
+	for _, connectionID := range connectionIDs {
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM connection_members WHERE connection_id = ? AND group_id = ?",
+			connectionID, blockedGroupID,
+		); err != nil {
+			return fmt.Errorf("evict blocked group: %w", err)
+		}
+
+		var remaining int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM connection_members WHERE connection_id = ?",
+			connectionID,
+		).Scan(&remaining); err != nil {
+			return fmt.Errorf("count remaining after evict: %w", err)
+		}
+		if remaining <= 1 {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM connections WHERE id = ?", connectionID); err != nil {
+				return fmt.Errorf("dissolve connection after evict: %w", err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx,
+				"DELETE FROM connection_proposals WHERE connection_id = ? AND status = 'pending'",
+				connectionID,
+			); err != nil {
+				return fmt.Errorf("cleanup pending proposals after evict: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -1610,6 +1681,48 @@ func (r *GroupRepository) ListBlockedGroups(ctx context.Context, groupID string)
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
+}
+
+// =============================================================================
+// Per-Group User Bans
+// =============================================================================
+
+// BlockUser bans a user from a group. blockedBy/reason are optional.
+func (r *GroupRepository) BlockUser(ctx context.Context, groupID, userID string, blockedBy *string, reason *string) error {
+	id := uuid.New().String()
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO group_blocked_users (id, group_id, user_id, blocked_by, reason) VALUES (?, ?, ?, ?, ?)`,
+		id, groupID, userID, blockedBy, reason,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			return nil // already blocked — idempotent
+		}
+		return fmt.Errorf("block user: %w", err)
+	}
+	return nil
+}
+
+// UnblockUser lifts a user ban from a group.
+func (r *GroupRepository) UnblockUser(ctx context.Context, groupID, userID string) error {
+	_, err := r.db.ExecContext(ctx,
+		"DELETE FROM group_blocked_users WHERE group_id = ? AND user_id = ?",
+		groupID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("unblock user: %w", err)
+	}
+	return nil
+}
+
+// IsUserBlockedFromGroup reports whether a user is banned from a group.
+func (r *GroupRepository) IsUserBlockedFromGroup(ctx context.Context, groupID, userID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM group_blocked_users WHERE group_id = ? AND user_id = ?)",
+		groupID, userID,
+	).Scan(&exists)
+	return exists, err
 }
 
 // =============================================================================

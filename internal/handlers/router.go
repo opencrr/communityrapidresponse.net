@@ -526,6 +526,31 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for blocked-users sub-route:
+	//   POST   /api/v1/groups/{id}/blocked-users          → ban a user
+	//   DELETE /api/v1/groups/{id}/blocked-users/{userID} → lift a ban
+	if len(parts) >= 2 && parts[1] == "blocked-users" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		if len(parts) >= 3 && parts[2] != "" {
+			q.Set("user_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.groups.UnblockMember)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+		req.URL.RawQuery = q.Encode()
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.BlockMember)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
 	// Check for leave sub-route
 	if len(parts) >= 2 && parts[1] == "leave" {
 		q := req.URL.Query()

@@ -140,7 +140,7 @@ func (h *GroupHandler) Browse(w http.ResponseWriter, r *http.Request) {
 		// Check if user is verified in this region
 		includeDiscoverable := false
 		if claims.VouchVerified {
-			inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+			inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, regionID)
 			if regionErr != nil {
 				writeServerError(w, r, regionErr, "Failed to check region membership", "group", "browse")
 				return
@@ -200,9 +200,10 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify user is a member of each region
+	// Verify user is a *verified* member of each region (pending memberships,
+	// created the moment someone types an address, must not qualify).
 	for _, regionID := range req.RegionIDs {
-		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
+		isMember, err := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, regionID)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to verify region membership", "group", "create_group")
 			return
@@ -553,6 +554,118 @@ func (h *GroupHandler) Leave(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// BlockMember handles POST /api/v1/groups/:id/blocked-users — bans a user from the
+// group (admin only) and removes any current membership, so they cannot rejoin via
+// link, invitation, or vouch.
+func (h *GroupHandler) BlockMember(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	if groupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID required")
+		return
+	}
+
+	if !h.requireGroupAdmin(w, r, groupID, claims.UserID, "block_member") {
+		return
+	}
+
+	var req struct {
+		UserID string `json:"user_id" validate:"required"`
+		Reason string `json:"reason" validate:"max=500"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+	if req.UserID == claims.UserID {
+		writeError(w, http.StatusBadRequest, "invalid_request", "You cannot block yourself")
+		return
+	}
+
+	var reason *string
+	if req.Reason != "" {
+		reason = &req.Reason
+	}
+	if err := h.groupRepo.BlockUser(r.Context(), groupID, req.UserID, &claims.UserID, reason); err != nil {
+		writeServerError(w, r, err, "Failed to block user", "group", "block_member")
+		return
+	}
+	// Remove any existing membership so the ban takes effect immediately.
+	if err := h.groupRepo.RemoveMember(r.Context(), groupID, req.UserID); err != nil {
+		writeServerError(w, r, err, "Failed to remove member", "group", "block_member")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupMemberRemoved, &resourceType, &groupID, map[string]interface{}{
+			"user_id": req.UserID,
+			"action":  "block",
+		}), "group_member_blocked")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "User blocked from group"})
+}
+
+// UnblockMember handles DELETE /api/v1/groups/:id/blocked-users/:userID — lifts a
+// user ban (admin only).
+func (h *GroupHandler) UnblockMember(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	groupID := getPathParam(r, "id")
+	targetUserID := getPathParam(r, "user_id")
+	if groupID == "" || targetUserID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Group ID and user ID required")
+		return
+	}
+
+	if !h.requireGroupAdmin(w, r, groupID, claims.UserID, "unblock_member") {
+		return
+	}
+
+	if err := h.groupRepo.UnblockUser(r.Context(), groupID, targetUserID); err != nil {
+		writeServerError(w, r, err, "Failed to unblock user", "group", "unblock_member")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "User unblocked"})
+}
+
+// requireGroupAdmin verifies the caller is an admin of the group or a superuser.
+// Writes the appropriate error and returns false if not.
+func (h *GroupHandler) requireGroupAdmin(w http.ResponseWriter, r *http.Request, groupID, userID, op string) bool {
+	isAdmin, err := h.groupRepo.IsUserAdmin(r.Context(), groupID, userID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check admin status", "group", op)
+		return false
+	}
+	if isAdmin {
+		return true
+	}
+	isSuperuser, ok := h.verifySuperuser(w, r, userID)
+	if !ok {
+		return false
+	}
+	if !isSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a group admin")
+		return false
+	}
+	return true
+}
+
 // CreateInviteLink handles POST /api/v1/groups/:id/invite-links
 func (h *GroupHandler) CreateInviteLink(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
@@ -708,6 +821,15 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = group // group existence verified; provisional groups allowed for graduation flow
 
+	// Refuse banned users (keeps a removed/kicked user from rejoining via a link).
+	if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), link.GroupID, claims.UserID); blockErr != nil {
+		writeServerError(w, r, blockErr, "Failed to check block status", "group", "join_via_link")
+		return
+	} else if blocked {
+		writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
+		return
+	}
+
 	// Check if user is already a member
 	isMember, err := h.groupRepo.IsUserMember(r.Context(), link.GroupID, claims.UserID)
 	if err != nil {
@@ -799,6 +921,15 @@ func (h *GroupHandler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Refuse to invite a banned user.
+	if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), groupID, req.UserID); blockErr != nil {
+		writeServerError(w, r, blockErr, "Failed to check block status", "group", "create_invitation")
+		return
+	} else if blocked {
+		writeError(w, http.StatusForbidden, "blocked", "This user cannot be invited to the group")
+		return
+	}
+
 	// Check if target user is already a member
 	targetIsMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, req.UserID)
 	if err != nil {
@@ -876,6 +1007,15 @@ func (h *GroupHandler) VouchForMember(w http.ResponseWriter, r *http.Request) {
 
 	if req.UserID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "User ID is required")
+		return
+	}
+
+	// Refuse to vouch for a banned user (no path to elevate a blocked member).
+	if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), groupID, req.UserID); blockErr != nil {
+		writeServerError(w, r, blockErr, "Failed to check block status", "group", "trust_vouch")
+		return
+	} else if blocked {
+		writeError(w, http.StatusForbidden, "blocked", "This user cannot be vouched for")
 		return
 	}
 
@@ -1022,6 +1162,36 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 	}
 
 	if req.Accept {
+		// Defense-in-depth: refuse if the invitee has since been banned from the group.
+		if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), invitation.GroupID, claims.UserID); blockErr != nil {
+			writeServerError(w, r, blockErr, "Failed to check block status", "group", "respond_to_invitation")
+			return
+		} else if blocked {
+			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
+			return
+		}
+
+		// Re-validate the inviter is still a member at accept time — a stale
+		// invitation from someone who has left should not grant membership.
+		if invitation.InvitedBy != nil {
+			inviterStillMember, err := h.groupRepo.IsUserMember(r.Context(), invitation.GroupID, *invitation.InvitedBy)
+			if err != nil {
+				writeServerError(w, r, err, "Failed to validate inviter", "group", "respond_to_invitation")
+				return
+			}
+			if !inviterStillMember {
+				inviterIsSuper, suErr := isSuperuserFromDB(r.Context(), h.userRepo, *invitation.InvitedBy)
+				if suErr != nil {
+					writeServerError(w, r, suErr, "Failed to validate inviter", "group", "respond_to_invitation")
+					return
+				}
+				if !inviterIsSuper {
+					writeError(w, http.StatusConflict, "inviter_left", "The member who invited you is no longer in this group")
+					return
+				}
+			}
+		}
+
 		if err := h.groupRepo.AddMember(r.Context(), invitation.GroupID, claims.UserID, false, false); err != nil {
 			writeServerError(w, r, err, "Failed to add member", "group", "respond_to_invitation")
 			return
@@ -1209,7 +1379,7 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	for _, region := range regions {
-		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, region.ID)
 		if regionErr != nil {
 			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_signal_groups")
 			return
@@ -1367,7 +1537,7 @@ func (h *GroupHandler) ListResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, region := range regions {
-		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, region.ID)
 		if regionErr != nil {
 			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_resources")
 			return
@@ -2081,7 +2251,7 @@ func (h *GroupHandler) ListMeshtasticChannels(w http.ResponseWriter, r *http.Req
 		return
 	}
 	for _, region := range regions {
-		inRegion, regionErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, region.ID)
+		inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, region.ID)
 		if regionErr != nil {
 			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "list_meshtastic_channels")
 			return
