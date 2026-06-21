@@ -1082,6 +1082,28 @@ func (r *GroupRepository) ListPendingInvitationsForGroup(ctx context.Context, gr
 }
 
 // RespondToInvitation accepts or declines an invitation. Does NOT add the user to the group.
+// GetInvitation reads an invitation by ID without mutating it. Used to run
+// accept-time checks (blocked invitee, inviter still a member) before the
+// invitation is marked accepted, so a rejected accept leaves it pending.
+func (r *GroupRepository) GetInvitation(ctx context.Context, invitationID string) (*models.GroupInvitation, error) {
+	var invitation models.GroupInvitation
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at
+		FROM group_invitations
+		WHERE id = ?
+	`, invitationID).Scan(
+		&invitation.ID, &invitation.GroupID, &invitation.UserID, &invitation.InvitedBy,
+		&invitation.Status, &invitation.CreatedAt, &invitation.ExpiresAt, &invitation.RespondedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInvitationNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get invitation: %w", err)
+	}
+	return &invitation, nil
+}
+
 func (r *GroupRepository) RespondToInvitation(ctx context.Context, invitationID, userID string, accept bool) (*models.GroupInvitation, error) {
 	query := `
 		SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at

@@ -790,19 +790,14 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate and consume the invite link
-	link, err := h.groupRepo.ConsumeInviteLink(r.Context(), token)
+	// Resolve the link WITHOUT consuming it, so disallowed joins (banned user,
+	// already a member, missing group) never burn a use. The authoritative
+	// validate-and-increment happens via ConsumeInviteLink only once the join is
+	// actually permitted.
+	link, err := h.groupRepo.GetInviteLinkByToken(r.Context(), token)
 	if err != nil {
 		if errors.Is(err, database.ErrInviteLinkNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "Invite link not found")
-			return
-		}
-		if errors.Is(err, database.ErrInviteLinkExpired) {
-			writeError(w, http.StatusGone, "expired", "Invite link has expired")
-			return
-		}
-		if errors.Is(err, database.ErrInviteLinkExhausted) {
-			writeError(w, http.StatusGone, "exhausted", "Invite link has reached its maximum uses")
 			return
 		}
 		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
@@ -838,6 +833,26 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if isMember {
 		writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
+		return
+	}
+
+	// Join is permitted — now consume the link (validates expiry/exhaustion and
+	// increments use_count atomically under a row lock).
+	link, err = h.groupRepo.ConsumeInviteLink(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, database.ErrInviteLinkNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Invite link not found")
+			return
+		}
+		if errors.Is(err, database.ErrInviteLinkExpired) {
+			writeError(w, http.StatusGone, "expired", "Invite link has expired")
+			return
+		}
+		if errors.Is(err, database.ErrInviteLinkExhausted) {
+			writeError(w, http.StatusGone, "exhausted", "Invite link has reached its maximum uses")
+			return
+		}
+		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
 		return
 	}
 
@@ -1147,6 +1162,58 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// For an accept, run the gating checks BEFORE marking the invitation accepted,
+	// so a rejected accept (banned invitee / departed inviter) leaves the
+	// invitation pending rather than consuming it.
+	if req.Accept {
+		inv, err := h.groupRepo.GetInvitation(r.Context(), invitationID)
+		if err != nil {
+			if errors.Is(err, database.ErrInvitationNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
+				return
+			}
+			writeServerError(w, r, err, "Failed to load invitation", "group", "respond_to_invitation")
+			return
+		}
+		// Only the invitee may respond (mirrors RespondToInvitation's ownership check).
+		if inv.UserID != claims.UserID {
+			writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
+			return
+		}
+
+		// Refuse if the invitee has since been banned from the group.
+		if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), inv.GroupID, claims.UserID); blockErr != nil {
+			writeServerError(w, r, blockErr, "Failed to check block status", "group", "respond_to_invitation")
+			return
+		} else if blocked {
+			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
+			return
+		}
+
+		// Re-validate the inviter is still a member — a stale invitation from
+		// someone who has left should not grant membership.
+		if inv.InvitedBy != nil {
+			inviterStillMember, err := h.groupRepo.IsUserMember(r.Context(), inv.GroupID, *inv.InvitedBy)
+			if err != nil {
+				writeServerError(w, r, err, "Failed to validate inviter", "group", "respond_to_invitation")
+				return
+			}
+			if !inviterStillMember {
+				inviterIsSuper, suErr := isSuperuserFromDB(r.Context(), h.userRepo, *inv.InvitedBy)
+				if suErr != nil {
+					writeServerError(w, r, suErr, "Failed to validate inviter", "group", "respond_to_invitation")
+					return
+				}
+				if !inviterIsSuper {
+					writeError(w, http.StatusConflict, "inviter_left", "The member who invited you is no longer in this group")
+					return
+				}
+			}
+		}
+	}
+
+	// Mark the invitation accepted/declined (re-validates ownership, pending
+	// status, and expiry under its own read).
 	invitation, err := h.groupRepo.RespondToInvitation(r.Context(), invitationID, claims.UserID, req.Accept)
 	if err != nil {
 		if errors.Is(err, database.ErrInvitationNotFound) {
@@ -1162,36 +1229,6 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 	}
 
 	if req.Accept {
-		// Defense-in-depth: refuse if the invitee has since been banned from the group.
-		if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), invitation.GroupID, claims.UserID); blockErr != nil {
-			writeServerError(w, r, blockErr, "Failed to check block status", "group", "respond_to_invitation")
-			return
-		} else if blocked {
-			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
-			return
-		}
-
-		// Re-validate the inviter is still a member at accept time — a stale
-		// invitation from someone who has left should not grant membership.
-		if invitation.InvitedBy != nil {
-			inviterStillMember, err := h.groupRepo.IsUserMember(r.Context(), invitation.GroupID, *invitation.InvitedBy)
-			if err != nil {
-				writeServerError(w, r, err, "Failed to validate inviter", "group", "respond_to_invitation")
-				return
-			}
-			if !inviterStillMember {
-				inviterIsSuper, suErr := isSuperuserFromDB(r.Context(), h.userRepo, *invitation.InvitedBy)
-				if suErr != nil {
-					writeServerError(w, r, suErr, "Failed to validate inviter", "group", "respond_to_invitation")
-					return
-				}
-				if !inviterIsSuper {
-					writeError(w, http.StatusConflict, "inviter_left", "The member who invited you is no longer in this group")
-					return
-				}
-			}
-		}
-
 		if err := h.groupRepo.AddMember(r.Context(), invitation.GroupID, claims.UserID, false, false); err != nil {
 			writeServerError(w, r, err, "Failed to add member", "group", "respond_to_invitation")
 			return

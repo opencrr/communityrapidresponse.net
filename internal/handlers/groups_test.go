@@ -2861,6 +2861,157 @@ func TestGroupHandler_BlockedUserCannotRejoin(t *testing.T) {
 	}
 }
 
+// TestGroupHandler_RespondToInvitation_RejectedAcceptStaysPending verifies that a
+// failed accept (blocked invitee or departed inviter) does NOT mark the invitation
+// accepted — it remains pending so it isn't silently consumed.
+func TestGroupHandler_RespondToInvitation_RejectedAcceptStaysPending(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("grp_inv_pend_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	inviter := suite.createTestUser("grp_inv_pend_inviter", models.TierVouched, false)
+	inviter.VouchVerified = true
+	blockedUser := suite.createTestUser("grp_inv_pend_blocked", models.TierVouched, false)
+	blockedUser.VouchVerified = true
+	staleUser := suite.createTestUser("grp_inv_pend_stale", models.TierVouched, false)
+	staleUser.VouchVerified = true
+	region := suite.createTestRegion("GrpInvPendRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Inv Pending Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	_ = suite.groupRepo.AddMember(ctx, group.ID, inviter.ID, false, false)
+	defer suite.cleanup([]string{admin.ID, inviter.ID, blockedUser.ID, staleUser.ID}, []string{region.ID}, []string{group.ID})
+
+	respondAccept := func(invitationID string, u *models.User) int {
+		body, _ := json.Marshal(models.RespondToGroupInvitationRequest{Accept: true})
+		req := httptest.NewRequest("POST", "/api/v1/group-invitations/"+invitationID+"/respond?id="+invitationID, bytes.NewReader(body))
+		req = req.WithContext(middleware.ContextWithUser(req.Context(), suite.claimsForUser(u)))
+		rec := httptest.NewRecorder()
+		suite.handler.RespondToInvitation(rec, req)
+		return rec.Code
+	}
+	invitationStatus := func(invitationID string) string {
+		inv, gErr := suite.groupRepo.GetInvitation(ctx, invitationID)
+		if gErr != nil {
+			t.Fatalf("GetInvitation failed: %v", gErr)
+		}
+		return string(inv.Status)
+	}
+
+	// Case 1: blocked invitee.
+	inv1, err := suite.groupRepo.CreateInvitation(ctx, group.ID, blockedUser.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("CreateInvitation failed: %v", err)
+	}
+	if err := suite.groupRepo.BlockUser(ctx, group.ID, blockedUser.ID, &admin.ID, nil); err != nil {
+		t.Fatalf("BlockUser failed: %v", err)
+	}
+	if code := respondAccept(inv1.ID, blockedUser); code != http.StatusForbidden {
+		t.Errorf("blocked invitee accept: expected 403, got %d", code)
+	}
+	if s := invitationStatus(inv1.ID); s != "pending" {
+		t.Errorf("blocked invitee: invitation should remain pending, got %q", s)
+	}
+
+	// Case 2: stale inviter (inviter leaves before invitee accepts).
+	inv2, err := suite.groupRepo.CreateInvitation(ctx, group.ID, staleUser.ID, inviter.ID)
+	if err != nil {
+		t.Fatalf("CreateInvitation failed: %v", err)
+	}
+	if err := suite.groupRepo.RemoveMember(ctx, group.ID, inviter.ID); err != nil {
+		t.Fatalf("RemoveMember failed: %v", err)
+	}
+	if code := respondAccept(inv2.ID, staleUser); code != http.StatusConflict {
+		t.Errorf("stale inviter accept: expected 409, got %d", code)
+	}
+	if s := invitationStatus(inv2.ID); s != "pending" {
+		t.Errorf("stale inviter: invitation should remain pending, got %q", s)
+	}
+}
+
+// TestGroupHandler_JoinViaLink_DisallowedJoinDoesNotBurnUse verifies blocked and
+// already-member join attempts do not increment the invite link's use_count.
+func TestGroupHandler_JoinViaLink_DisallowedJoinDoesNotBurnUse(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	suite.handler.SetRateLimiter(services.NewInMemoryRateLimiter())
+	ctx := context.Background()
+
+	admin := suite.createTestUser("grp_burn_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	blockedUser := suite.createTestUser("grp_burn_blocked", models.TierVouched, false)
+	blockedUser.VouchVerified = true
+	memberUser := suite.createTestUser("grp_burn_member", models.TierVouched, false)
+	memberUser.VouchVerified = true
+	region := suite.createTestRegion("GrpBurnRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Burn Test Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	defer suite.cleanup([]string{admin.ID, blockedUser.ID, memberUser.ID}, []string{region.ID}, []string{group.ID})
+
+	_ = suite.groupRepo.BlockUser(ctx, group.ID, blockedUser.ID, &admin.ID, nil)
+	_ = suite.groupRepo.AddMember(ctx, group.ID, memberUser.ID, false, false)
+
+	link, err := suite.groupRepo.CreateInviteLink(ctx, group.ID, admin.ID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("CreateInviteLink failed: %v", err)
+	}
+
+	join := func(u *models.User) int {
+		req := httptest.NewRequest("POST", "/api/v1/groups/join/"+link.Token+"?token="+link.Token, nil)
+		req = req.WithContext(middleware.ContextWithUser(req.Context(), suite.claimsForUser(u)))
+		rec := httptest.NewRecorder()
+		suite.handler.JoinViaLink(rec, req)
+		return rec.Code
+	}
+	useCount := func() int {
+		l, gErr := suite.groupRepo.GetInviteLinkByToken(ctx, link.Token)
+		if gErr != nil {
+			t.Fatalf("GetInviteLinkByToken failed: %v", gErr)
+		}
+		return l.UseCount
+	}
+
+	if uc := useCount(); uc != 0 {
+		t.Fatalf("precondition: expected use_count 0, got %d", uc)
+	}
+
+	if code := join(blockedUser); code != http.StatusForbidden {
+		t.Errorf("blocked join: expected 403, got %d", code)
+	}
+	if uc := useCount(); uc != 0 {
+		t.Errorf("blocked join must not burn a use; use_count=%d", uc)
+	}
+
+	if code := join(memberUser); code != http.StatusConflict {
+		t.Errorf("already-member join: expected 409, got %d", code)
+	}
+	if uc := useCount(); uc != 0 {
+		t.Errorf("already-member join must not burn a use; use_count=%d", uc)
+	}
+
+	// Sanity: an allowed join DOES consume one use.
+	newUser := suite.createTestUser("grp_burn_ok", models.TierVouched, false)
+	newUser.VouchVerified = true
+	defer suite.cleanup([]string{newUser.ID}, nil, nil)
+	if code := join(newUser); code != http.StatusOK {
+		t.Fatalf("allowed join: expected 200, got %d", code)
+	}
+	if uc := useCount(); uc != 1 {
+		t.Errorf("allowed join should increment use_count to 1, got %d", uc)
+	}
+}
+
 func TestGroupHandler_ListResources_FilteredByAccessTier(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
