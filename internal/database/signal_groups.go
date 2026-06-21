@@ -413,7 +413,13 @@ func (r *SignalGroupRepository) ListByConnection(ctx context.Context, connection
 	return groups, nil
 }
 
-// CreateForOwnerGroup creates a signal group owned by a group (not a region/school/district)
+// CreateForOwnerGroup creates a signal group owned by a group (not a region/school/district).
+//
+// ENCRYPTION LIMITATION: group-owned chats are metadata-only today. There is no
+// recipient public-key enumeration for the group scope (see the GetPublicKeys
+// handler), so wrapped DEKs are not provisioned and there is no revocation path on
+// membership/tier change. Wiring encryption here is a tracked follow-up and must
+// land together with revocation.
 func (r *SignalGroupRepository) CreateForOwnerGroup(ctx context.Context, group *models.SignalGroup) error {
 	if group.OwnerGroupID == nil || *group.OwnerGroupID == "" {
 		return errors.New("owner_group_id is required")

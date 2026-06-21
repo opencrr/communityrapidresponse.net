@@ -595,13 +595,10 @@ func (h *GroupHandler) BlockMember(w http.ResponseWriter, r *http.Request) {
 	if req.Reason != "" {
 		reason = &req.Reason
 	}
-	if err := h.groupRepo.BlockUser(r.Context(), groupID, req.UserID, &claims.UserID, reason); err != nil {
+	// Ban + remove in one transaction so a ban can't leave the user
+	// blocked-but-still-a-member if the removal fails.
+	if err := h.groupRepo.BlockAndRemoveMember(r.Context(), groupID, req.UserID, &claims.UserID, reason); err != nil {
 		writeServerError(w, r, err, "Failed to block user", "group", "block_member")
-		return
-	}
-	// Remove any existing membership so the ban takes effect immediately.
-	if err := h.groupRepo.RemoveMember(r.Context(), groupID, req.UserID); err != nil {
-		writeServerError(w, r, err, "Failed to remove member", "group", "block_member")
 		return
 	}
 

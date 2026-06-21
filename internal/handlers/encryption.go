@@ -216,6 +216,14 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
 
+	// SCOPE LIMITATION: only region/school/district recipient enumeration exists.
+	// Group- and connection-owned signal chats are intentionally NOT supported here
+	// yet (they are metadata-only — see DESIGN/PR "Known limitations"). Do NOT add
+	// group_id/connection_id branches without also landing DEK revocation
+	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
+	// connection-leave / tier-downgrade. Enumeration without revocation lets a
+	// removed member who cached the unwrapped DEK keep decrypting.
+
 	// Exactly one scope must be provided
 	scopeCount := 0
 	if regionID != "" {

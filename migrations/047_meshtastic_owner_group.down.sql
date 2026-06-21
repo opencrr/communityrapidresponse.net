@@ -4,6 +4,8 @@ DELETE FROM meshtastic_channels WHERE owner_group_id IS NOT NULL;
 -- Drop the active 4-way XOR CHECK by its real name (looked up rather than assumed,
 -- mirroring the up migration so a rename in either direction can't leave a stale
 -- constraint behind).
+-- INVARIANT: meshtastic_channels has exactly ONE CHECK constraint here (the owner
+-- XOR), so LIMIT 1 is unambiguous; make this specific if a second CHECK is ever added.
 SET @cur_check := (
     SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
     WHERE TABLE_SCHEMA = DATABASE()

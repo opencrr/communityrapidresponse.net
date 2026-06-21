@@ -1902,6 +1902,28 @@ func (r *GroupRepository) BlockUser(ctx context.Context, groupID, userID string,
 	return nil
 }
 
+// BlockAndRemoveMember bans a user and removes any current membership in one
+// transaction, so a ban can never leave the user blocked-but-still-a-member if the
+// removal fails. The block insert is idempotent (duplicate ban → no-op).
+func (r *GroupRepository) BlockAndRemoveMember(ctx context.Context, groupID, userID string, blockedBy *string, reason *string) error {
+	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO group_blocked_users (id, group_id, user_id, blocked_by, reason) VALUES (?, ?, ?, ?, ?)`,
+			uuid.New().String(), groupID, userID, blockedBy, reason,
+		)
+		if err != nil && !strings.Contains(err.Error(), "Duplicate entry") {
+			return fmt.Errorf("block user: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
+			groupID, userID,
+		); err != nil {
+			return fmt.Errorf("remove member: %w", err)
+		}
+		return nil
+	})
+}
+
 // UnblockUser lifts a user ban from a group.
 func (r *GroupRepository) UnblockUser(ctx context.Context, groupID, userID string) error {
 	_, err := r.db.ExecContext(ctx,

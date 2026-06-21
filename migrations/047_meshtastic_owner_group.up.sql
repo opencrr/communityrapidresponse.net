@@ -23,6 +23,11 @@ ALTER TABLE meshtastic_channels
 -- the name with DROP ... IF EXISTS silently no-ops on a mismatch, leaving the old
 -- 3-way constraint to AND with the new 4-way and reject every owner_group_id
 -- insert. Instead, look the name up from information_schema and drop it explicitly.
+-- INVARIANT: meshtastic_channels has exactly ONE CHECK constraint at this point
+-- (the owner XOR from migration 027), so LIMIT 1 unambiguously selects it. If a
+-- second, unrelated CHECK is ever added to this table, this lookup must be made
+-- specific (e.g. filter information_schema.CHECK_CONSTRAINTS by CHECK_CLAUSE) so
+-- it can't drop the wrong one.
 SET @old_check := (
     SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
     WHERE TABLE_SCHEMA = DATABASE()
