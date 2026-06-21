@@ -1077,6 +1077,49 @@ func TestGroupRepository_ConsumeInviteLink(t *testing.T) {
 	})
 }
 
+// TestGroupRepository_JoinViaInviteLink_InsertFailureRollsBack verifies the join
+// is fully transactional: when the membership insert fails (here a FK violation
+// from a non-existent user, standing in for a duplicate-member race), the whole
+// transaction rolls back and use_count is NOT incremented.
+func TestGroupRepository_JoinViaInviteLink_InsertFailureRollsBack(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	userID := createGroupTestUser(t, db, "join_tx_rollback")
+	regionID := createGroupTestRegion(t, db, "Join Tx Rollback Region")
+	group, err := repo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Join Tx Group", RegionIDs: []string{regionID},
+	}, userID)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+	})
+
+	link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+	if err != nil {
+		t.Fatalf("Setup: CreateInviteLink failed: %v", err)
+	}
+
+	// A user_id that does not exist passes the block/already-member EXISTS checks
+	// but fails the group_members FK on insert — forcing the insert to error after
+	// the link would otherwise be consumed.
+	_, err = repo.JoinViaInviteLink(ctx, link.Token, "nonexistent-user-id")
+	if err == nil {
+		t.Fatal("expected JoinViaInviteLink to fail on the membership insert")
+	}
+
+	after, err := repo.GetInviteLinkByToken(ctx, link.Token)
+	if err != nil {
+		t.Fatalf("GetInviteLinkByToken failed: %v", err)
+	}
+	if after.UseCount != 0 {
+		t.Errorf("failed membership insert must roll back the use_count increment; got %d", after.UseCount)
+	}
+}
+
 func TestGroupRepository_ListInviteLinks(t *testing.T) {
 	db := testDB(t)
 	repo := NewGroupRepository(db)

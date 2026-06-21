@@ -790,75 +790,26 @@ func (h *GroupHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the link WITHOUT consuming it, so disallowed joins (banned user,
-	// already a member, missing group) never burn a use. The authoritative
-	// validate-and-increment happens via ConsumeInviteLink only once the join is
-	// actually permitted.
-	link, err := h.groupRepo.GetInviteLinkByToken(r.Context(), token)
+	// The entire join — validate/lock the link, reject blocked/already-member
+	// users, insert the membership, and increment use_count — happens in one
+	// transaction. A failure at any step (including a duplicate-member race on the
+	// insert) rolls back, so a failed join never burns a link use.
+	link, err := h.groupRepo.JoinViaInviteLink(r.Context(), token, claims.UserID)
 	if err != nil {
-		if errors.Is(err, database.ErrInviteLinkNotFound) {
+		switch {
+		case errors.Is(err, database.ErrInviteLinkNotFound), errors.Is(err, database.ErrGroupNotFound):
 			writeError(w, http.StatusNotFound, "not_found", "Invite link not found")
-			return
-		}
-		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
-		return
-	}
-
-	// Verify the group still exists and is not in a deleted/invalid state
-	group, err := h.groupRepo.GetByID(r.Context(), link.GroupID)
-	if errors.Is(err, database.ErrGroupNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "Group not found")
-		return
-	}
-	if err != nil {
-		writeServerError(w, r, err, "Failed to verify group", "group", "join_via_link")
-		return
-	}
-	_ = group // group existence verified; provisional groups allowed for graduation flow
-
-	// Refuse banned users (keeps a removed/kicked user from rejoining via a link).
-	if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), link.GroupID, claims.UserID); blockErr != nil {
-		writeServerError(w, r, blockErr, "Failed to check block status", "group", "join_via_link")
-		return
-	} else if blocked {
-		writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
-		return
-	}
-
-	// Check if user is already a member
-	isMember, err := h.groupRepo.IsUserMember(r.Context(), link.GroupID, claims.UserID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "group", "join_via_link")
-		return
-	}
-	if isMember {
-		writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
-		return
-	}
-
-	// Join is permitted — now consume the link (validates expiry/exhaustion and
-	// increments use_count atomically under a row lock).
-	link, err = h.groupRepo.ConsumeInviteLink(r.Context(), token)
-	if err != nil {
-		if errors.Is(err, database.ErrInviteLinkNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "Invite link not found")
-			return
-		}
-		if errors.Is(err, database.ErrInviteLinkExpired) {
+		case errors.Is(err, database.ErrInviteLinkExpired):
 			writeError(w, http.StatusGone, "expired", "Invite link has expired")
-			return
-		}
-		if errors.Is(err, database.ErrInviteLinkExhausted) {
+		case errors.Is(err, database.ErrInviteLinkExhausted):
 			writeError(w, http.StatusGone, "exhausted", "Invite link has reached its maximum uses")
-			return
+		case errors.Is(err, database.ErrUserBlockedFromGroup):
+			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
+		case errors.Is(err, database.ErrGroupAlreadyMember):
+			writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
+		default:
+			writeServerError(w, r, err, "Failed to join group", "group", "join_via_link")
 		}
-		writeServerError(w, r, err, "Failed to validate invite link", "group", "join_via_link")
-		return
-	}
-
-	// Add user as regular member
-	if err := h.groupRepo.AddMember(r.Context(), link.GroupID, claims.UserID, false, false); err != nil {
-		writeServerError(w, r, err, "Failed to join group", "group", "join_via_link")
 		return
 	}
 
@@ -1162,103 +1113,68 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// For an accept, run the gating checks BEFORE marking the invitation accepted,
-	// so a rejected accept (banned invitee / departed inviter) leaves the
-	// invitation pending rather than consuming it.
-	if req.Accept {
-		inv, err := h.groupRepo.GetInvitation(r.Context(), invitationID)
-		if err != nil {
+	// Decline: simple status update, no membership change.
+	if !req.Accept {
+		if _, err := h.groupRepo.RespondToInvitation(r.Context(), invitationID, claims.UserID, false); err != nil {
 			if errors.Is(err, database.ErrInvitationNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
 				return
 			}
-			writeServerError(w, r, err, "Failed to load invitation", "group", "respond_to_invitation")
-			return
-		}
-		// Only the invitee may respond (mirrors RespondToInvitation's ownership check).
-		if inv.UserID != claims.UserID {
-			writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
-			return
-		}
-
-		// Refuse if the invitee has since been banned from the group.
-		if blocked, blockErr := h.groupRepo.IsUserBlockedFromGroup(r.Context(), inv.GroupID, claims.UserID); blockErr != nil {
-			writeServerError(w, r, blockErr, "Failed to check block status", "group", "respond_to_invitation")
-			return
-		} else if blocked {
-			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
-			return
-		}
-
-		// Re-validate the inviter is still a member — a stale invitation from
-		// someone who has left should not grant membership.
-		if inv.InvitedBy != nil {
-			inviterStillMember, err := h.groupRepo.IsUserMember(r.Context(), inv.GroupID, *inv.InvitedBy)
-			if err != nil {
-				writeServerError(w, r, err, "Failed to validate inviter", "group", "respond_to_invitation")
+			if errors.Is(err, database.ErrInvitationExpired) {
+				writeError(w, http.StatusGone, "expired", "Invitation has expired")
 				return
 			}
-			if !inviterStillMember {
-				inviterIsSuper, suErr := isSuperuserFromDB(r.Context(), h.userRepo, *inv.InvitedBy)
-				if suErr != nil {
-					writeServerError(w, r, suErr, "Failed to validate inviter", "group", "respond_to_invitation")
-					return
-				}
-				if !inviterIsSuper {
-					writeError(w, http.StatusConflict, "inviter_left", "The member who invited you is no longer in this group")
-					return
-				}
-			}
-		}
-	}
-
-	// Mark the invitation accepted/declined (re-validates ownership, pending
-	// status, and expiry under its own read).
-	invitation, err := h.groupRepo.RespondToInvitation(r.Context(), invitationID, claims.UserID, req.Accept)
-	if err != nil {
-		if errors.Is(err, database.ErrInvitationNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
+			writeServerError(w, r, err, "Failed to respond to invitation", "group", "respond_to_invitation")
 			return
 		}
-		if errors.Is(err, database.ErrInvitationExpired) {
-			writeError(w, http.StatusGone, "expired", "Invitation has expired")
-			return
-		}
-		writeServerError(w, r, err, "Failed to respond to invitation", "group", "respond_to_invitation")
-		return
-	}
-
-	if req.Accept {
-		if err := h.groupRepo.AddMember(r.Context(), invitation.GroupID, claims.UserID, false, false); err != nil {
-			writeServerError(w, r, err, "Failed to add member", "group", "respond_to_invitation")
-			return
-		}
-
-		graduated, err := h.groupRepo.CheckAndGraduate(r.Context(), invitation.GroupID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check graduation", "group", "respond_to_invitation")
-			return
-		}
-
-		if h.auditRepo != nil {
-			resourceType := "group"
-			logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupMemberAdded, &resourceType, &invitation.GroupID, map[string]interface{}{
-				"method":        "invitation",
-				"invitation_id": invitation.ID,
-				"graduated":     graduated,
-			}), "group_member_added")
-		}
-
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message":   "Invitation accepted",
-			"group_id":  invitation.GroupID,
-			"graduated": graduated,
+		writeJSON(w, http.StatusOK, map[string]string{
+			"message": "Invitation declined",
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "Invitation declined",
+	// Accept: validate/lock the invitation, run the gating checks (banned invitee,
+	// departed inviter), mark it accepted, and insert the membership — all in one
+	// transaction. A failure (including a duplicate-member race) rolls back, so a
+	// rejected or failed accept never consumes the invitation.
+	invitation, err := h.groupRepo.AcceptInvitation(r.Context(), invitationID, claims.UserID)
+	if err != nil {
+		switch {
+		case errors.Is(err, database.ErrInvitationNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
+		case errors.Is(err, database.ErrInvitationExpired):
+			writeError(w, http.StatusGone, "expired", "Invitation has expired")
+		case errors.Is(err, database.ErrUserBlockedFromGroup):
+			writeError(w, http.StatusForbidden, "blocked", "You cannot join this group")
+		case errors.Is(err, database.ErrInviterLeft):
+			writeError(w, http.StatusConflict, "inviter_left", "The member who invited you is no longer in this group")
+		case errors.Is(err, database.ErrGroupAlreadyMember):
+			writeError(w, http.StatusConflict, "already_member", "You are already a member of this group")
+		default:
+			writeServerError(w, r, err, "Failed to accept invitation", "group", "respond_to_invitation")
+		}
+		return
+	}
+
+	graduated, err := h.groupRepo.CheckAndGraduate(r.Context(), invitation.GroupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check graduation", "group", "respond_to_invitation")
+		return
+	}
+
+	if h.auditRepo != nil {
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionGroupMemberAdded, &resourceType, &invitation.GroupID, map[string]interface{}{
+			"method":        "invitation",
+			"invitation_id": invitation.ID,
+			"graduated":     graduated,
+		}), "group_member_added")
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":   "Invitation accepted",
+		"group_id":  invitation.GroupID,
+		"graduated": graduated,
 	})
 }
 

@@ -25,6 +25,8 @@ var (
 	ErrInvitationAlreadyPending = errors.New("invitation already pending")
 	ErrInvitationExpired        = errors.New("invitation expired")
 	ErrGroupAlreadyMember       = errors.New("user is already a member")
+	ErrUserBlockedFromGroup     = errors.New("user is blocked from this group")
+	ErrInviterLeft              = errors.New("inviter is no longer a member of the group")
 	ErrNotTrustedOrAdmin        = errors.New("user is not trusted or admin in this group")
 	ErrSelfVouch                = errors.New("cannot vouch for yourself")
 	ErrResourceNotFound         = errors.New("resource not found")
@@ -932,6 +934,96 @@ func (r *GroupRepository) ConsumeInviteLink(ctx context.Context, token string) (
 	return &link, nil
 }
 
+// JoinViaInviteLink performs the entire invite-link join in one transaction:
+// lock the link, validate expiry/exhaustion, confirm the group exists, reject
+// blocked or already-member users, insert the membership, and only then increment
+// use_count. If any step fails (including a duplicate-member race on the
+// membership insert) the transaction rolls back, so a failed join never burns a
+// link use or leaves a partial membership. Returns the link (with group_id).
+func (r *GroupRepository) JoinViaInviteLink(ctx context.Context, token, userID string) (*models.GroupInviteLink, error) {
+	var link models.GroupInviteLink
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `
+			SELECT id, group_id, token, created_by, expires_at, max_uses, use_count, created_at
+			FROM group_invite_links WHERE token = ? FOR UPDATE
+		`, token).Scan(
+			&link.ID, &link.GroupID, &link.Token, &link.CreatedBy,
+			&link.ExpiresAt, &link.MaxUses, &link.UseCount, &link.CreatedAt,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInviteLinkNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("select invite link for update: %w", err)
+		}
+
+		if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now().UTC()) {
+			return ErrInviteLinkExpired
+		}
+		if link.MaxUses != nil && link.UseCount >= *link.MaxUses {
+			return ErrInviteLinkExhausted
+		}
+
+		// Group must still exist.
+		var groupExists bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM `groups` WHERE id = ?)", link.GroupID).Scan(&groupExists); err != nil {
+			return fmt.Errorf("check group exists: %w", err)
+		}
+		if !groupExists {
+			return ErrGroupNotFound
+		}
+
+		// Banned users may not join.
+		var blocked bool
+		if err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM group_blocked_users WHERE group_id = ? AND user_id = ?)",
+			link.GroupID, userID,
+		).Scan(&blocked); err != nil {
+			return fmt.Errorf("check blocked: %w", err)
+		}
+		if blocked {
+			return ErrUserBlockedFromGroup
+		}
+
+		// Already a member?
+		var isMember bool
+		if err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)",
+			link.GroupID, userID,
+		).Scan(&isMember); err != nil {
+			return fmt.Errorf("check membership: %w", err)
+		}
+		if isMember {
+			return ErrGroupAlreadyMember
+		}
+
+		// Insert membership BEFORE incrementing use_count, so a duplicate-member
+		// race (unique key) or FK error rolls back the increment.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO group_members (id, group_id, user_id, is_admin, is_founding_member, joined_at)
+			 VALUES (?, ?, ?, FALSE, FALSE, ?)`,
+			uuid.New().String(), link.GroupID, userID, time.Now().UTC(),
+		); err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return ErrGroupAlreadyMember
+			}
+			return fmt.Errorf("insert membership: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE group_invite_links SET use_count = use_count + 1 WHERE id = ?", link.ID,
+		); err != nil {
+			return fmt.Errorf("increment use count: %w", err)
+		}
+		link.UseCount++
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
 // ListInviteLinks returns all invite links for a group, ordered by creation time descending.
 func (r *GroupRepository) ListInviteLinks(ctx context.Context, groupID string) ([]models.GroupInviteLink, error) {
 	query := `
@@ -1156,6 +1248,91 @@ func (r *GroupRepository) RespondToInvitation(ctx context.Context, invitationID,
 	invitation.Status = newStatus
 	invitation.RespondedAt = &now
 
+	return &invitation, nil
+}
+
+// AcceptInvitation performs the entire invitation accept in one transaction: lock
+// the invitation, validate ownership/pending/expiry, reject a blocked invitee or a
+// stale inviter, mark the invitation accepted, and insert the membership. If the
+// membership insert fails (e.g. duplicate-member race) the transaction rolls back,
+// so a failed accept never consumes the invitation. Returns the accepted invitation.
+func (r *GroupRepository) AcceptInvitation(ctx context.Context, invitationID, userID string) (*models.GroupInvitation, error) {
+	var invitation models.GroupInvitation
+	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `
+			SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at
+			FROM group_invitations WHERE id = ? FOR UPDATE
+		`, invitationID).Scan(
+			&invitation.ID, &invitation.GroupID, &invitation.UserID, &invitation.InvitedBy,
+			&invitation.Status, &invitation.CreatedAt, &invitation.ExpiresAt, &invitation.RespondedAt,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvitationNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("select invitation for update: %w", err)
+		}
+
+		// Ownership + pending status (treat both as not-found, matching RespondToInvitation).
+		if invitation.UserID != userID || invitation.Status != models.InvitationStatusPending {
+			return ErrInvitationNotFound
+		}
+		if invitation.ExpiresAt != nil && invitation.ExpiresAt.Before(time.Now().UTC()) {
+			return ErrInvitationExpired
+		}
+
+		// Banned invitee may not join.
+		var blocked bool
+		if err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM group_blocked_users WHERE group_id = ? AND user_id = ?)",
+			invitation.GroupID, userID,
+		).Scan(&blocked); err != nil {
+			return fmt.Errorf("check blocked: %w", err)
+		}
+		if blocked {
+			return ErrUserBlockedFromGroup
+		}
+
+		// Inviter must still be a member (or a superuser) at accept time.
+		if invitation.InvitedBy != nil {
+			var inviterOK bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?)
+					OR EXISTS(SELECT 1 FROM users WHERE id = ? AND is_superuser = TRUE)
+			`, invitation.GroupID, *invitation.InvitedBy, *invitation.InvitedBy).Scan(&inviterOK); err != nil {
+				return fmt.Errorf("check inviter membership: %w", err)
+			}
+			if !inviterOK {
+				return ErrInviterLeft
+			}
+		}
+
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE group_invitations SET status = ?, responded_at = ? WHERE id = ?",
+			string(models.InvitationStatusAccepted), now, invitationID,
+		); err != nil {
+			return fmt.Errorf("mark invitation accepted: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO group_members (id, group_id, user_id, is_admin, is_founding_member, joined_at)
+			 VALUES (?, ?, ?, FALSE, FALSE, ?)`,
+			uuid.New().String(), invitation.GroupID, userID, now,
+		); err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return ErrGroupAlreadyMember
+			}
+			return fmt.Errorf("insert membership: %w", err)
+		}
+
+		invitation.Status = models.InvitationStatusAccepted
+		invitation.RespondedAt = &now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &invitation, nil
 }
 

@@ -2935,6 +2935,57 @@ func TestGroupHandler_RespondToInvitation_RejectedAcceptStaysPending(t *testing.
 	}
 }
 
+// TestGroupHandler_RespondToInvitation_InsertFailureRollsBack verifies the accept
+// is transactional: if the membership insert fails (here the invitee is already a
+// member, so the unique key rejects the insert), the invitation is NOT consumed —
+// it remains pending and the handler returns 409.
+func TestGroupHandler_RespondToInvitation_InsertFailureRollsBack(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+	ctx := context.Background()
+
+	admin := suite.createTestUser("grp_inv_tx_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	invitee := suite.createTestUser("grp_inv_tx_invitee", models.TierVouched, false)
+	invitee.VouchVerified = true
+	region := suite.createTestRegion("GrpInvTxRegion", models.RegionTypeCity, nil)
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+
+	group, err := suite.groupRepo.Create(ctx, &models.CreateGroupRequest{
+		Name: "Inv Tx Group", Visibility: "unlisted", RegionIDs: []string{region.ID},
+	}, admin.ID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	defer suite.cleanup([]string{admin.ID, invitee.ID}, []string{region.ID}, []string{group.ID})
+
+	inv, err := suite.groupRepo.CreateInvitation(ctx, group.ID, invitee.ID, admin.ID)
+	if err != nil {
+		t.Fatalf("CreateInvitation failed: %v", err)
+	}
+	// Invitee is already a member via another path — the accept's INSERT will hit
+	// the unique key and the whole transaction must roll back.
+	if err := suite.groupRepo.AddMember(ctx, group.ID, invitee.ID, false, false); err != nil {
+		t.Fatalf("AddMember failed: %v", err)
+	}
+
+	body, _ := json.Marshal(models.RespondToGroupInvitationRequest{Accept: true})
+	req := httptest.NewRequest("POST", "/api/v1/group-invitations/"+inv.ID+"/respond?id="+inv.ID, bytes.NewReader(body))
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), suite.claimsForUser(invitee)))
+	rec := httptest.NewRecorder()
+	suite.handler.RespondToInvitation(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for already-member accept, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := suite.groupRepo.GetInvitation(ctx, inv.ID)
+	if err != nil {
+		t.Fatalf("GetInvitation failed: %v", err)
+	}
+	if string(got.Status) != "pending" {
+		t.Errorf("failed accept must roll back; invitation should stay pending, got %q", got.Status)
+	}
+}
+
 // TestGroupHandler_JoinViaLink_DisallowedJoinDoesNotBurnUse verifies blocked and
 // already-member join attempts do not increment the invite link's use_count.
 func TestGroupHandler_JoinViaLink_DisallowedJoinDoesNotBurnUse(t *testing.T) {
