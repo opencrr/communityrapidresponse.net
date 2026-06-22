@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -525,7 +526,7 @@ func (h *RegionHandler) autoCreateParentRegions(ctx context.Context, req models.
 			// Auto-detect state from coordinates using reverse geocoding
 			detectedState, err := h.detectStateFromCoordinates(ctx, lat, lng)
 			if err != nil {
-				return nil, errors.New("could not determine state from location: " + err.Error())
+				return nil, fmt.Errorf("could not determine state for coordinates (%f, %f): %w", lat, lng, err)
 			}
 			stateName = detectedState
 			slog.Info("auto-detected state", "state", stateName)
@@ -546,7 +547,7 @@ func (h *RegionHandler) autoCreateParentRegions(ctx context.Context, req models.
 			// Auto-detect county and state from coordinates
 			countyBoundary, err := h.mapboxService.GetCountyForCoordinates(ctx, lat, lng, "")
 			if err != nil {
-				return nil, errors.New("could not determine county from location: " + err.Error())
+				return nil, fmt.Errorf("could not determine county for coordinates (%f, %f): %w", lat, lng, err)
 			}
 			if countyName == "" {
 				countyName = countyBoundary.Name
@@ -572,11 +573,11 @@ func (h *RegionHandler) autoCreateParentRegions(ctx context.Context, req models.
 
 	case models.RegionTypeNeighborhood:
 		// Neighborhood requires an existing City parent
-		return nil, errors.New("neighborhood regions must have an existing city parent")
+		return nil, errors.New("neighborhood regions require parent_id of an existing city region")
 
 	case models.RegionTypeCityBlock:
 		// CityBlock requires an existing Neighborhood parent
-		return nil, errors.New("city block regions must have an existing neighborhood parent")
+		return nil, errors.New("city block regions require parent_id of an existing neighborhood region")
 	}
 
 	return nil, nil
@@ -590,7 +591,7 @@ func (h *RegionHandler) detectStateFromCoordinates(ctx context.Context, lat, lng
 		return "", err
 	}
 	if countyBoundary.State == "" {
-		return "", errors.New("could not determine state from coordinates")
+		return "", fmt.Errorf("could not determine state from coordinates (%f, %f): reverse geocode returned no state", lat, lng)
 	}
 	return countyBoundary.State, nil
 }

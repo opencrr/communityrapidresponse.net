@@ -229,13 +229,13 @@ func TestPostgridService_ValidateAddress_Commercial(t *testing.T) {
 		response := map[string]interface{}{
 			"status": "success",
 			"data": map[string]interface{}{
-				"status":      "verified",
-				"addressType": "commercial",
-				"cmra":        false,
-				"line1":       "456 CORPORATE BLVD",
-				"city":        "SAN FRANCISCO",
+				"status":          "verified",
+				"addressType":     "commercial",
+				"cmra":            false,
+				"line1":           "456 CORPORATE BLVD",
+				"city":            "SAN FRANCISCO",
 				"provinceOrState": "CA",
-				"postalOrZip": "94102",
+				"postalOrZip":     "94102",
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -278,13 +278,13 @@ func TestPostgridService_ValidateAddress_Residential(t *testing.T) {
 		response := map[string]interface{}{
 			"status": "success",
 			"data": map[string]interface{}{
-				"status":      "verified",
-				"addressType": "residential",
-				"cmra":        false,
-				"line1":       "123 MAIN ST",
-				"city":        "SAN FRANCISCO",
+				"status":          "verified",
+				"addressType":     "residential",
+				"cmra":            false,
+				"line1":           "123 MAIN ST",
+				"city":            "SAN FRANCISCO",
 				"provinceOrState": "CA",
-				"postalOrZip": "94102",
+				"postalOrZip":     "94102",
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")

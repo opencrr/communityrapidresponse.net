@@ -305,10 +305,12 @@ func main() {
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
-		Addr:         addr,
-		Handler:      router.Setup(),
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
+		Addr:              addr,
+		Handler:           router.Setup(),
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start server in goroutine

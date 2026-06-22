@@ -55,7 +55,7 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 	}
 
 	if !s.enabled {
-		slog.Info("sendgrid disabled, would send email", "to", msg.To, "subject", msg.Subject)
+		slog.Info("sendgrid disabled, would send email", "to", redactEmail(msg.To), "subject", msg.Subject)
 		return nil
 	}
 
@@ -101,7 +101,7 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 		return fmt.Errorf("SendGrid API error: status %d", resp.StatusCode)
 	}
 
-	slog.Info("email sent via sendgrid", "to", msg.To)
+	slog.Info("email sent via sendgrid", "to", redactEmail(msg.To))
 	return nil
 }
 

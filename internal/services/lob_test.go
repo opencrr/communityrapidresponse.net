@@ -115,21 +115,21 @@ func TestLobService_ValidateAddress_WithAPI(t *testing.T) {
 
 		// Response matches Lob US Verification API format
 		response := map[string]interface{}{
-			"id":           "us_ver_abc123",
+			"id":             "us_ver_abc123",
 			"deliverability": "deliverable",
 			"deliverability_analysis": map[string]interface{}{
 				"dpv_cmra":         "N",
 				"dpv_confirmation": "Y",
 			},
 			"components": map[string]interface{}{
-				"primary_number": "123",
-				"street_name":    "MAIN",
-				"street_suffix":  "ST",
-				"city":           "SAN FRANCISCO",
-				"state":          "CA",
-				"zip_code":       "94102",
+				"primary_number":  "123",
+				"street_name":     "MAIN",
+				"street_suffix":   "ST",
+				"city":            "SAN FRANCISCO",
+				"state":           "CA",
+				"zip_code":        "94102",
 				"zip_code_plus_4": "1234",
-				"zip_code_type":  "standard",
+				"zip_code_type":   "standard",
 			},
 			"primary_line":   "123 MAIN ST",
 			"secondary_line": "",
@@ -176,7 +176,7 @@ func TestLobService_ValidateAddress_WithAPI(t *testing.T) {
 func TestLobService_ValidateAddress_POBox(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
-			"id":           "us_ver_abc123",
+			"id":             "us_ver_abc123",
 			"deliverability": "deliverable",
 			"deliverability_analysis": map[string]interface{}{
 				"dpv_cmra":         "N",
@@ -220,7 +220,7 @@ func TestLobService_ValidateAddress_POBox(t *testing.T) {
 func TestLobService_ValidateAddress_CMRA(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
-			"id":           "us_ver_abc123",
+			"id":             "us_ver_abc123",
 			"deliverability": "deliverable",
 			"deliverability_analysis": map[string]interface{}{
 				"dpv_cmra":         "Y", // CMRA detected
@@ -360,7 +360,7 @@ func TestLobService_ValidateAddress_Residential(t *testing.T) {
 func TestLobService_ValidateAddress_Undeliverable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
-			"id":           "us_ver_abc123",
+			"id":             "us_ver_abc123",
 			"deliverability": "undeliverable",
 			"deliverability_analysis": map[string]interface{}{
 				"dpv_cmra":         "N",
@@ -570,8 +570,8 @@ func TestLobService_APIError(t *testing.T) {
 
 func TestLobService_DeliverabilityVariants(t *testing.T) {
 	tests := []struct {
-		name           string
-		deliverability string
+		name              string
+		deliverability    string
 		expectDeliverable bool
 	}{
 		{"deliverable", "deliverable", true},
@@ -586,7 +586,7 @@ func TestLobService_DeliverabilityVariants(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := map[string]interface{}{
-					"id":           "us_ver_abc123",
+					"id":             "us_ver_abc123",
 					"deliverability": tt.deliverability,
 					"deliverability_analysis": map[string]interface{}{
 						"dpv_cmra":         "N",
@@ -983,43 +983,43 @@ func TestLobFixture_POBoxAddress(t *testing.T) {
 // TestLobFixture_AddressTypeVariants tests all address type variations using real fixtures
 func TestLobFixture_AddressTypeVariants(t *testing.T) {
 	tests := []struct {
-		name             string
-		fixture          string
-		expectCommercial bool
-		expectPOBox      bool
-		expectCMRA       bool
+		name              string
+		fixture           string
+		expectCommercial  bool
+		expectPOBox       bool
+		expectCMRA        bool
 		expectAddressType string
 	}{
 		{
-			name:             "residential_address",
-			fixture:          "residential_address.json",
-			expectCommercial: false,
-			expectPOBox:      false,
-			expectCMRA:       false,
+			name:              "residential_address",
+			fixture:           "residential_address.json",
+			expectCommercial:  false,
+			expectPOBox:       false,
+			expectCMRA:        false,
 			expectAddressType: "residential",
 		},
 		{
-			name:             "commercial_address",
-			fixture:          "commercial_address.json",
-			expectCommercial: true,
-			expectPOBox:      false,
-			expectCMRA:       false,
+			name:              "commercial_address",
+			fixture:           "commercial_address.json",
+			expectCommercial:  true,
+			expectPOBox:       false,
+			expectCMRA:        false,
 			expectAddressType: "commercial",
 		},
 		{
-			name:             "cmra_address",
-			fixture:          "cmra_address.json",
-			expectCommercial: true,
-			expectPOBox:      false,
-			expectCMRA:       true,
+			name:              "cmra_address",
+			fixture:           "cmra_address.json",
+			expectCommercial:  true,
+			expectPOBox:       false,
+			expectCMRA:        true,
 			expectAddressType: "commercial",
 		},
 		{
-			name:             "po_box_address",
-			fixture:          "po_box_address.json",
-			expectCommercial: false,
-			expectPOBox:      true,
-			expectCMRA:       false,
+			name:              "po_box_address",
+			fixture:           "po_box_address.json",
+			expectCommercial:  false,
+			expectPOBox:       true,
+			expectCMRA:        false,
 			expectAddressType: "residential",
 		},
 	}

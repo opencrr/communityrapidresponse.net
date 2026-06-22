@@ -115,10 +115,10 @@ func TestEmailTemplates_SecurityRequirements(t *testing.T) {
 
 	// Test that sensitive data is never included in emails
 	sensitiveStrings := []string{
-		"https://signal.group/",  // Invite links
-		"verification_code=",     // Verification codes
-		"123 Main Street",        // Addresses
-		"password",               // Passwords
+		"https://signal.group/", // Invite links
+		"verification_code=",    // Verification codes
+		"123 Main Street",       // Addresses
+		"password",              // Passwords
 	}
 
 	notificationTypes := []models.NotificationType{

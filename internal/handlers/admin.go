@@ -68,8 +68,8 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query parameters
 	query := r.URL.Query().Get("q")
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 || page > 10000 {
 		page = 1
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -86,7 +86,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	// Audit log: superuser user search (only if searching, not just listing)
 	if h.auditRepo != nil && query != "" {
 		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSuperuserUserSearch, nil, nil, map[string]interface{}{
-			"query":        query,
+			"query":         query,
 			"results_count": len(users),
 		}), "superuser_user_search")
 	}
@@ -211,9 +211,9 @@ func (h *AdminHandler) GrantVouchVerification(w http.ResponseWriter, r *http.Req
 	if h.auditRepo != nil {
 		resourceType := "user"
 		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSuperuserGrantVouch, &resourceType, &userID, map[string]interface{}{
-			"target_username":   user.Username,
-			"target_email":      user.Email,
-			"regions_upgraded":  upgradedCount,
+			"target_username":  user.Username,
+			"target_email":     user.Email,
+			"regions_upgraded": upgradedCount,
 		}), "superuser_grant_vouch")
 	}
 
@@ -661,9 +661,9 @@ func (h *AdminHandler) exportAuditLogsJSON(w http.ResponseWriter, logs []models.
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=audit_logs_%s.json", time.Now().Format("20060102_150405")))
 
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"logs":       logs,
+		"logs":        logs,
 		"exported_at": time.Now().UTC(),
-		"count":      len(logs),
+		"count":       len(logs),
 	}); err != nil {
 		slog.Error("failed to encode JSON export", "error", err)
 	}

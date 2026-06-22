@@ -25,8 +25,8 @@ coverage.html
 
 # Environment files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # OS generated files
 .DS_Store
@@ -67,10 +67,38 @@ build-errors.log
 # Compiled seed fixtures binary
 /seed-fixtures
 
-# Security audit (sensitive - never commit)
+# Security audit and scan reports (sensitive - never commit)
 SECURITY_AUDIT.md
+PII_SCAN_REPORT.md
 
 # Node / Playwright
 node_modules/
 test-results/
 playwright-report/
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# Credential and secrets files
+credentials.*
+secrets.*
+
+# Data dumps and exports (may contain sensitive user data)
+*.csv
+*.xlsx
+*.xls
+*.sql.gz
+*.sql.zip
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+
+# JWT signing keys and PKCS#8 private keys
+*.p8
+*.jks

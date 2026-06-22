@@ -499,6 +499,10 @@ tidy:
     @echo "🧹 Tidying modules..."
     go mod tidy
 
+# Detect drift between prose docs (CLAUDE.md/DESIGN.md/README.md) and the real code/schema
+doc-drift *ARGS:
+    @go run ./cmd/doc-drift {{ARGS}}
+
 # Run security scanners (gosec + govulncheck)
 security:
     @echo "🔒 Running security scanners..."
@@ -508,10 +512,41 @@ security:
     govulncheck ./...
     @echo "✅ Security scan complete"
 
+# Audit Go module dependencies for outdated versions and known CVEs.
+# See docs/security/dependency-risk-report.md for the latest triaged snapshot.
+deps-scan:
+    @echo "📦 Dependency risk scan"
+    @echo "======================="
+    @echo ""
+    @echo "→ go mod verify"
+    go mod verify
+    @echo ""
+    @echo "→ go list -m -u all  (outdated modules show [latest] in brackets)"
+    go list -m -u all
+    @echo ""
+    @command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
+    @echo "→ govulncheck ./..."
+    govulncheck ./...
+    @echo ""
+    @echo "✅ Dependency scan complete (triage in docs/security/dependency-risk-report.md)"
+
 # Verify module dependency integrity
 verify:
     @echo "🔍 Verifying module dependencies..."
     go mod verify
+
+# Classify tech debt and regenerate docs/TECH_DEBT.md.
+# Use `just tech-debt check` to fail (exit 2) when HIGH count exceeds baseline.
+tech-debt mode="report":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{mode}}" = "check" ]; then
+        echo "🔎 Checking tech-debt HIGH baseline..."
+        go run ./cmd/tech-debt-classify -check -out docs/TECH_DEBT.md
+    else
+        echo "📝 Regenerating docs/TECH_DEBT.md..."
+        go run ./cmd/tech-debt-classify -out docs/TECH_DEBT.md
+    fi
 
 # =============================================================================
 # Docker Management

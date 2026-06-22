@@ -8,9 +8,9 @@ func TestNormalizeEmail_RejectsPlus(t *testing.T) {
 	testCases := []struct {
 		email string
 	}{
-		{"user+test@gmail.com"},
+		{"user+test@example.com"},
 		{"john+alias@example.com"},
-		{"test+123@yahoo.com"},
+		{"test+123@example.com"},
 	}
 
 	for _, tc := range testCases {
@@ -73,10 +73,10 @@ func TestNormalizeEmail_PreservesDotsForOtherDomains(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"j.doe@yahoo.com", "j.doe@yahoo.com"},
-		{"john.smith@outlook.com", "john.smith@outlook.com"},
-		{"user.name@example.org", "user.name@example.org"},
-		{"J.Doe@YAHOO.COM", "j.doe@yahoo.com"},
+		{"j.doe@example.com", "j.doe@example.com"},
+		{"john.smith@example.org", "john.smith@example.org"},
+		{"user.name@example.net", "user.name@example.net"},
+		{"J.Doe@example.com", "j.doe@example.com"},
 	}
 
 	for _, tc := range testCases {
@@ -115,8 +115,8 @@ func TestContainsEmailAlias(t *testing.T) {
 		email    string
 		expected bool
 	}{
-		{"user+test@gmail.com", true},
-		{"user@gmail.com", false},
+		{"user+test@example.com", true},
+		{"user@example.com", false},
 		{"john+@example.com", true},
 		{"+test@example.com", true},
 		{"noplussign@example.com", false},

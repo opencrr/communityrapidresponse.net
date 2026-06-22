@@ -65,7 +65,9 @@ func generateBoundary() string {
 // Send sends a generic email message via SMTP
 func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 	if !s.enabled {
-		slog.Info("smtp disabled, would send email", "to", msg.To, "subject", msg.Subject)
+		// Subject is intentionally omitted: it can correlate users with
+		// password-reset / email-verification flows in log aggregation.
+		slog.Info("smtp disabled, would send email", "to", redactEmail(msg.To))
 		return nil
 	}
 
@@ -113,7 +115,7 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 		return fmt.Errorf("failed to send email via SMTP: %w", err)
 	}
 
-	slog.Info("email sent via smtp", "to", msg.To)
+	slog.Info("email sent via smtp", "to", redactEmail(msg.To))
 	return nil
 }
 
@@ -163,7 +165,7 @@ func (s *SMTPEmailService) sendWithTLS(addr string, auth smtp.Auth, from, to str
 		return fmt.Errorf("failed to close email body: %w", err)
 	}
 
-	slog.Info("email sent via smtp with tls", "to", to)
+	slog.Info("email sent via smtp with tls", "to", redactEmail(to))
 	return nil
 }
 

@@ -355,11 +355,11 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 	defer suite.cleanup([]string{user.ID}, []string{neighborhood.ID, city.ID})
 
 	testCases := []struct {
-		name        string
-		regionType  models.RegionType
-		parentID    *string
-		shouldFail  bool
-		errorMsg    string
+		name       string
+		regionType models.RegionType
+		parentID   *string
+		shouldFail bool
+		errorMsg   string
 	}{
 		{
 			name:       "city with city parent should fail",
@@ -373,7 +373,7 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 			regionType: models.RegionTypeNeighborhood,
 			parentID:   nil,
 			shouldFail: true,
-			errorMsg:   "neighborhood regions must have an existing city parent",
+			errorMsg:   "neighborhood regions require parent_id of an existing city region",
 		},
 		{
 			name:       "neighborhood with neighborhood parent should fail",
@@ -387,7 +387,7 @@ func TestRegionHandler_Create_TypeHierarchy(t *testing.T) {
 			regionType: models.RegionTypeCityBlock,
 			parentID:   nil,
 			shouldFail: true,
-			errorMsg:   "city block regions must have an existing neighborhood parent",
+			errorMsg:   "city block regions require parent_id of an existing neighborhood region",
 		},
 		{
 			name:       "city_block with city parent should fail",
@@ -1406,6 +1406,139 @@ func TestCalculateGeometryCentroid(t *testing.T) {
 		}
 		if result[1] < 40 || result[1] > 41 {
 			t.Errorf("Latitude %f not in NYC area", result[1])
+		}
+	})
+}
+
+// =============================================================================
+// Edge-Case Tests: Malformed Region IDs
+// =============================================================================
+
+func TestRegionHandler_Get_MalformedID(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("malformed_get_user", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	tests := []struct {
+		name       string
+		id         string
+		wantStatus int
+	}{
+		{"empty ID", "", http.StatusBadRequest},
+		{"whitespace ID", "   ", http.StatusNotFound},
+		{"non-UUID string", "not-a-uuid-at-all", http.StatusNotFound},
+		{"SQL injection", "'; DROP TABLE geographic_regions;--", http.StatusNotFound},
+		{"very long string", string(make([]byte, 1000)), http.StatusNotFound},
+		{"special characters", "!@#$%^&*()", http.StatusNotFound},
+		{"UUID with spaces", " 550e8400-e29b-41d4-a716-446655440000 ", http.StatusNotFound},
+		{"partial UUID", "550e8400-e29b", http.StatusNotFound},
+		{"null bytes", "550e8400\x00-e29b-41d4-a716-446655440000", http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/regions/test", nil)
+
+			claims := &middleware.Claims{
+				UserID:           superuser.ID,
+				Email:            superuser.Email,
+				Username:         superuser.Username,
+				VerificationTier: superuser.VerificationTier,
+				IsSuperuser:      true,
+			}
+			ctx := middleware.ContextWithUser(req.Context(), claims)
+			req = req.WithContext(ctx)
+
+			q := req.URL.Query()
+			q.Set("id", tt.id)
+			req.URL.RawQuery = q.Encode()
+
+			rec := httptest.NewRecorder()
+			suite.handler.Get(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("Expected status %d, got %d: %s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRegionHandler_Update_MalformedID(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("malformed_update_user", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"empty ID", ""},
+		{"whitespace ID", "   "},
+		{"non-UUID string", "hello-world"},
+		{"SQL injection", "1 OR 1=1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("PUT", "/regions/test", bytes.NewReader([]byte(`{"name":"Test"}`)))
+			req.Header.Set("Content-Type", "application/json")
+
+			claims := &middleware.Claims{
+				UserID:           superuser.ID,
+				Email:            superuser.Email,
+				Username:         superuser.Username,
+				VerificationTier: superuser.VerificationTier,
+				IsSuperuser:      true,
+			}
+			ctx := middleware.ContextWithUser(req.Context(), claims)
+			req = req.WithContext(ctx)
+
+			q := req.URL.Query()
+			q.Set("id", tt.id)
+			req.URL.RawQuery = q.Encode()
+
+			rec := httptest.NewRecorder()
+			suite.handler.Update(rec, req)
+
+			// Should get 400 (missing/invalid) or 404 (not found), not 500
+			if rec.Code == http.StatusInternalServerError {
+				t.Errorf("Got 500 for malformed ID %q, expected 400 or 404: %s", tt.id, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRegionHandler_Delete_MalformedID(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("malformed_delete_user", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("non-existent UUID returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/regions/test", nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		// Valid UUID format but doesn't exist
+		q := req.URL.Query()
+		q.Set("id", "00000000-0000-0000-0000-000000000000")
+		req.URL.RawQuery = q.Encode()
+
+		rec := httptest.NewRecorder()
+		suite.handler.Delete(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

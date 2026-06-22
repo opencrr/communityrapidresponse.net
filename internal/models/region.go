@@ -13,7 +13,7 @@ const (
 	RegionTypeState        RegionType = "state"
 	RegionTypeCounty       RegionType = "county"
 	RegionTypeCity         RegionType = "city"
-	RegionTypeLocality     RegionType = "locality"     // Boroughs, sub-city divisions
+	RegionTypeLocality     RegionType = "locality" // Boroughs, sub-city divisions
 	RegionTypeNeighborhood RegionType = "neighborhood"
 	RegionTypeCityBlock    RegionType = "city_block" // Reserved for future use
 )

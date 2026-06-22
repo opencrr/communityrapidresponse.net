@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -91,6 +92,14 @@ func formatFieldError(fe validator.FieldError) string {
 // errPasswordResetNotConfigured is a sentinel for the config-level case where
 // password reset has no runtime error value available.
 var errPasswordResetNotConfigured = errors.New("password reset not configured")
+
+// uuidRegex matches standard UUID format (8-4-4-4-12 hex digits).
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// isValidUUID returns true if s is a valid UUID v4 format string.
+func isValidUUID(s string) bool {
+	return uuidRegex.MatchString(s)
+}
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {

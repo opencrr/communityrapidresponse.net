@@ -268,6 +268,13 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	regionID := parts[0]
 
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
+	if !isValidUUID(regionID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid community ID")
+		return
+	}
+
 	// Add ID to query params for handler
 	q := req.URL.Query()
 	q.Set("id", regionID)
@@ -386,6 +393,13 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	schoolID := parts[0]
 
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
+	if !isValidUUID(schoolID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid school ID")
+		return
+	}
+
 	// Sub-routes
 	if len(parts) >= 2 && parts[1] == "join" {
 		q := req.URL.Query()
@@ -421,6 +435,13 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 
 	parts := strings.Split(path, "/")
 	districtID := parts[0]
+
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
+	if !isValidUUID(districtID) {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid district ID")
+		return
+	}
 
 	// Default: get district by ID
 	q := req.URL.Query()
