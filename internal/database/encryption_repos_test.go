@@ -1653,3 +1653,201 @@ func TestEncryptedSecretRepository_RevokeConnectionSecretKeysForGroup(t *testing
 		t.Error("user1 (survivor) should have rekey_needed=true")
 	}
 }
+
+// TestEncryptionKeyRepository_GetPublicKeysForConnection_AllMembers tests retrieving
+// public keys for all members of a connection using all_members access level.
+func TestEncryptionKeyRepository_GetPublicKeysForConnection_AllMembers(t *testing.T) {
+	db := testDB(t)
+	ekRepo := NewEncryptionKeyRepository(db)
+	connRepo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	// Create users
+	user1 := encCreateUser(t, db, "conn_all_members_1")
+	user2 := encCreateUser(t, db, "conn_all_members_2")
+
+	// Create region and groups
+	region := encCreateRegion(t, db, user1.ID, "Conn All Members Region")
+	groupAID := createConnectionTestGroup(t, db, "Conn All Members A", user1.ID, region.ID)
+	groupBID := createConnectionTestGroup(t, db, "Conn All Members B", user2.ID, region.ID)
+
+	// Form connection
+	proposal, err := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	if err != nil {
+		t.Fatalf("ProposeConnection failed: %v", err)
+	}
+
+	formResult, err := connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("RespondToProposal failed: %v", err)
+	}
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{user1.ID, user2.ID}, []string{region.ID}, []string{connectionID})
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", user1.ID, user2.ID)
+	})
+
+	// Create encryption keys for both users
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: user1.ID, PublicKey: "pub_user1", WrappedPrivateKey: "priv1",
+		KeySalt: "salt1_12345678901234", KeyIV: "iv1_123456789012",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: user2.ID, PublicKey: "pub_user2", WrappedPrivateKey: "priv2",
+		KeySalt: "salt2_12345678901234", KeyIV: "iv2_123456789012",
+	})
+
+	// Get public keys for all_members access level
+	keys, err := ekRepo.GetPublicKeysForConnection(ctx, connectionID, string(models.ConnectionAccessLevelAllMembers))
+	if err != nil {
+		t.Fatalf("GetPublicKeysForConnection failed: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("Expected 2 keys for all_members, got %d", len(keys))
+	}
+}
+
+// TestEncryptionKeyRepository_GetPublicKeysForConnection_AdminOnly tests retrieving
+// public keys for admin members only of a connection.
+func TestEncryptionKeyRepository_GetPublicKeysForConnection_AdminOnly(t *testing.T) {
+	db := testDB(t)
+	ekRepo := NewEncryptionKeyRepository(db)
+	connRepo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	// Create users
+	admin := encCreateUser(t, db, "conn_admin_only_admin")
+	member := encCreateUser(t, db, "conn_admin_only_member")
+
+	// Create region and groups
+	region := encCreateRegion(t, db, admin.ID, "Conn Admin Only Region")
+	groupAID := createConnectionTestGroup(t, db, "Conn Admin Only A", admin.ID, region.ID)
+
+	// Create group B with member (not admin)
+	groupBID := uuid.New().String()
+	_, err := db.ExecContext(ctx,
+		"INSERT INTO `groups` (id, name, status, visibility, created_at, updated_at) VALUES (?, ?, 'active', 'listed', NOW(), NOW())",
+		groupBID, "Conn Admin Only B")
+	if err != nil {
+		t.Fatalf("Failed to create group B: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		"INSERT INTO group_regions (id, group_id, region_id) VALUES (?, ?, ?)",
+		uuid.New().String(), groupBID, region.ID)
+	if err != nil {
+		t.Fatalf("Failed to link group B to region: %v", err)
+	}
+	// Add member user as regular member (not admin)
+	_, err = db.ExecContext(ctx,
+		"INSERT INTO group_members (id, group_id, user_id, is_admin, joined_at) VALUES (?, ?, ?, FALSE, NOW())",
+		uuid.New().String(), groupBID, member.ID)
+	if err != nil {
+		t.Fatalf("Failed to add member to group B: %v", err)
+	}
+
+	// Form connection
+	proposal, err := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	if err != nil {
+		t.Fatalf("ProposeConnection failed: %v", err)
+	}
+
+	formResult, err := connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("RespondToProposal failed: %v", err)
+	}
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{admin.ID, member.ID}, []string{region.ID}, []string{connectionID})
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", admin.ID, member.ID)
+	})
+
+	// Create encryption keys for both users
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: admin.ID, PublicKey: "pub_admin", WrappedPrivateKey: "priv_admin",
+		KeySalt: "salt_admin_12345678", KeyIV: "iv_admin_12345678",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: member.ID, PublicKey: "pub_member", WrappedPrivateKey: "priv_member",
+		KeySalt: "salt_member_1234567", KeyIV: "iv_member_12345678",
+	})
+
+	// Get public keys for admin_only access level
+	keys, err := ekRepo.GetPublicKeysForConnection(ctx, connectionID, string(models.ConnectionAccessLevelAdminOnly))
+	if err != nil {
+		t.Fatalf("GetPublicKeysForConnection failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("Expected 1 admin key, got %d", len(keys))
+	}
+	if keys[0].UserID != admin.ID {
+		t.Errorf("Expected admin user %s, got %s", admin.ID, keys[0].UserID)
+	}
+}
+
+// TestEncryptionKeyRepository_GetPublicKeysForConnection_ExcludesSuperuser verifies
+// superusers are excluded from connection public key lists.
+func TestEncryptionKeyRepository_GetPublicKeysForConnection_ExcludesSuperuser(t *testing.T) {
+	db := testDB(t)
+	ekRepo := NewEncryptionKeyRepository(db)
+	connRepo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	// Create users
+	regular := encCreateUser(t, db, "conn_super_regular")
+	superuser := encCreateUser(t, db, "conn_super_user")
+
+	// Create region and groups
+	region := encCreateRegion(t, db, regular.ID, "Conn Superuser Region")
+	groupAID := createConnectionTestGroup(t, db, "Conn Superuser A", regular.ID, region.ID)
+	groupBID := createConnectionTestGroup(t, db, "Conn Superuser B", superuser.ID, region.ID)
+
+	// Form connection
+	proposal, err := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	if err != nil {
+		t.Fatalf("ProposeConnection failed: %v", err)
+	}
+
+	formResult, err := connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("RespondToProposal failed: %v", err)
+	}
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{regular.ID, superuser.ID}, []string{region.ID}, []string{connectionID})
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", regular.ID, superuser.ID)
+	})
+
+	// Mark superuser
+	_, _ = db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE WHERE id = ?", superuser.ID)
+
+	// Create encryption keys for both users
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: regular.ID, PublicKey: "pub_regular", WrappedPrivateKey: "priv_regular",
+		KeySalt: "salt_regular_1234567", KeyIV: "iv_regular_12345678",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: superuser.ID, PublicKey: "pub_superuser", WrappedPrivateKey: "priv_superuser",
+		KeySalt: "salt_super_12345678", KeyIV: "iv_super_123456789",
+	})
+
+	// Get public keys - should exclude superuser
+	keys, err := ekRepo.GetPublicKeysForConnection(ctx, connectionID, string(models.ConnectionAccessLevelAllMembers))
+	if err != nil {
+		t.Fatalf("GetPublicKeysForConnection failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("Expected 1 key (superuser excluded), got %d", len(keys))
+	}
+	if keys[0].UserID != regular.ID {
+		t.Error("superuser must be excluded from connection public key list")
+	}
+}
