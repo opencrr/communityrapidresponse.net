@@ -310,6 +310,7 @@ func (r *EncryptedSecretRepository) GetUsersWithSharedSecrets(ctx context.Contex
 // and flags rekey_needed on users in surviving groups within the connection.
 func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx context.Context, tx *sql.Tx, connID, groupID string) error {
 	// Get all encrypted secrets for this connection
+	// #nosec G101 -- variable name matches "secret" pattern, not a credential
 	secretIDsQuery := `
 		SELECT DISTINCT es.id
 		FROM encrypted_secrets es
@@ -373,6 +374,7 @@ func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx conte
 			args = append(args, uID)
 		}
 
+		// #nosec G201 -- SQL string is parameterized with ? placeholders; no user input in format
 		deleteQuery := fmt.Sprintf(`
 			DELETE FROM encrypted_secret_keys
 			WHERE secret_id IN (%s)
@@ -426,6 +428,7 @@ func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx conte
 			args = append(args, uID)
 		}
 
+		// #nosec G201 -- SQL string is parameterized with ? placeholders; no user input in format
 		updateQuery := fmt.Sprintf(`
 			UPDATE encrypted_secret_keys
 			SET rekey_needed = TRUE

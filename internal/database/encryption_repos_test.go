@@ -1573,8 +1573,6 @@ func TestEncryptedSecretRepository_RevokeConnectionSecretKeysForGroup(t *testing
 	user3 := encCreateUser(t, db, "revoke_u3")
 
 	defer func() {
-		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE connection_id IS NOT NULL)")
-		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE connection_id IS NOT NULL")
 		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id IS NOT NULL")
 		_, _ = db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id IN (SELECT id FROM `groups` WHERE name LIKE 'test_group_%')")
 		_, _ = db.ExecContext(ctx, "DELETE FROM `groups` WHERE name LIKE 'test_group_%'")
