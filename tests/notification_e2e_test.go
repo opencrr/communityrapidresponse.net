@@ -121,7 +121,7 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db, nil)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 

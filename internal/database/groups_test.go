@@ -68,7 +68,7 @@ func cleanupGroupTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs []strin
 
 func TestGroupRepository_Create(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "create1")
@@ -177,7 +177,7 @@ func TestGroupRepository_Create(t *testing.T) {
 
 func TestGroupRepository_GetByID(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "getbyid1")
@@ -223,7 +223,7 @@ func TestGroupRepository_GetByID(t *testing.T) {
 
 func TestGroupRepository_GetByIDWithDetails(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "details1")
@@ -307,7 +307,7 @@ func TestGroupRepository_GetByIDWithDetails(t *testing.T) {
 
 func TestGroupRepository_ListByUser(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "listuser1")
@@ -380,7 +380,7 @@ func TestGroupRepository_ListByUser(t *testing.T) {
 
 func TestGroupRepository_ListByRegion(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "listregion1")
@@ -435,7 +435,7 @@ func TestGroupRepository_ListByRegion(t *testing.T) {
 
 func TestGroupRepository_Update(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "update1")
@@ -507,7 +507,7 @@ func TestGroupRepository_Update(t *testing.T) {
 
 func TestGroupRepository_Delete(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "delete1")
@@ -561,7 +561,7 @@ func TestGroupRepository_Delete(t *testing.T) {
 
 func TestGroupRepository_Membership(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "member1")
@@ -663,7 +663,7 @@ func TestGroupRepository_Membership(t *testing.T) {
 
 func TestGroupRepository_TopicTags(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "tags1")
@@ -735,7 +735,7 @@ func TestGroupRepository_TopicTags(t *testing.T) {
 
 func TestGroupRepository_Regions(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "regions1")
@@ -791,7 +791,7 @@ func TestGroupRepository_Regions(t *testing.T) {
 
 func TestGroupRepository_FoundingThreshold(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "threshold1")
@@ -866,7 +866,7 @@ func TestGroupRepository_FoundingThreshold(t *testing.T) {
 
 func TestGroupRepository_CreateInviteLink(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "invlink_create1")
@@ -935,7 +935,7 @@ func TestGroupRepository_CreateInviteLink(t *testing.T) {
 
 func TestGroupRepository_GetInviteLinkByToken(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "invlink_get1")
@@ -981,7 +981,7 @@ func TestGroupRepository_GetInviteLinkByToken(t *testing.T) {
 
 func TestGroupRepository_JoinViaInviteLink(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	creatorID := createGroupTestUser(t, db, "invlink_join_creator")
@@ -1078,7 +1078,7 @@ func TestGroupRepository_JoinViaInviteLink(t *testing.T) {
 // transaction rolls back and use_count is NOT incremented.
 func TestGroupRepository_JoinViaInviteLink_InsertFailureRollsBack(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "join_tx_rollback")
@@ -1117,7 +1117,7 @@ func TestGroupRepository_JoinViaInviteLink_InsertFailureRollsBack(t *testing.T) 
 
 func TestGroupRepository_ListInviteLinks(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "invlink_list1")
@@ -1180,7 +1180,7 @@ func TestGroupRepository_ListInviteLinks(t *testing.T) {
 
 func TestGroupRepository_CreateInvitation(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	adminID := createGroupTestUser(t, db, "inv_admin1")
@@ -1235,7 +1235,7 @@ func TestGroupRepository_CreateInvitation(t *testing.T) {
 
 func TestGroupRepository_ListPendingInvitationsForUser(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	adminID := createGroupTestUser(t, db, "inv_listuser_admin")
@@ -1309,7 +1309,7 @@ func TestGroupRepository_ListPendingInvitationsForUser(t *testing.T) {
 
 func TestGroupRepository_InvitationResponse(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	adminID := createGroupTestUser(t, db, "inv_respond_admin")
@@ -1402,7 +1402,7 @@ func TestGroupRepository_InvitationResponse(t *testing.T) {
 
 func TestGroupRepository_CheckAndGraduate(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	creatorID := createGroupTestUser(t, db, "grad_creator")
@@ -1501,7 +1501,7 @@ func TestGroupRepository_CheckAndGraduate(t *testing.T) {
 
 func TestGroupRepository_GetMember(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "getmember1")
@@ -1570,7 +1570,7 @@ func TestGroupRepository_GetMember(t *testing.T) {
 
 func TestGroupRepository_CreateTrustVouch(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	adminID := createGroupTestUser(t, db, "vouch_admin")
@@ -1672,7 +1672,7 @@ func TestGroupRepository_CreateTrustVouch(t *testing.T) {
 
 func TestGroupRepository_GetTrustVouchCount(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "vouchcount1")
@@ -1703,7 +1703,7 @@ func TestGroupRepository_GetTrustVouchCount(t *testing.T) {
 
 func TestGroupRepository_ListTrustVouchesForUser(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	adminID := createGroupTestUser(t, db, "listvouches_admin")
@@ -1833,7 +1833,7 @@ func TestUserMeetsAccessTier(t *testing.T) {
 
 func TestSignalGroupRepository_ListByOwnerGroup(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -1932,7 +1932,7 @@ func TestSignalGroupRepository_ListByOwnerGroup(t *testing.T) {
 
 func TestSignalGroupRepository_CountByOwnerGroup(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -1988,7 +1988,7 @@ func TestSignalGroupRepository_CountByOwnerGroup(t *testing.T) {
 
 func TestSignalGroupRepository_CreateForOwnerGroup(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -2089,7 +2089,7 @@ func TestSignalGroupRepository_CreateForOwnerGroup(t *testing.T) {
 
 func TestGroupRepository_GetByIDWithDetails_IncludesSignalGroups(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -2173,7 +2173,7 @@ func makeActiveListedGroup(t *testing.T, repo *GroupRepository, db *DB, ctx cont
 
 func TestGroupRepository_BrowseByRegion(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -2352,7 +2352,7 @@ func TestGroupRepository_BrowseByRegion(t *testing.T) {
 
 func TestGroupRepository_BrowseAll(t *testing.T) {
 	db := testDB(t)
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	sgRepo := NewSignalGroupRepository(db)
 	ctx := context.Background()
 
@@ -2428,7 +2428,7 @@ func TestGroupRepository_BrowseAll(t *testing.T) {
 
 func TestGroupRepository_CreateResource(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "res_create")
@@ -2486,7 +2486,7 @@ func TestGroupRepository_CreateResource(t *testing.T) {
 
 func TestGroupRepository_GetResource(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "res_get")
@@ -2534,7 +2534,7 @@ func TestGroupRepository_GetResource(t *testing.T) {
 
 func TestGroupRepository_ListResources(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "res_list")
@@ -2588,7 +2588,7 @@ func TestGroupRepository_ListResources(t *testing.T) {
 
 func TestGroupRepository_UpdateResource(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "res_upd")
@@ -2656,7 +2656,7 @@ func TestGroupRepository_UpdateResource(t *testing.T) {
 
 func TestGroupRepository_DeleteResource(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "res_del")
@@ -2734,7 +2734,7 @@ func createGroupTestCityRegion(t *testing.T, db *DB, name, parentID string) stri
 
 func TestGroupRepository_DeriveRegionLabel(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "derive_label")
@@ -2778,7 +2778,7 @@ func TestGroupRepository_DeriveRegionLabel(t *testing.T) {
 
 func TestGroupRepository_TopicBoardPosting_CreateAndUpdate(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "tb_create")
@@ -2857,7 +2857,7 @@ func TestGroupRepository_TopicBoardPosting_CreateAndUpdate(t *testing.T) {
 
 func TestGroupRepository_TopicBoardPosting_GetAndRemove(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createGroupTestUser(t, db, "tb_getrem")
@@ -2924,7 +2924,7 @@ func TestGroupRepository_TopicBoardPosting_GetAndRemove(t *testing.T) {
 
 func TestGroupRepository_BrowsePostings(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userA := createGroupTestUser(t, db, "tb_browse_a")
