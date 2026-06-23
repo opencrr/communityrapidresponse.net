@@ -40,6 +40,16 @@ export async function encryptPayload(plaintext, dek) {
 }
 
 /**
+ * Encrypt plaintext using AES-256-GCM (convenience wrapper)
+ * @param {string} plaintext - text to encrypt (e.g., a link)
+ * @param {CryptoKey} dek - AES-256-GCM DEK
+ * @returns {Promise<{ciphertext: string, iv: string}>} encrypted payload and iv
+ */
+export async function aesGcmEncrypt(plaintext, dek) {
+    return await encryptPayload(plaintext, dek);
+}
+
+/**
  * Decrypt ciphertext with AES-256-GCM DEK
  * @param {string} ciphertextBase64
  * @param {string} ivBase64
