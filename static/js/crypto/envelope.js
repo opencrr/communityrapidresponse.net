@@ -130,3 +130,22 @@ export async function decryptSecret(ciphertextBase64, ivBase64, wrappedDekBase64
     const dek = await unwrapDEK(wrappedDekBase64, privateKey);
     return await decryptPayload(ciphertextBase64, ivBase64, dek);
 }
+
+/**
+ * Wrap a DEK for multiple recipients using their public keys
+ * @param {CryptoKey} dek - Data Encryption Key to wrap
+ * @param {Array<{user_id: string, public_key: string}>} recipientPublicKeys - base64-encoded SPKI keys
+ * @returns {Promise<Array<{user_id: string, wrapped_dek: string}>>}
+ */
+export async function wrapDEKForRecipients(dek, recipientPublicKeys) {
+    const wrappedKeys = [];
+    for (const recipient of recipientPublicKeys) {
+        const publicKey = await importPublicKey(recipient.public_key);
+        const wrappedDek = await wrapDEK(dek, publicKey);
+        wrappedKeys.push({
+            user_id: recipient.user_id,
+            wrapped_dek: wrappedDek,
+        });
+    }
+    return wrappedKeys;
+}

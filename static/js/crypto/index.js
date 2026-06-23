@@ -21,6 +21,7 @@ import {
     generateDEK,
     wrapDEK,
     unwrapDEK,
+    wrapDEKForRecipients,
 } from './envelope.js';
 
 import * as encryptionAPI from '../api/encryption.js';
@@ -164,4 +165,4 @@ export async function getPublicKey() {
 export { hasLocalKey, clearLocalKeys };
 
 // Re-export envelope encryption functions for direct use
-export { encryptForMembers, decryptSecret, generateDEK, wrapDEK, unwrapDEK, importPublicKey, exportPublicKey };
+export { encryptForMembers, decryptSecret, generateDEK, wrapDEK, unwrapDEK, wrapDEKForRecipients, importPublicKey, exportPublicKey };
