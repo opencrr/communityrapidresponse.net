@@ -660,7 +660,6 @@ func (r *ConnectionRepository) LeaveConnection(ctx context.Context, connectionID
 	})
 }
 
-
 // CheckUnanimousBlock checks if ALL other member groups in the connection have blocked the given group.
 func (r *ConnectionRepository) CheckUnanimousBlock(ctx context.Context, connectionID, groupID string) (bool, error) {
 	// Get all other members in the connection
@@ -793,10 +792,10 @@ func (r *ConnectionRepository) SetConnectionName(ctx context.Context, connection
 // =============================================================================
 
 var (
-	ErrChatProposalNotFound = errors.New("chat proposal not found")
-	ErrChatProposalNotPending = errors.New("chat proposal is not pending")
-	ErrChatProposalVoteNotFound = errors.New("vote not found for this group")
-	ErrChatProposalAlreadyVoted = errors.New("group has already voted on this proposal")
+	ErrChatProposalNotFound              = errors.New("chat proposal not found")
+	ErrChatProposalNotPending            = errors.New("chat proposal is not pending")
+	ErrChatProposalVoteNotFound          = errors.New("vote not found for this group")
+	ErrChatProposalAlreadyVoted          = errors.New("group has already voted on this proposal")
 	ErrConnectionSignalGroupLimitReached = errors.New("connection signal group limit reached (max 5)")
 )
 
