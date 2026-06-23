@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -86,6 +87,23 @@ func encCreateSecret(t *testing.T, db *DB, groupID, userID string) *models.Encry
 		t.Fatalf("Failed to create test encrypted secret: %v", err)
 	}
 	return secret
+}
+
+// encCreateGroup creates a test group and returns it. Caller must cleanup.
+func encCreateGroup(t *testing.T, db *DB, createdBy string, name string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	groupID := uuid.New().String()
+	query := `
+		INSERT INTO groups (id, name, created_by, status)
+		VALUES (?, ?, ?, 'active')
+	`
+	_, err := db.ExecContext(ctx, query, groupID, name, createdBy)
+	if err != nil {
+		t.Fatalf("Failed to create test group: %v", err)
+	}
+	return groupID
 }
 
 // --- EncryptionKeyRepository tests ---
@@ -1561,4 +1579,109 @@ func TestSecretUpdateProposalRepository_GetByIDForUpdate(t *testing.T) {
 	if retrieved.ID != proposal.ID {
 		t.Errorf("Expected ID '%s', got '%s'", proposal.ID, retrieved.ID)
 	}
+}
+
+func TestEncryptedSecretRepository_RevokeGroupSecretKeysForUser(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "revoke_user1")
+	user2 := encCreateUser(t, db, "revoke_user2")
+	user3 := encCreateUser(t, db, "revoke_user3")
+	region := encCreateRegion(t, db, user1.ID, "Revoke Region")
+	ownerGroup := encCreateGroup(t, db, user1.ID, "Owner Group")
+
+	// Create signal group with owner_group_id set
+	sgRepo := NewSignalGroupRepository(db)
+	signalGroup := &models.SignalGroup{
+		RegionID:     nil,
+		GroupName:    "Test Group with Owner " + uuid.New().String()[:8],
+		CreatedBy:    strPtr(user1.ID),
+		OwnerGroupID: strPtr(ownerGroup),
+	}
+	if err := sgRepo.Create(ctx, signalGroup); err != nil {
+		t.Fatalf("Failed to create signal group: %v", err)
+	}
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id = ?)", signalGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id = ?", signalGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE id = ?", signalGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM groups WHERE id = ?", ownerGroup)
+		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?, ?)", user1.ID, user2.ID, user3.ID)
+	}()
+
+	// Create encrypted secret with keys for all three users
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    strPtr(signalGroup.ID),
+		EncryptedPayload: "revoke_payload",
+		EncryptionIV:     "revoke_iv_12345678",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_user1"},
+		{UserID: user2.ID, WrappedDEK: "dek_user2"},
+		{UserID: user3.ID, WrappedDEK: "dek_user3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Revoke user2's keys in a transaction
+	err := db.Transaction(ctx, func(tx *sql.Tx) error {
+		return secretRepo.RevokeGroupSecretKeysForUser(ctx, tx, ownerGroup, user2.ID)
+	})
+	if err != nil {
+		t.Fatalf("Failed to revoke group secret keys: %v", err)
+	}
+
+	t.Run("user2's key is deleted", func(t *testing.T) {
+		_, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+		if !errors.Is(err, ErrEncryptedSecretNotFound) {
+			t.Errorf("Expected key not found, got error: %v", err)
+		}
+	})
+
+	t.Run("user1 and user3 keys still exist and are flagged for rekeying", func(t *testing.T) {
+		// Check user1's key
+		dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+		if err != nil {
+			t.Errorf("Failed to get user1's DEK: %v", err)
+		}
+		if dek1 != "dek_user1" {
+			t.Errorf("Expected user1's DEK 'dek_user1', got '%s'", dek1)
+		}
+
+		// Check user3's key
+		dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+		if err != nil {
+			t.Errorf("Failed to get user3's DEK: %v", err)
+		}
+		if dek3 != "dek_user3" {
+			t.Errorf("Expected user3's DEK 'dek_user3', got '%s'", dek3)
+		}
+
+		// Verify both are flagged for rekeying
+		query := `SELECT rekey_needed FROM encrypted_secret_keys WHERE secret_id = ? AND user_id = ?`
+		var rekeyNeeded bool
+
+		err = db.QueryRowContext(ctx, query, secret.ID, user1.ID).Scan(&rekeyNeeded)
+		if err != nil {
+			t.Errorf("Failed to check user1 rekey flag: %v", err)
+		}
+		if !rekeyNeeded {
+			t.Errorf("Expected user1 to be flagged for rekeying")
+		}
+
+		err = db.QueryRowContext(ctx, query, secret.ID, user3.ID).Scan(&rekeyNeeded)
+		if err != nil {
+			t.Errorf("Failed to check user3 rekey flag: %v", err)
+		}
+		if !rekeyNeeded {
+			t.Errorf("Expected user3 to be flagged for rekeying")
+		}
+	})
 }
