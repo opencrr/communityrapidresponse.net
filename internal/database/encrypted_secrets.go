@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -309,61 +308,26 @@ func (r *EncryptedSecretRepository) GetUsersWithSharedSecrets(ctx context.Contex
 // RevokeGroupSecretKeysForUser revokes a user's keys for all secrets of signal_groups owned by a group,
 // and flags remaining recipients for rekeying.
 func (r *EncryptedSecretRepository) RevokeGroupSecretKeysForUser(ctx context.Context, tx *sql.Tx, groupID, userID string) error {
-	// Find all secrets belonging to signal groups with owner_group_id = groupID
-	secretIDQuery := `
-		SELECT es.id
-		FROM encrypted_secrets es
+	deleteQuery := `
+		DELETE esk FROM encrypted_secret_keys esk
+		INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
 		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE sg.owner_group_id = ? AND esk.user_id = ?
+	`
+
+	_, err := tx.ExecContext(ctx, deleteQuery, groupID, userID)
+	if err != nil {
+		return err
+	}
+
+	flagQuery := `
+		UPDATE encrypted_secret_keys esk
+		INNER JOIN encrypted_secrets es ON esk.secret_id = es.id
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		SET esk.rekey_needed = TRUE
 		WHERE sg.owner_group_id = ?
 	`
 
-	rows, err := tx.QueryContext(ctx, secretIDQuery, groupID)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var secretIDs []string
-	for rows.Next() {
-		var secretID string
-		if err := rows.Scan(&secretID); err != nil {
-			return err
-		}
-		secretIDs = append(secretIDs, secretID)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	// If no secrets found, nothing to do
-	if len(secretIDs) == 0 {
-		return nil
-	}
-
-	// Delete user's keys for these secrets
-	deleteQuery := `DELETE FROM encrypted_secret_keys WHERE secret_id IN (` +
-		strings.Repeat("?,", len(secretIDs)-1) + `?) AND user_id = ?`
-
-	args := make([]interface{}, 0, len(secretIDs)+1)
-	for _, id := range secretIDs {
-		args = append(args, id)
-	}
-	args = append(args, userID)
-
-	_, err = tx.ExecContext(ctx, deleteQuery, args...)
-	if err != nil {
-		return err
-	}
-
-	// Flag remaining recipients for rekeying
-	flagQuery := `UPDATE encrypted_secret_keys SET rekey_needed = TRUE WHERE secret_id IN (` +
-		strings.Repeat("?,", len(secretIDs)-1) + `?)`
-
-	args = make([]interface{}, 0, len(secretIDs))
-	for _, id := range secretIDs {
-		args = append(args, id)
-	}
-
-	_, err = tx.ExecContext(ctx, flagQuery, args...)
+	_, err = tx.ExecContext(ctx, flagQuery, groupID)
 	return err
 }
