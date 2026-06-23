@@ -120,7 +120,7 @@ async function handleSubmit(event) {
         });
 
         toast.success('Welcome back!');
-        navigate('/dashboard');
+        navigate('/groups');
     } catch (error) {
         let errorMessage = 'An error occurred. Please try again.';
 

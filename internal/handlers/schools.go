@@ -1,87 +1,63 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
-	"time"
 
-	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
 	"github.com/opencrr/communityrapidresponse.net/internal/services"
 )
 
-const (
-	maxGroupsPerSchool             = 5
-	maxGroupsPerDistrict           = 5
-	schoolBootstrapVouchesRequired = 3
-	schoolNormalVouchesRequired    = 2
-	minSchoolAdminsToEndBootstrap  = 3
-	maxSchoolVouchesPerMonth       = 10
-)
-
-// SchoolHandler handles school endpoints
+// SchoolHandler handles school NCES search and school-to-group linking.
 type SchoolHandler struct {
-	db                       *database.DB
-	schoolRepo               *database.SchoolRepository
-	districtRepo             *database.SchoolDistrictRepository
-	schoolVouchRepo          *database.SchoolVouchRepository
-	signalGroupRepo          *database.SignalGroupRepository
-	encryptedSecretRepo      *database.EncryptedSecretRepository
-	userRepo                 *database.UserRepository
-	auditRepo                *database.AuditRepository
-	ncesService              services.NCESServiceInterface
-	consensusConfig          *config.ConsensusConfig
-	bootstrapCooldownEnabled bool
-	bootstrapCooldownMinutes int
-	notificationService      NotificationServiceInterface
+	schoolRepo   *database.SchoolRepository
+	districtRepo *database.SchoolDistrictRepository
+	groupRepo    *database.GroupRepository
+	userRepo     *database.UserRepository
+	auditRepo    *database.AuditRepository
+	ncesService  services.NCESServiceInterface
 }
 
-// NewSchoolHandler creates a new school handler
+// NewSchoolHandler creates a new school handler.
 func NewSchoolHandler(
-	db *database.DB,
 	schoolRepo *database.SchoolRepository,
 	districtRepo *database.SchoolDistrictRepository,
-	schoolVouchRepo *database.SchoolVouchRepository,
-	signalGroupRepo *database.SignalGroupRepository,
-	encryptedSecretRepo *database.EncryptedSecretRepository,
+	groupRepo *database.GroupRepository,
 	userRepo *database.UserRepository,
 	auditRepo *database.AuditRepository,
 	ncesService services.NCESServiceInterface,
-	consensusConfig *config.ConsensusConfig,
-	bootstrapCooldownEnabled bool,
-	bootstrapCooldownMinutes int,
 ) *SchoolHandler {
 	return &SchoolHandler{
-		db:                       db,
-		schoolRepo:               schoolRepo,
-		districtRepo:             districtRepo,
-		schoolVouchRepo:          schoolVouchRepo,
-		signalGroupRepo:          signalGroupRepo,
-		encryptedSecretRepo:      encryptedSecretRepo,
-		userRepo:                 userRepo,
-		auditRepo:                auditRepo,
-		ncesService:              ncesService,
-		consensusConfig:          consensusConfig,
-		bootstrapCooldownEnabled: bootstrapCooldownEnabled,
-		bootstrapCooldownMinutes: bootstrapCooldownMinutes,
+		schoolRepo:   schoolRepo,
+		districtRepo: districtRepo,
+		groupRepo:    groupRepo,
+		userRepo:     userRepo,
+		auditRepo:    auditRepo,
+		ncesService:  ncesService,
 	}
 }
 
-// SetNotificationService sets the notification service for the handler.
-// This is optional - if not set, notifications will not be sent.
-func (h *SchoolHandler) SetNotificationService(svc NotificationServiceInterface) {
-	h.notificationService = svc
+// SchoolSearchResult extends SchoolSummary with linked group info.
+type SchoolSearchResult struct {
+	models.SchoolSummary
+	GroupID *string `json:"group_id,omitempty"`
 }
 
-// Search handles GET /api/v1/schools/search (public)
+// SchoolSearchResultResponse wraps search results with pagination.
+type SchoolSearchResultResponse struct {
+	Schools []SchoolSearchResult `json:"schools"`
+	Total   int                  `json:"total"`
+	Page    int                  `json:"page"`
+	Limit   int                  `json:"limit"`
+	HasMore bool                 `json:"has_more"`
+}
+
+// Search handles GET /api/v1/schools?query=...&state=... (auth required)
 func (h *SchoolHandler) Search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	state := r.URL.Query().Get("state")
@@ -109,13 +85,26 @@ func (h *SchoolHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure non-nil slice for JSON serialization
 	if schools == nil {
 		schools = []models.SchoolSummary{}
 	}
 
-	writeJSON(w, http.StatusOK, models.SchoolSearchResponse{
-		Schools: schools,
+	// Enrich with linked group IDs
+	results := make([]SchoolSearchResult, len(schools))
+	for i, school := range schools {
+		results[i] = SchoolSearchResult{SchoolSummary: school}
+		linkedGroup, groupErr := h.groupRepo.GetBySchoolID(r.Context(), school.ID)
+		if groupErr != nil {
+			slog.WarnContext(r.Context(), "failed to look up school group", "school_id", school.ID, "error", groupErr)
+			continue
+		}
+		if linkedGroup != nil {
+			results[i].GroupID = &linkedGroup.ID
+		}
+	}
+
+	writeJSON(w, http.StatusOK, SchoolSearchResultResponse{
+		Schools: results,
 		Total:   totalCount,
 		Page:    page,
 		Limit:   limit,
@@ -123,7 +112,8 @@ func (h *SchoolHandler) Search(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Get handles GET /api/v1/schools/:id (public, enriched for authenticated verified members)
+// Get handles GET /api/v1/schools/:id (auth required)
+// Returns school details with linked group info.
 func (h *SchoolHandler) Get(w http.ResponseWriter, r *http.Request) {
 	schoolID := getPathParam(r, "id")
 	if schoolID == "" {
@@ -131,7 +121,7 @@ func (h *SchoolHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schoolWithDetails, err := h.schoolRepo.GetByIDWithDetails(r.Context(), schoolID)
+	school, err := h.schoolRepo.GetByID(r.Context(), schoolID)
 	if err != nil {
 		if errors.Is(err, database.ErrSchoolNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "School not found")
@@ -141,39 +131,44 @@ func (h *SchoolHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the user is authenticated and populate per-user membership fields
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims != nil {
-		userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-		if err == nil && userSchool != nil {
-			schoolWithDetails.IsMember = true
-			schoolWithDetails.IsAdmin = userSchool.IsAdmin
-			schoolWithDetails.IsVerified = userSchool.VerificationStatus == models.SchoolVerificationStatusVerified
+	// Look up linked group
+	var groupID *string
+	linkedGroup, groupErr := h.groupRepo.GetBySchoolID(r.Context(), schoolID)
+	if groupErr != nil {
+		slog.WarnContext(r.Context(), "failed to look up school group", "school_id", schoolID, "error", groupErr)
+	}
+	if linkedGroup != nil {
+		groupID = &linkedGroup.ID
+	}
 
-			if schoolWithDetails.IsVerified {
-				// Include signal groups with invite links for verified members
-				groups, groupErr := h.signalGroupRepo.ListBySchool(r.Context(), schoolID)
-				if groupErr == nil {
-					signalGroupsPublic := []models.SignalGroupPublic{}
-					for _, g := range groups {
-						signalGroupsPublic = append(signalGroupsPublic, models.SignalGroupPublic{
-							ID:          g.ID,
-							SchoolID:    g.SchoolID,
-							Name:        g.GroupName,
-							Description: g.Description,
-							CreatedAt:   g.CreatedAt,
-						})
-					}
-					schoolWithDetails.SignalGroups = signalGroupsPublic
-				}
-			}
+	// Build district name
+	var districtName string
+	if school.DistrictID != nil {
+		district, dErr := h.districtRepo.GetByID(r.Context(), *school.DistrictID)
+		if dErr == nil && district != nil {
+			districtName = district.Name
 		}
 	}
 
-	writeJSON(w, http.StatusOK, schoolWithDetails)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":            school.ID,
+		"nces_id":       school.NCESID,
+		"district_id":   school.DistrictID,
+		"name":          school.Name,
+		"street_address": school.StreetAddress,
+		"city":          school.City,
+		"state":         school.State,
+		"zip":           school.Zip,
+		"latitude":      school.Latitude,
+		"longitude":     school.Longitude,
+		"region_id":     school.RegionID,
+		"district_name": districtName,
+		"group_id":      groupID,
+	})
 }
 
 // Join handles POST /api/v1/schools/:id/join (auth required)
+// If a group exists for this school, join it. Otherwise create one.
 func (h *SchoolHandler) Join(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -187,733 +182,102 @@ func (h *SchoolHandler) Join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-check: is user blocked?
-	isBlocked, err := h.schoolRepo.IsUserBlockedInSchool(r.Context(), claims.UserID, schoolID)
+	// Verify school exists
+	school, err := h.schoolRepo.GetByID(r.Context(), schoolID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "school", "check_block_status")
+		if errors.Is(err, database.ErrSchoolNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "School not found")
+			return
+		}
+		writeServerError(w, r, err, "Failed to get school", "school", "join_school")
 		return
 	}
-	if isBlocked {
-		writeError(w, http.StatusForbidden, "user_blocked", "You are blocked from this school")
+
+	// Check if a group already exists for this school
+	existingGroup, err := h.groupRepo.GetBySchoolID(r.Context(), schoolID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check school group", "school", "join_school")
 		return
 	}
 
-	var membershipID string
+	if existingGroup != nil {
+		// Group exists: check membership first, then join
+		isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), existingGroup.ID, claims.UserID)
+		if memberErr != nil {
+			writeServerError(w, r, memberErr, "Failed to check membership", "school", "join_school")
+			return
+		}
+		if isMember {
+			writeError(w, http.StatusConflict, "already_member", "You are already a member of this school's group")
+			return
+		}
+		if addErr := h.groupRepo.AddMember(r.Context(), existingGroup.ID, claims.UserID, false, false); addErr != nil {
+			writeServerError(w, r, addErr, "Failed to join school group", "school", "join_school")
+			return
+		}
 
-	if h.db != nil {
-		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			existing, txErr := h.schoolRepo.GetUserSchoolForUpdate(r.Context(), tx, claims.UserID, schoolID)
-			if txErr != nil {
-				return txErr
-			}
-			if existing != nil {
-				return database.ErrAlreadyMember
-			}
+		// Audit log
+		if h.auditRepo != nil {
+			resourceType := "group"
+			logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolJoined, &resourceType, &existingGroup.ID, map[string]interface{}{
+				"school_id": schoolID,
+				"group_id":  existingGroup.ID,
+			}), "school_joined")
+		}
 
-			var addErr error
-			membershipID, addErr = h.schoolRepo.AddUserToSchoolTx(r.Context(), tx, claims.UserID, schoolID)
-			return addErr
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"group_id":  existingGroup.ID,
+			"school_id": schoolID,
+			"status":    "joined",
 		})
-		if txErr != nil {
-			if errors.Is(txErr, database.ErrAlreadyMember) {
-				writeError(w, http.StatusConflict, "already_member", "You are already a member of this school")
-				return
-			}
-			writeServerError(w, r, txErr, "Failed to join school", "school", "join_school")
-			return
+		return
+	}
+
+	// No group exists: create one linked to this school
+	description := ""
+	if school.City != nil {
+		description = *school.City
+	}
+	if school.State != "" {
+		if description != "" {
+			description += ", "
 		}
-	} else {
-		// Fallback for when db is not available (e.g., tests)
-		existing, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
-			return
-		}
-		if existing != nil {
-			writeError(w, http.StatusConflict, "already_member", "You are already a member of this school")
-			return
-		}
-
-		membershipID, err = h.schoolRepo.AddUserToSchool(r.Context(), claims.UserID, schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to join school", "school", "join_school")
-			return
-		}
+		description += school.State
 	}
 
-	// Audit log: school joined
-	if h.auditRepo != nil {
-		resourceType := "school"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolJoined, &resourceType, &schoolID, map[string]interface{}{
-			"membership_id": membershipID,
-		}), "school_joined")
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"membership_id": membershipID,
-		"school_id":     schoolID,
-		"status":        "pending",
-	})
-}
-
-// Leave handles POST /api/v1/schools/:id/leave (auth required)
-func (h *SchoolHandler) Leave(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	if err := h.schoolRepo.RemoveUserFromSchool(r.Context(), claims.UserID, schoolID); err != nil {
-		writeServerError(w, r, err, "Failed to leave school", "school", "leave_school")
-		return
-	}
-
-	// Audit log: school left
-	if h.auditRepo != nil {
-		resourceType := "school"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolLeft, &resourceType, &schoolID, map[string]interface{}{}), "school_left")
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"school_id": schoolID,
-		"message":   "Successfully left school",
-	})
-}
-
-// Vouch handles POST /api/v1/schools/:id/vouch (auth required)
-func (h *SchoolHandler) Vouch(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	var req models.SchoolVouchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-		return
-	}
-
-	userIdentifier := req.UserIdentifier
-	if userIdentifier == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "User identifier (email, username, or user ID) is required")
-		return
-	}
-
-	// Look up the vouchee by email, username, or ID
-	var vouchee *models.User
-	var err error
-
-	if strings.Contains(userIdentifier, "@") {
-		vouchee, err = h.userRepo.GetByEmail(r.Context(), userIdentifier)
-	} else {
-		vouchee, err = h.userRepo.GetByUsername(r.Context(), userIdentifier)
-		if err != nil || vouchee == nil {
-			vouchee, err = h.userRepo.GetByID(r.Context(), userIdentifier)
-		}
-	}
-
-	if err != nil || vouchee == nil {
-		writeError(w, http.StatusNotFound, "user_not_found", "User not found. Please check the email or username.")
-		return
-	}
-
-	vouchedUserID := vouchee.ID
-
-	// Can't vouch for yourself
-	if vouchedUserID == claims.UserID {
-		writeError(w, http.StatusBadRequest, "invalid_request", "You cannot vouch for yourself")
-		return
-	}
-
-	// Check voucher is a member of the school
-	voucherMembership, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_voucher_membership")
-		return
-	}
-	if voucherMembership == nil {
-		writeError(w, http.StatusForbidden, "not_member", "You must be a member of this school to vouch")
-		return
-	}
-
-	// Check bootstrap mode
-	bootstrapMode, adminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check school bootstrap status", "school", "check_bootstrap_status")
-		return
-	}
-
-	// Determine vouch threshold based on bootstrap mode
-	vouchesRequired := schoolNormalVouchesRequired
-	if bootstrapMode {
-		vouchesRequired = schoolBootstrapVouchesRequired
-	}
-
-	// Check voucher eligibility based on mode
-	if bootstrapMode {
-		// Bootstrap mode: ANY member can vouch
-	} else {
-		// Normal mode: only verified members can vouch
-		if voucherMembership.VerificationStatus != models.SchoolVerificationStatusVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Only verified members can vouch outside of bootstrap mode")
-			return
-		}
-	}
-
-	// Check vouchee is a member of the school (must have called /join first)
-	voucheeMembership, err := h.schoolRepo.GetUserSchool(r.Context(), vouchedUserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check vouchee membership", "school", "check_vouchee_membership")
-		return
-	}
-	if voucheeMembership == nil {
-		writeError(w, http.StatusBadRequest, "not_member", "This user has not joined this school yet")
-		return
-	}
-
-	// Check if vouchee is blocked
-	isBlocked, err := h.schoolRepo.IsUserBlockedInSchool(r.Context(), vouchedUserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check block status", "school", "check_vouchee_block_status")
-		return
-	}
-	if isBlocked {
-		writeError(w, http.StatusForbidden, "user_blocked", "This user is blocked from this school")
-		return
-	}
-
-	// Bootstrap cooldown (if enabled)
-	if bootstrapMode && h.bootstrapCooldownEnabled {
-		lastVouchTime, err := h.schoolVouchRepo.GetLastVouchTimeByVoucher(r.Context(), claims.UserID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch cooldown", "school", "check_vouch_cooldown")
-			return
-		}
-		if lastVouchTime != nil {
-			cooldownEnd := lastVouchTime.Add(time.Duration(h.bootstrapCooldownMinutes) * time.Minute)
-			if time.Now().Before(cooldownEnd) {
-				minutesLeft := int(time.Until(cooldownEnd).Minutes()) + 1
-				writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
-					"error":        "vouch_cooldown",
-					"message":      fmt.Sprintf("Bootstrap mode cooldown: please wait %d minutes before vouching again", minutesLeft),
-					"cooldown_end": cooldownEnd.Format(time.RFC3339),
-				})
-				return
-			}
-		}
-	}
-
-	// Transaction: duplicate check + monthly limit + create vouch + auto-upgrade
-	vouch := &models.SchoolVouch{
-		VoucherUserID: claims.UserID,
-		VouchedUserID: vouchedUserID,
-		SchoolID:      schoolID,
-	}
-	var totalVouches int
-	var autoUpgraded bool
-
-	if h.db != nil {
-		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			// Check if already vouched (with lock via tx)
-			hasVouched, txErr := h.schoolVouchRepo.HasVouchedTx(r.Context(), tx, claims.UserID, vouchedUserID, schoolID)
-			if txErr != nil {
-				return txErr
-			}
-			if hasVouched {
-				return database.ErrAlreadyVouched
-			}
-
-			// Check monthly vouch limit (with lock)
-			monthlyVouches, txErr := h.schoolVouchRepo.CountVouchesThisMonthForUpdate(r.Context(), tx, claims.UserID)
-			if txErr != nil {
-				return txErr
-			}
-			if monthlyVouches >= maxSchoolVouchesPerMonth {
-				return database.ErrVouchLimitReached
-			}
-
-			// Create vouch
-			if txErr := h.schoolVouchRepo.CreateTx(r.Context(), tx, vouch); txErr != nil {
-				return txErr
-			}
-
-			// Count total vouches for auto-upgrade check
-			totalVouches, txErr = h.schoolVouchRepo.CountVouchesForUserTx(r.Context(), tx, vouchedUserID, schoolID)
-			if txErr != nil {
-				return txErr
-			}
-
-			// Auto-upgrade if enough vouches
-			if totalVouches >= vouchesRequired {
-				autoUpgraded = true
-
-				// Determine if user should become admin (fewer than 3 admins)
-				_, currentAdminCount, txErr := h.schoolRepo.IsSchoolInBootstrapModeTx(r.Context(), tx, schoolID)
-				if txErr != nil {
-					return txErr
-				}
-				shouldBeAdmin := currentAdminCount < minSchoolAdminsToEndBootstrap
-
-				if txErr := h.schoolRepo.UpgradeUserSchoolToVerifiedTx(r.Context(), tx, vouchedUserID, schoolID, shouldBeAdmin); txErr != nil {
-					return txErr
-				}
-
-				if shouldBeAdmin {
-					if txErr := h.schoolRepo.SetUserSchoolAdminTx(r.Context(), tx, vouchedUserID, schoolID, true); txErr != nil {
-						slog.WarnContext(r.Context(), "failed to set user as school admin", "error", txErr)
-					}
-				}
-			}
-
-			return nil
-		})
-		if txErr != nil {
-			if errors.Is(txErr, database.ErrAlreadyVouched) {
-				writeError(w, http.StatusConflict, "already_vouched", "You have already vouched for this user in this school")
-				return
-			}
-			if errors.Is(txErr, database.ErrVouchLimitReached) {
-				writeError(w, http.StatusTooManyRequests, "vouch_limit", "You have reached your monthly vouch limit")
-				return
-			}
-			writeServerError(w, r, txErr, "Failed to create vouch", "school", "create_vouch")
-			return
-		}
-	} else {
-		// Fallback for when db is not available (e.g., tests)
-		hasVouched, err := h.schoolVouchRepo.HasVouched(r.Context(), claims.UserID, vouchedUserID, schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch status", "school", "check_vouch_status")
-			return
-		}
-		if hasVouched {
-			writeError(w, http.StatusConflict, "already_vouched", "You have already vouched for this user in this school")
-			return
-		}
-
-		monthlyVouches, err := h.schoolVouchRepo.CountVouchesThisMonth(r.Context(), claims.UserID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check vouch limit", "school", "check_vouch_limit")
-			return
-		}
-		if monthlyVouches >= maxSchoolVouchesPerMonth {
-			writeError(w, http.StatusTooManyRequests, "vouch_limit", "You have reached your monthly vouch limit")
-			return
-		}
-
-		if err := h.schoolVouchRepo.Create(r.Context(), vouch); err != nil {
-			writeServerError(w, r, err, "Failed to create vouch", "school", "create_vouch")
-			return
-		}
-
-		totalVouches, err = h.schoolVouchRepo.CountVouchesForUser(r.Context(), vouchedUserID, schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to count vouches", "school", "count_vouches")
-			return
-		}
-
-		if totalVouches >= vouchesRequired {
-			autoUpgraded = true
-			currentAdminCount, _ := h.schoolRepo.GetVerifiedAdminCount(r.Context(), schoolID)
-			shouldBeAdmin := currentAdminCount < minSchoolAdminsToEndBootstrap
-			// Non-tx fallback: best-effort upgrade
-			_ = h.schoolRepo.RemoveUserFromSchool(r.Context(), vouchedUserID, schoolID) // Will re-add below
-			_, _ = h.schoolRepo.AddUserToSchool(r.Context(), vouchedUserID, schoolID)
-			// Note: In test fallback, full upgrade is not atomic
-			_ = shouldBeAdmin // Used by tx path only; logged below
-		}
-	}
-
-	// Side effects outside transaction
-	// Audit log: vouch given
-	if h.auditRepo != nil {
-		resourceType := "school"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolVouchGiven, &resourceType, &schoolID, map[string]interface{}{
-			"vouched_user_id":      vouchedUserID,
-			"school_id":            schoolID,
-			"bootstrap_mode":       bootstrapMode,
-			"admin_count_at_vouch": adminCount,
-		}), "school_vouch_given")
-	}
-
-	if autoUpgraded && h.auditRepo != nil {
-		resourceType := "school"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolVouchComplete, &resourceType, &schoolID, map[string]interface{}{
-			"vouched_user_id": vouchedUserID,
-			"school_id":       schoolID,
-			"total_vouches":   totalVouches,
-		}), "school_vouch_complete")
-	}
-
-	vouchesNeeded := vouchesRequired - totalVouches
-	if vouchesNeeded < 0 {
-		vouchesNeeded = 0
-	}
-
-	writeJSON(w, http.StatusCreated, models.SchoolVouchResponse{
-		VouchID:         vouch.ID,
-		VouchesNeeded:   vouchesNeeded,
-		TotalVouches:    totalVouches,
-		BootstrapMode:   bootstrapMode,
-		AdminCount:      adminCount,
-		VouchesRequired: vouchesRequired,
-	})
-}
-
-// GetPendingVouchRequests handles GET /api/v1/schools/:id/vouch/pending (auth required)
-func (h *SchoolHandler) GetPendingVouchRequests(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	// Check caller is a member
-	isMember, err := h.schoolRepo.IsUserInSchool(r.Context(), claims.UserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
-		return
-	}
-	if !isMember {
-		writeError(w, http.StatusForbidden, "not_member", "You must be a member of this school")
-		return
-	}
-
-	pendingUsers, err := h.schoolVouchRepo.GetPendingVouchUsers(r.Context(), schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to fetch pending vouch requests", "school", "get_pending_vouch_users")
-		return
-	}
-
-	if pendingUsers == nil {
-		pendingUsers = []models.PendingSchoolVouchUser{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"requests": pendingUsers,
-	})
-}
-
-// GetVouchStatus handles GET /api/v1/schools/:id/vouch/status/:user_id (auth required)
-func (h *SchoolHandler) GetVouchStatus(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	userID := getPathParam(r, "user_id")
-	if userID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "User ID required")
-		return
-	}
-
-	// Check bootstrap mode for this school
-	bootstrapMode, adminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
-	if err != nil {
-		slog.WarnContext(r.Context(), "failed to check bootstrap mode", "error", err)
-		bootstrapMode = false
-		adminCount = 0
-	}
-
-	vouchesRequired := schoolNormalVouchesRequired
-	if bootstrapMode {
-		vouchesRequired = schoolBootstrapVouchesRequired
-	}
-
-	// Count vouches
-	totalVouches, err := h.schoolVouchRepo.CountVouchesForUser(r.Context(), userID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to count vouches", "school", "count_vouches")
-		return
-	}
-
-	// Get vouchers
-	vouchers, err := h.schoolVouchRepo.GetVouchersForUser(r.Context(), userID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to get vouchers", "school", "get_vouchers")
-		return
-	}
-
-	vouchesNeeded := vouchesRequired - totalVouches
-	if vouchesNeeded < 0 {
-		vouchesNeeded = 0
-	}
-
-	writeJSON(w, http.StatusOK, models.SchoolVouchStatusResponse{
-		UserID:          userID,
-		SchoolID:        schoolID,
-		VouchesReceived: totalVouches,
-		VouchesNeeded:   vouchesNeeded,
-		Vouchers:        vouchers,
-		BootstrapMode:   bootstrapMode,
-		AdminCount:      adminCount,
-		VouchesRequired: vouchesRequired,
-	})
-}
-
-// ListMembers handles GET /api/v1/schools/:id/members (auth required)
-func (h *SchoolHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	// Check caller is a verified member
-	userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-	if err != nil || userSchool == nil {
-		writeError(w, http.StatusForbidden, "not_member", "You must be a verified member of this school")
-		return
-	}
-	if userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
-		writeError(w, http.StatusForbidden, "not_verified", "You must be a verified member of this school to view the member list")
-		return
-	}
-
-	members, err := h.schoolRepo.GetSchoolMembers(r.Context(), schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list members", "school", "list_members")
-		return
-	}
-
-	if members == nil {
-		members = []models.SchoolMember{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"members": members,
-	})
-}
-
-// ListSignalGroups handles GET /api/v1/schools/:id/signal-groups (auth required)
-func (h *SchoolHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	// Check user is verified member of this school
-	userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_membership")
-		return
-	}
-	if userSchool == nil || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
-		writeError(w, http.StatusForbidden, "forbidden", "Verified membership required to view Signal groups")
-		return
-	}
-
-	groups, err := h.signalGroupRepo.ListBySchool(r.Context(), schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "school", "list_signal_groups")
-		return
-	}
-
-	// Convert to response format with encrypted secrets
-	response := []models.SignalGroupWithSecret{}
-	for _, g := range groups {
-		sgws := models.SignalGroupWithSecret{
-			SignalGroupPublic: models.SignalGroupPublic{
-				ID:                 g.ID,
-				SchoolID:           g.SchoolID,
-				Name:               g.GroupName,
-				Description:        g.Description,
-				CreatedAt:          g.CreatedAt,
-				HasPendingDeletion: g.HasPendingDeletion,
-			},
-		}
-		if secret, secretErr := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), g.ID); secretErr == nil {
-			wrappedDEK, _ := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
-			sgws.EncryptedSecret = &models.EncryptedSecretResponse{
-				SecretID:         secret.ID,
-				EncryptedPayload: secret.EncryptedPayload,
-				EncryptionIV:     secret.EncryptionIV,
-				WrappedDEK:       wrappedDEK,
-			}
-		}
-		response = append(response, sgws)
-	}
-
-	writeJSON(w, http.StatusOK, models.SignalGroupListResponse{Groups: response})
-}
-
-// CreateSignalGroup handles POST /api/v1/schools/:id/signal-groups (auth, admin)
-func (h *SchoolHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	schoolID := getPathParam(r, "id")
-	if schoolID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "School ID required")
-		return
-	}
-
-	var req models.CreateSchoolSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-		return
-	}
-
-	if req.Name == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name, encrypted payload, IV, and wrapped keys are required")
-		return
-	}
-
-	// Check user is admin of this school
-	userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check membership", "school", "check_admin_membership")
-		return
-	}
-	if userSchool == nil || !userSchool.IsAdmin || userSchool.VerificationStatus != models.SchoolVerificationStatusVerified {
-		writeError(w, http.StatusForbidden, "forbidden", "Verified admin access required for this school")
-		return
-	}
-
-	// Check NOT in bootstrap mode (like region signal groups)
-	if !claims.IsSuperuser {
-		bootstrapMode, currentAdminCount, err := h.schoolRepo.IsSchoolInBootstrapMode(r.Context(), schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check school status", "school", "check_bootstrap_mode")
-			return
-		}
-		if bootstrapMode {
-			writeJSON(w, http.StatusForbidden, map[string]interface{}{
-				"error":           "school_in_bootstrap",
-				"message":         "Cannot create Signal groups while school is in bootstrap mode. The school needs at least 3 verified admins.",
-				"bootstrap_mode":  true,
-				"admin_count":     currentAdminCount,
-				"admins_required": minSchoolAdminsToEndBootstrap,
-			})
-			return
-		}
-	}
-
-	// Check group limit + create group + encrypted secret atomically
-	group := &models.SignalGroup{
+	createReq := &models.CreateGroupRequest{
+		Name:        school.Name,
+		Description: description,
+		Visibility:  "unlisted",
 		SchoolID:    &schoolID,
-		GroupName:   req.Name,
-		Description: req.Description,
-		CreatedBy:   &claims.UserID,
 	}
 
-	if h.db != nil {
-		err := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			count, txErr := h.signalGroupRepo.CountBySchoolForUpdate(r.Context(), tx, schoolID)
-			if txErr != nil {
-				return txErr
-			}
-			if count >= maxGroupsPerSchool {
-				return database.ErrLimitReached
-			}
-			if txErr := h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group); txErr != nil {
-				return txErr
-			}
-			secret := &models.EncryptedSecret{
-				SecretType:       models.SecretTypeSignalInvite,
-				SignalGroupID:    &group.ID,
-				EncryptedPayload: req.EncryptedPayload,
-				EncryptionIV:     req.EncryptionIV,
-				UpdatedBy:        claims.UserID,
-			}
-			return h.encryptedSecretRepo.CreateTx(r.Context(), tx, secret, req.WrappedKeys)
-		})
-		if errors.Is(err, database.ErrLimitReached) {
-			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this school")
-			return
-		}
-		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_signal_group")
-			return
-		}
-	} else {
-		count, err := h.signalGroupRepo.CountBySchool(r.Context(), schoolID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "count_school_groups")
-			return
-		}
-		if count >= maxGroupsPerSchool {
-			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this school")
-			return
-		}
-		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_signal_group")
-			return
-		}
-		secret := &models.EncryptedSecret{
-			SecretType:       models.SecretTypeSignalInvite,
-			SignalGroupID:    &group.ID,
-			EncryptedPayload: req.EncryptedPayload,
-			EncryptionIV:     req.EncryptionIV,
-			UpdatedBy:        claims.UserID,
-		}
-		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
-			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
-			return
-		}
+	newGroup, err := h.groupRepo.Create(r.Context(), createReq, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to create school group", "school", "create_school_group")
+		return
 	}
 
-	// Audit log: school signal group created
+	// Audit log
 	if h.auditRepo != nil {
-		resourceType := "signal_group"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolSignalGroupCreated, &resourceType, &group.ID, map[string]interface{}{
-			"group_name": group.GroupName,
-			"school_id":  schoolID,
-		}), "school_signal_group_created")
+		resourceType := "group"
+		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolJoined, &resourceType, &newGroup.ID, map[string]interface{}{
+			"school_id":     schoolID,
+			"group_id":      newGroup.ID,
+			"group_created": true,
+		}), "school_group_created")
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"group_id":   group.ID,
-		"school_id":  schoolID,
-		"group_name": group.GroupName,
-		"created_at": group.CreatedAt,
+		"group_id":      newGroup.ID,
+		"school_id":     schoolID,
+		"status":        "created",
+		"group_created": true,
 	})
 }
 
 // ListMySchools handles GET /api/v1/schools/my (auth required)
+// Returns groups where school_id IS NOT NULL for the current user.
 func (h *SchoolHandler) ListMySchools(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -921,22 +285,62 @@ func (h *SchoolHandler) ListMySchools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schools, err := h.schoolRepo.ListUserSchoolsWithStatus(r.Context(), claims.UserID)
+	groups, err := h.groupRepo.ListByUser(r.Context(), claims.UserID)
 	if err != nil {
-		writeServerError(w, r, err, "Failed to list schools", "school", "list_my_schools")
+		writeServerError(w, r, err, "Failed to list school groups", "school", "list_my_schools")
 		return
 	}
 
-	if schools == nil {
-		schools = []models.MySchoolSummary{}
+	// Filter to only school-linked groups and enrich with school data
+	type MySchoolGroup struct {
+		GroupID     string                `json:"group_id"`
+		GroupName   string                `json:"group_name"`
+		SchoolID   string                `json:"school_id"`
+		SchoolName string                `json:"school_name"`
+		City       string                `json:"city,omitempty"`
+		State      string                `json:"state"`
+		IsAdmin    bool                  `json:"is_admin"`
+		MemberCount int                  `json:"member_count"`
+		Status     models.GroupStatus    `json:"status"`
+	}
+
+	var schoolGroups []MySchoolGroup
+	for _, g := range groups {
+		if g.SchoolID == nil {
+			continue
+		}
+		school, schoolErr := h.schoolRepo.GetByID(r.Context(), *g.SchoolID)
+		if schoolErr != nil {
+			slog.WarnContext(r.Context(), "failed to get school for group", "school_id", *g.SchoolID, "error", schoolErr)
+			continue
+		}
+		city := ""
+		if school.City != nil {
+			city = *school.City
+		}
+		schoolGroups = append(schoolGroups, MySchoolGroup{
+			GroupID:     g.ID,
+			GroupName:   g.Name,
+			SchoolID:    school.ID,
+			SchoolName:  school.Name,
+			City:        city,
+			State:       school.State,
+			IsAdmin:     g.IsUserAdmin,
+			MemberCount: g.MemberCount,
+			Status:      g.Status,
+		})
+	}
+
+	if schoolGroups == nil {
+		schoolGroups = []MySchoolGroup{}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schools": schools,
+		"schools": schoolGroups,
 	})
 }
 
-// SearchDistricts handles GET /api/v1/districts/search (public)
+// SearchDistricts handles GET /api/v1/school-districts (auth required)
 func (h *SchoolHandler) SearchDistricts(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	state := r.URL.Query().Get("state")
@@ -956,7 +360,7 @@ func (h *SchoolHandler) SearchDistricts(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// GetDistrict handles GET /api/v1/districts/:id (public)
+// GetDistrict handles GET /api/v1/school-districts/:id (auth required)
 func (h *SchoolHandler) GetDistrict(w http.ResponseWriter, r *http.Request) {
 	districtID := getPathParam(r, "id")
 	if districtID == "" {
@@ -1003,284 +407,5 @@ func (h *SchoolHandler) GetDistrict(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.DistrictWithDetails{
 		SchoolDistrict: *district,
 		Schools:        schools,
-	})
-}
-
-// ListDistrictMembers handles GET /api/v1/school-districts/:id/members (auth required)
-func (h *SchoolHandler) ListDistrictMembers(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	districtID := getPathParam(r, "id")
-	if districtID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "District ID required")
-		return
-	}
-
-	// Check user is verified member of at least one school in district
-	if h.db != nil {
-		var isVerified bool
-		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			var txErr error
-			isVerified, txErr = h.schoolRepo.IsUserVerifiedInDistrictTx(r.Context(), tx, claims.UserID, districtID)
-			return txErr
-		})
-		if txErr != nil {
-			writeServerError(w, r, txErr, "Failed to check district membership", "school", "check_district_membership")
-			return
-		}
-		if !isVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Verified membership in a school within this district is required")
-			return
-		}
-	} else {
-		// Fallback for when db is not available (e.g., tests)
-		districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check district membership", "school", "check_district_membership")
-			return
-		}
-		isVerified := false
-		for _, schoolSummary := range districtSchools {
-			userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolSummary.ID)
-			if err == nil && userSchool != nil && userSchool.VerificationStatus == models.SchoolVerificationStatusVerified {
-				isVerified = true
-				break
-			}
-		}
-		if !isVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Verified membership in a school within this district is required")
-			return
-		}
-	}
-
-	members, err := h.schoolRepo.GetDistrictMembers(r.Context(), districtID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list district members", "school", "list_district_members")
-		return
-	}
-
-	if members == nil {
-		members = []models.DistrictMember{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"members": members,
-	})
-}
-
-// ListDistrictSignalGroups handles GET /api/v1/districts/:id/signal-groups (auth required)
-func (h *SchoolHandler) ListDistrictSignalGroups(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	districtID := getPathParam(r, "id")
-	if districtID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "District ID required")
-		return
-	}
-
-	// Check user is verified member of at least one school in district
-	if h.db != nil {
-		var isVerified bool
-		txErr := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			var txErr error
-			isVerified, txErr = h.schoolRepo.IsUserVerifiedInDistrictTx(r.Context(), tx, claims.UserID, districtID)
-			return txErr
-		})
-		if txErr != nil {
-			writeServerError(w, r, txErr, "Failed to check district membership", "school", "check_district_membership")
-			return
-		}
-		if !isVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Verified membership in a school within this district is required")
-			return
-		}
-	} else {
-		// Fallback for when db is not available (e.g., tests)
-		// Check by listing schools in district and checking membership
-		districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check district membership", "school", "check_district_membership")
-			return
-		}
-		isVerified := false
-		for _, schoolSummary := range districtSchools {
-			userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolSummary.ID)
-			if err == nil && userSchool != nil && userSchool.VerificationStatus == models.SchoolVerificationStatusVerified {
-				isVerified = true
-				break
-			}
-		}
-		if !isVerified {
-			writeError(w, http.StatusForbidden, "forbidden", "Verified membership in a school within this district is required")
-			return
-		}
-	}
-
-	groups, err := h.signalGroupRepo.ListByDistrict(r.Context(), districtID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list Signal groups", "school", "list_district_signal_groups")
-		return
-	}
-
-	// Convert to response format with encrypted secrets
-	response := []models.SignalGroupWithSecret{}
-	for _, g := range groups {
-		sgws := models.SignalGroupWithSecret{
-			SignalGroupPublic: models.SignalGroupPublic{
-				ID:                 g.ID,
-				DistrictID:         g.DistrictID,
-				Name:               g.GroupName,
-				Description:        g.Description,
-				CreatedAt:          g.CreatedAt,
-				HasPendingDeletion: g.HasPendingDeletion,
-			},
-		}
-		if secret, secretErr := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), g.ID); secretErr == nil {
-			wrappedDEK, _ := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
-			sgws.EncryptedSecret = &models.EncryptedSecretResponse{
-				SecretID:         secret.ID,
-				EncryptedPayload: secret.EncryptedPayload,
-				EncryptionIV:     secret.EncryptionIV,
-				WrappedDEK:       wrappedDEK,
-			}
-		}
-		response = append(response, sgws)
-	}
-
-	writeJSON(w, http.StatusOK, models.SignalGroupListResponse{Groups: response})
-}
-
-// CreateDistrictSignalGroup handles POST /api/v1/districts/:id/signal-groups (auth required)
-func (h *SchoolHandler) CreateDistrictSignalGroup(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	districtID := getPathParam(r, "id")
-	if districtID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "District ID required")
-		return
-	}
-
-	var req models.CreateSchoolSignalGroupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
-		return
-	}
-
-	if req.Name == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Group name, encrypted payload, IV, and wrapped keys are required")
-		return
-	}
-
-	// Check user is admin of at least one school in district (verified admin)
-	districtSchools, err := h.schoolRepo.ListByDistrict(r.Context(), districtID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to check district schools", "school", "check_district_schools")
-		return
-	}
-
-	isDistrictAdmin := false
-	for _, schoolSummary := range districtSchools {
-		userSchool, err := h.schoolRepo.GetUserSchool(r.Context(), claims.UserID, schoolSummary.ID)
-		if err == nil && userSchool != nil && userSchool.IsAdmin && userSchool.VerificationStatus == models.SchoolVerificationStatusVerified {
-			isDistrictAdmin = true
-			break
-		}
-	}
-
-	if !isDistrictAdmin && !claims.IsSuperuser {
-		writeError(w, http.StatusForbidden, "forbidden", "Verified admin access in a school within this district is required")
-		return
-	}
-
-	// Check group limit + create group + encrypted secret atomically
-	group := &models.SignalGroup{
-		DistrictID:  &districtID,
-		GroupName:   req.Name,
-		Description: req.Description,
-		CreatedBy:   &claims.UserID,
-	}
-
-	if h.db != nil {
-		err := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
-			count, txErr := h.signalGroupRepo.CountByDistrictForUpdate(r.Context(), tx, districtID)
-			if txErr != nil {
-				return txErr
-			}
-			if count >= maxGroupsPerDistrict {
-				return database.ErrLimitReached
-			}
-			if txErr := h.signalGroupRepo.CreateGroupTx(r.Context(), tx, group); txErr != nil {
-				return txErr
-			}
-			secret := &models.EncryptedSecret{
-				SecretType:       models.SecretTypeSignalInvite,
-				SignalGroupID:    &group.ID,
-				EncryptedPayload: req.EncryptedPayload,
-				EncryptionIV:     req.EncryptionIV,
-				UpdatedBy:        claims.UserID,
-			}
-			return h.encryptedSecretRepo.CreateTx(r.Context(), tx, secret, req.WrappedKeys)
-		})
-		if errors.Is(err, database.ErrLimitReached) {
-			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this district")
-			return
-		}
-		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_district_signal_group")
-			return
-		}
-	} else {
-		count, err := h.signalGroupRepo.CountByDistrict(r.Context(), districtID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "count_district_groups")
-			return
-		}
-		if count >= maxGroupsPerDistrict {
-			writeError(w, http.StatusConflict, "limit_reached", "Maximum number of Signal groups reached for this district")
-			return
-		}
-		if err := h.signalGroupRepo.Create(r.Context(), group); err != nil {
-			writeServerError(w, r, err, "Failed to create Signal group", "school", "create_district_signal_group")
-			return
-		}
-		secret := &models.EncryptedSecret{
-			SecretType:       models.SecretTypeSignalInvite,
-			SignalGroupID:    &group.ID,
-			EncryptedPayload: req.EncryptedPayload,
-			EncryptionIV:     req.EncryptionIV,
-			UpdatedBy:        claims.UserID,
-		}
-		if err := h.encryptedSecretRepo.Create(r.Context(), secret, req.WrappedKeys); err != nil {
-			writeServerError(w, r, err, "Failed to create encrypted secret", "school", "create_encrypted_secret")
-			return
-		}
-	}
-
-	// Audit log: district signal group created
-	if h.auditRepo != nil {
-		resourceType := "signal_group"
-		logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionSchoolSignalGroupCreated, &resourceType, &group.ID, map[string]interface{}{
-			"group_name":  group.GroupName,
-			"district_id": districtID,
-		}), "district_signal_group_created")
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"group_id":    group.ID,
-		"district_id": districtID,
-		"group_name":  group.GroupName,
-		"created_at":  group.CreatedAt,
 	})
 }

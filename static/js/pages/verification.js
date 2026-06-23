@@ -13,7 +13,6 @@ import {
 import { getRegions } from '../api/regions.js';
 import { ApiError } from '../api/client.js';
 import { getCurrentUser } from '../api/auth.js';
-import { isVouchVerified } from '../utils/store.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
 import { navigate } from '../app.js';
@@ -62,34 +61,6 @@ export async function render(container) {
         console.error('Failed to get verification status:', error);
     }
 
-    // Gate: must be vouch-verified before requesting NEW address verification.
-    // Allow users with an existing pending postcard to enter their code.
-    if (!isVouchVerified() && !status?.pending_request) {
-        container.innerHTML = `
-            <div class="page">
-                <div class="page__container" style="max-width: 600px;">
-                    <div class="page__header text-center">
-                        <h1 class="page__title">Address Verification</h1>
-                    </div>
-                    <div class="card">
-                        <div class="card__body text-center" style="padding: var(--space-8);">
-                            <div style="font-size: 48px; margin-bottom: var(--space-4);">&#x1F91D;</div>
-                            <h2 style="font-size: var(--font-size-xl); font-weight: 600; margin-bottom: var(--space-3);">
-                                Vouch Verification Required
-                            </h2>
-                            <p style="color: var(--color-gray-600); margin-bottom: var(--space-4);">
-                                You must be vouched by community members before requesting address verification.
-                                Address verification upgrades you to an admin.
-                            </p>
-                            <a href="/vouch" class="btn btn--primary" data-link>Go to Vouch Verification</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        return;
-    }
-
     // Fetch available regions
     try {
         availableRegions = await getRegions();
@@ -107,9 +78,7 @@ export async function render(container) {
                 <div class="page__header text-center">
                     <h1 class="page__title">Verify Your Address</h1>
                     <p class="page__subtitle">
-                        ${isVouchVerified()
-                            ? 'Prove your residency to become a community admin. You\'re already vouch-verified with read-only access.'
-                            : 'Enter your postcard code to complete address verification. Get vouched by community members to access Signal groups.'}
+                        Prove your residency by receiving a postcard at your address.
                     </p>
                 </div>
 
@@ -432,7 +401,7 @@ async function handleCodeSubmit(event) {
         await getCurrentUser();
 
         toast.success('Your address has been verified! Welcome to the community.');
-        navigate('/dashboard');
+        navigate('/groups');
     } catch (error) {
         let errorMessage = 'Failed to verify code. Please try again.';
 

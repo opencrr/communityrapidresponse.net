@@ -14,33 +14,28 @@ import (
 
 // Router handles HTTP routing
 type Router struct {
-	mux                *http.ServeMux
-	auth               *AuthHandler
-	mfa                *MFAHandler
-	regions            *RegionHandler
-	signalGroups       *SignalGroupHandler
-	verification       *VerificationHandler
-	admin              *AdminHandler
-	membership         *MembershipHandler
-	blocklistProposals *BlocklistProposalHandler
-	deletionProposals  *DeletionProposalHandler
-	schools            *SchoolHandler
-	userReports        *UserReportHandler
-	encryption         *EncryptionHandler
-	secretUpdates      *SecretUpdateHandler
-	meshtastic         *MeshtasticHandler
-	jwtAuth            *middleware.JWTAuth
-	rateLimiter        services.RateLimiter
-	rateLimitConfig    *RateLimitOptions
-	csrfConfig         *CSRFConfig
-	corsOrigins        []string
-	securityConfig     *middleware.SecurityConfig
+	mux            *http.ServeMux
+	auth           *AuthHandler
+	mfa            *MFAHandler
+	regions        *RegionHandler
+	verification   *VerificationHandler
+	admin          *AdminHandler
+	schools        *SchoolHandler
+	encryption     *EncryptionHandler
+	groups         *GroupHandler
+	connections    *ConnectionHandler
+	jwtAuth        *middleware.JWTAuth
+	rateLimiter    services.RateLimiter
+	rateLimitConfig *RateLimitOptions
+	csrfConfig     *CSRFConfig
+	corsOrigins    []string
+	securityConfig *middleware.SecurityConfig
 }
 
 // RateLimitOptions configures rate limiting for the router
 type RateLimitOptions struct {
-	Enabled    bool
-	Limit      int
+	Enabled  bool
+	Limit    int
 	WindowSecs int
 }
 
@@ -56,17 +51,12 @@ func NewRouter(
 	auth *AuthHandler,
 	mfa *MFAHandler,
 	regions *RegionHandler,
-	signalGroups *SignalGroupHandler,
 	verification *VerificationHandler,
 	admin *AdminHandler,
-	membership *MembershipHandler,
-	blocklistProposals *BlocklistProposalHandler,
-	deletionProposals *DeletionProposalHandler,
 	schools *SchoolHandler,
-	userReports *UserReportHandler,
 	encryption *EncryptionHandler,
-	secretUpdates *SecretUpdateHandler,
-	meshtastic *MeshtasticHandler,
+	groups *GroupHandler,
+	connections *ConnectionHandler,
 	jwtAuth *middleware.JWTAuth,
 	rateLimiter services.RateLimiter,
 	rateLimitConfig *RateLimitOptions,
@@ -75,27 +65,22 @@ func NewRouter(
 	securityConfig *middleware.SecurityConfig,
 ) *Router {
 	return &Router{
-		mux:                http.NewServeMux(),
-		auth:               auth,
-		mfa:                mfa,
-		regions:            regions,
-		signalGroups:       signalGroups,
-		verification:       verification,
-		admin:              admin,
-		membership:         membership,
-		blocklistProposals: blocklistProposals,
-		deletionProposals:  deletionProposals,
-		schools:            schools,
-		userReports:        userReports,
-		encryption:         encryption,
-		secretUpdates:      secretUpdates,
-		meshtastic:         meshtastic,
-		jwtAuth:            jwtAuth,
-		rateLimiter:        rateLimiter,
-		rateLimitConfig:    rateLimitConfig,
-		csrfConfig:         csrfConfig,
-		corsOrigins:        corsOrigins,
-		securityConfig:     securityConfig,
+		mux:             http.NewServeMux(),
+		auth:            auth,
+		mfa:             mfa,
+		regions:         regions,
+		verification:    verification,
+		admin:           admin,
+		schools:         schools,
+		encryption:      encryption,
+		groups:          groups,
+		connections:     connections,
+		jwtAuth:         jwtAuth,
+		rateLimiter:     rateLimiter,
+		rateLimitConfig: rateLimitConfig,
+		csrfConfig:      csrfConfig,
+		corsOrigins:     corsOrigins,
+		securityConfig:  securityConfig,
 	}
 }
 
@@ -129,34 +114,25 @@ func (r *Router) Setup() http.Handler {
 
 	// Protected routes - communities (regions)
 	r.mux.HandleFunc("/api/v1/communities", r.handleRegions)
-	r.mux.HandleFunc("/api/v1/communities/admin", r.authenticated(r.methodHandler(http.MethodGet, r.regions.ListAdmin)))
 	r.mux.HandleFunc("/api/v1/communities/", r.handleRegionByID)
 
-	// Protected routes - membership requests
-	r.mux.HandleFunc("/api/v1/membership-requests", r.handleMembershipRequests)
-	r.mux.HandleFunc("/api/v1/membership-requests/admin", r.authenticated(r.methodHandler(http.MethodGet, r.membership.ListPendingForAdmin)))
-	r.mux.HandleFunc("/api/v1/membership-requests/", r.handleMembershipRequestByID)
+	// Group routes (nil-safe for tests that don't need groups)
+	if r.groups != nil {
+		r.mux.HandleFunc("/api/v1/groups", r.handleGroups)
+		r.mux.HandleFunc("/api/v1/groups/", r.handleGroupByID)
+		r.mux.HandleFunc("/api/v1/group-invitations", r.authenticated(r.methodHandler(http.MethodGet, r.groups.ListMyInvitations)))
+		r.mux.HandleFunc("/api/v1/group-invitations/", r.handleGroupInvitationByID)
+		r.mux.HandleFunc("/api/v1/topic-board", r.authenticated(r.methodHandler(http.MethodGet, r.groups.BrowsePostings)))
+	}
 
-	// Protected routes - invitations
-	r.mux.HandleFunc("/api/v1/invitations", r.authenticated(r.methodHandler(http.MethodGet, r.membership.ListInvitations)))
-	r.mux.HandleFunc("/api/v1/invitations/", r.handleInvitationByID)
-
-	// Protected routes - signal groups
-	r.mux.HandleFunc("/api/v1/signal-groups", r.handleSignalGroups)
-	r.mux.HandleFunc("/api/v1/signal-groups/admin", r.authenticated(r.methodHandler(http.MethodGet, r.signalGroups.ListAdmin)))
-	r.mux.HandleFunc("/api/v1/signal-groups/", r.handleSignalGroupByID)
-
-	// Secret proposal routes (replaces invite-link-proposals)
-	r.mux.HandleFunc("/api/v1/secret-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.secretUpdates.ListProposals)))
-	r.mux.HandleFunc("/api/v1/secret-proposals/", r.handleSecretProposal)
-
-	// Encrypted secret finalization
-	r.mux.HandleFunc("/api/v1/encrypted-secrets/", r.handleEncryptedSecretByID)
-
-	// Meshtastic channel routes
-	r.mux.HandleFunc("/api/v1/meshtastic-channels", r.handleMeshtasticChannels)
-	r.mux.HandleFunc("/api/v1/meshtastic-channels/admin", r.authenticated(r.methodHandler(http.MethodGet, r.meshtastic.ListAdmin)))
-	r.mux.HandleFunc("/api/v1/meshtastic-channels/", r.handleMeshtasticChannelByID)
+	// Connection routes (nil-safe for tests that don't need connections)
+	if r.connections != nil {
+		r.mux.HandleFunc("/api/v1/connections", r.handleConnections)
+		r.mux.HandleFunc("/api/v1/connections/", r.handleConnectionByID)
+		r.mux.HandleFunc("/api/v1/connection-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.connections.ListPendingProposals)))
+		r.mux.HandleFunc("/api/v1/connection-proposals/", r.handleConnectionProposalByID)
+		r.mux.HandleFunc("/api/v1/connection-chat-proposals/", r.handleConnectionChatProposalByID)
+	}
 
 	// School routes (all authenticated)
 	r.mux.HandleFunc("/api/v1/schools", r.handleSchools)
@@ -169,18 +145,6 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/verification/status", r.authenticated(r.methodHandler(http.MethodGet, r.verification.GetStatus)))
 	r.mux.HandleFunc("/api/v1/verification/postcard/request", r.authenticated(r.methodHandler(http.MethodPost, r.verification.RequestPostcardVerification)))
 	r.mux.HandleFunc("/api/v1/verification/postcard/verify", r.authenticated(r.methodHandler(http.MethodPost, r.verification.VerifyCode)))
-	r.mux.HandleFunc("/api/v1/verification/vouch", r.authenticated(r.methodHandler(http.MethodPost, r.verification.Vouch)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/request", r.authenticated(r.methodHandler(http.MethodPost, r.verification.RequestVouchVerification)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/pending", r.authenticated(r.methodHandler(http.MethodGet, r.verification.GetPendingVouchRequests)))
-	r.mux.HandleFunc("/api/v1/verification/vouch/status/", r.authenticated(r.handleVouchStatus))
-
-	// Protected routes - blocklist proposals
-	r.mux.HandleFunc("/api/v1/blocklist-proposals", r.authenticated(r.methodHandler(http.MethodGet, r.blocklistProposals.ListProposals)))
-	r.mux.HandleFunc("/api/v1/blocklist-proposals/", r.handleBlocklistProposal)
-
-	// Protected routes - deletion proposals
-	r.mux.HandleFunc("/api/v1/deletion-proposals", r.handleDeletionProposals)
-	r.mux.HandleFunc("/api/v1/deletion-proposals/", r.handleDeletionProposal)
 
 	// Protected routes - encryption keys
 	r.mux.HandleFunc("/api/v1/encryption/keys", r.handleEncryptionKeys)
@@ -189,17 +153,11 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/encryption/pending-rekeys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingRekeys)))
 	r.mux.HandleFunc("/api/v1/encryption/rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionRekey)))
 
-	// Protected routes - user reports
-	r.mux.HandleFunc("/api/v1/reports", r.authenticated(r.methodHandler(http.MethodGet, r.userReports.ListReports)))
-	r.mux.HandleFunc("/api/v1/reports/", r.handleReportByID)
-
 	// Admin routes (superuser only)
 	r.mux.HandleFunc("/api/v1/admin/users", r.authenticated(r.methodHandler(http.MethodGet, r.admin.ListUsers)))
 	r.mux.HandleFunc("/api/v1/admin/users/", r.handleAdminUserByID)
 	r.mux.HandleFunc("/api/v1/admin/audit-logs", r.authenticated(r.methodHandler(http.MethodGet, r.admin.GetAuditLogs)))
 	r.mux.HandleFunc("/api/v1/admin/audit-logs/export", r.authenticated(r.methodHandler(http.MethodGet, r.admin.ExportAuditLogs)))
-	r.mux.HandleFunc("/api/v1/admin/blocked-addresses", r.authenticated(r.methodHandler(http.MethodGet, r.blocklistProposals.ListBlockedAddresses)))
-	r.mux.HandleFunc("/api/v1/admin/blocked-addresses/", r.handleBlockedAddress)
 
 	// Health check (both paths for compatibility)
 	healthHandler := func(w http.ResponseWriter, req *http.Request) {
@@ -310,96 +268,10 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	regionID := parts[0]
 
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
 	if !isValidUUID(regionID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid community ID format")
-		return
-	}
-
-	// Check for membership-requests sub-route
-	if len(parts) >= 2 && parts[1] == "membership-requests" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		switch req.Method {
-		case http.MethodGet:
-			r.authenticated(r.membership.ListPendingForRegion)(w, req)
-		case http.MethodPost:
-			r.authenticated(r.membership.CreateRequest)(w, req)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		}
-		return
-	}
-
-	// Check for invitations sub-route
-	if len(parts) >= 2 && parts[1] == "invitations" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.membership.CreateInvitation)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for blocklist-proposals sub-route
-	if len(parts) >= 2 && parts[1] == "blocklist-proposals" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.blocklistProposals.CreateProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for reports sub-route
-	if len(parts) >= 2 && parts[1] == "reports" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		q.Set("scope", "region")
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.userReports.CreateReport)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for members sub-route (member-visible, email-stripped)
-	if len(parts) >= 2 && parts[1] == "members" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodGet {
-			r.authenticated(r.regions.ListMembers)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for users sub-route
-	if len(parts) >= 2 && parts[1] == "users" {
-		q := req.URL.Query()
-		q.Set("id", regionID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodGet {
-			r.authenticated(r.regions.ListUsersInRegion)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid community ID")
 		return
 	}
 
@@ -420,191 +292,12 @@ func (r *Router) handleRegionByID(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// handleSignalGroups handles /api/v1/signal-groups
-func (r *Router) handleSignalGroups(w http.ResponseWriter, req *http.Request) {
-	switch req.Method {
-	case http.MethodGet:
-		r.authenticated(r.signalGroups.List)(w, req)
-	case http.MethodPost:
-		r.authenticated(r.signalGroups.Create)(w, req)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-	}
-}
-
-// handleSignalGroupByID handles /api/v1/signal-groups/:id and sub-routes
-func (r *Router) handleSignalGroupByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/signal-groups/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Signal group ID required")
-		return
-	}
-
-	groupID := parts[0]
-
-	if !isValidUUID(groupID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid signal group ID format")
-		return
-	}
-
-	// Check for secret-proposals sub-route
-	if len(parts) >= 2 && parts[1] == "secret-proposals" {
-		q := req.URL.Query()
-		q.Set("id", groupID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.secretUpdates.CreateProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Regular signal group operations
-	q := req.URL.Query()
-	q.Set("id", groupID)
-	req.URL.RawQuery = q.Encode()
-
-	switch req.Method {
-	case http.MethodPut:
-		r.authenticated(r.signalGroups.Update)(w, req)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-	}
-}
-
-// handleSecretProposal handles /api/v1/secret-proposals/:id and sub-routes
-func (r *Router) handleSecretProposal(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/secret-proposals/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
-		return
-	}
-
-	proposalID := parts[0]
-
-	if !isValidUUID(proposalID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
-		return
-	}
-
-	// Check for vote sub-route
-	if len(parts) >= 2 && parts[1] == "vote" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.secretUpdates.Vote)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for expire sub-route (superuser only)
-	if len(parts) >= 2 && parts[1] == "expire" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.secretUpdates.ExpireProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Handle GET request for proposal details
-	if req.Method == http.MethodGet {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-		r.authenticated(r.secretUpdates.GetProposal)(w, req)
-		return
-	}
-
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
-
-// handleEncryptedSecretByID handles /api/v1/encrypted-secrets/:id and sub-routes
-func (r *Router) handleEncryptedSecretByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/encrypted-secrets/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Secret ID required")
-		return
-	}
-
-	secretID := parts[0]
-
-	if !isValidUUID(secretID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid secret ID format")
-		return
-	}
-
-	// Check for finalize sub-route
-	if len(parts) >= 2 && parts[1] == "finalize" {
-		q := req.URL.Query()
-		q.Set("id", secretID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.secretUpdates.Finalize)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	writeError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-}
-
-// handleVouchStatus handles /api/v1/verification/vouch/status/:user_id
-func (r *Router) handleVouchStatus(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/verification/vouch/status/")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "User ID required")
-		return
-	}
-
-	if !isValidUUID(path) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid user ID format")
-		return
-	}
-
-	q := req.URL.Query()
-	q.Set("user_id", path)
-	req.URL.RawQuery = q.Encode()
-
-	if req.Method == http.MethodGet {
-		r.verification.GetVouchStatus(w, req)
-		return
-	}
-
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
 
 // handleAdminUserByID handles /api/v1/admin/users/:id and /api/v1/admin/users/:id/grant-vouch, etc.
 func (r *Router) handleAdminUserByID(w http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(req.URL.Path, "/api/v1/admin/users/")
 	if path == "" {
 		writeError(w, http.StatusBadRequest, "missing_id", "User ID required")
-		return
-	}
-
-	// Extract the user ID (first path segment)
-	adminParts := strings.SplitN(path, "/", 2)
-	adminUserID := adminParts[0]
-	if !isValidUUID(adminUserID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid user ID format")
 		return
 	}
 
@@ -680,150 +373,6 @@ func (r *Router) handleAdminUserByID(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// handleMembershipRequests handles /api/v1/membership-requests
-func (r *Router) handleMembershipRequests(w http.ResponseWriter, req *http.Request) {
-	if req.Method == http.MethodGet {
-		r.authenticated(r.membership.ListUserRequests)(w, req)
-		return
-	}
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
-
-// handleMembershipRequestByID handles /api/v1/membership-requests/:id and sub-routes
-func (r *Router) handleMembershipRequestByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/membership-requests/")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Request ID required")
-		return
-	}
-
-	parts := strings.Split(path, "/")
-	requestID := parts[0]
-
-	if !isValidUUID(requestID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid request ID format")
-		return
-	}
-
-	// Check for vote sub-route
-	if len(parts) >= 2 && parts[1] == "vote" {
-		q := req.URL.Query()
-		q.Set("id", requestID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.membership.VoteOnRequest)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Add ID to query params
-	q := req.URL.Query()
-	q.Set("id", requestID)
-	req.URL.RawQuery = q.Encode()
-
-	switch req.Method {
-	case http.MethodGet:
-		r.authenticated(r.membership.GetRequest)(w, req)
-	case http.MethodDelete:
-		r.authenticated(r.membership.CancelRequest)(w, req)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-	}
-}
-
-// handleInvitationByID handles /api/v1/invitations/:id and sub-routes
-func (r *Router) handleInvitationByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/invitations/")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Invitation ID required")
-		return
-	}
-
-	parts := strings.Split(path, "/")
-	invitationID := parts[0]
-
-	if !isValidUUID(invitationID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid invitation ID format")
-		return
-	}
-
-	// Check for respond sub-route
-	if len(parts) >= 2 && parts[1] == "respond" {
-		q := req.URL.Query()
-		q.Set("id", invitationID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.membership.RespondToInvitation)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	writeError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-}
-
-// handleBlocklistProposal handles /api/v1/blocklist-proposals/:id and sub-routes
-func (r *Router) handleBlocklistProposal(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/blocklist-proposals/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
-		return
-	}
-
-	proposalID := parts[0]
-
-	if !isValidUUID(proposalID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
-		return
-	}
-
-	// Check for vote sub-route
-	if len(parts) >= 2 && parts[1] == "vote" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.blocklistProposals.VoteOnProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for expire sub-route (superuser only)
-	if len(parts) >= 2 && parts[1] == "expire" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.blocklistProposals.ExpireProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Handle GET request for proposal details
-	if req.Method == http.MethodGet {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-		r.authenticated(r.blocklistProposals.GetProposal)(w, req)
-		return
-	}
-
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
-
 // handleSchools handles /api/v1/schools
 func (r *Router) handleSchools(w http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodGet {
@@ -844,112 +393,24 @@ func (r *Router) handleSchoolByID(w http.ResponseWriter, req *http.Request) {
 	parts := strings.Split(path, "/")
 	schoolID := parts[0]
 
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
 	if !isValidUUID(schoolID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid school ID format")
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid school ID")
 		return
 	}
 
 	// Sub-routes
-	if len(parts) >= 2 {
-		switch parts[1] {
-		case "join":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Join)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "leave":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Leave)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "vouch":
-			// Check for /vouch/pending sub-route
-			if len(parts) >= 3 && parts[2] == "pending" {
-				q := req.URL.Query()
-				q.Set("id", schoolID)
-				req.URL.RawQuery = q.Encode()
-				if req.Method == http.MethodGet {
-					r.authenticated(r.schools.GetPendingVouchRequests)(w, req)
-					return
-				}
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-				return
-			}
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.schools.Vouch)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "vouch-status":
-			if len(parts) >= 3 {
-				q := req.URL.Query()
-				q.Set("id", schoolID)
-				q.Set("user_id", parts[2])
-				req.URL.RawQuery = q.Encode()
-				if req.Method == http.MethodGet {
-					r.authenticated(r.schools.GetVouchStatus)(w, req)
-					return
-				}
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-				return
-			}
-			writeError(w, http.StatusBadRequest, "missing_user_id", "User ID required")
-			return
-
-		case "members":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodGet {
-				r.authenticated(r.schools.ListMembers)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			return
-
-		case "signal-groups":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			req.URL.RawQuery = q.Encode()
-			switch req.Method {
-			case http.MethodGet:
-				r.authenticated(r.schools.ListSignalGroups)(w, req)
-			case http.MethodPost:
-				r.authenticated(r.schools.CreateSignalGroup)(w, req)
-			default:
-				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-			}
-			return
-
-		case "reports":
-			q := req.URL.Query()
-			q.Set("id", schoolID)
-			q.Set("scope", "school")
-			req.URL.RawQuery = q.Encode()
-			if req.Method == http.MethodPost {
-				r.authenticated(r.userReports.CreateReport)(w, req)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	if len(parts) >= 2 && parts[1] == "join" {
+		q := req.URL.Query()
+		q.Set("id", schoolID)
+		req.URL.RawQuery = q.Encode()
+		if req.Method == http.MethodPost {
+			r.authenticated(r.schools.Join)(w, req)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
 	}
 
 	// Default: get school by ID
@@ -975,49 +436,10 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 	parts := strings.Split(path, "/")
 	districtID := parts[0]
 
+	// Reject malformed IDs early (defense-in-depth; carried over from main's
+	// router hardening).
 	if !isValidUUID(districtID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid district ID format")
-		return
-	}
-
-	// Sub-routes
-	if len(parts) >= 2 && parts[1] == "members" {
-		q := req.URL.Query()
-		q.Set("id", districtID)
-		req.URL.RawQuery = q.Encode()
-		if req.Method == http.MethodGet {
-			r.authenticated(r.schools.ListDistrictMembers)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	if len(parts) >= 2 && parts[1] == "signal-groups" {
-		q := req.URL.Query()
-		q.Set("id", districtID)
-		req.URL.RawQuery = q.Encode()
-		switch req.Method {
-		case http.MethodGet:
-			r.authenticated(r.schools.ListDistrictSignalGroups)(w, req)
-		case http.MethodPost:
-			r.authenticated(r.schools.CreateDistrictSignalGroup)(w, req)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		}
-		return
-	}
-
-	if len(parts) >= 2 && parts[1] == "reports" {
-		q := req.URL.Query()
-		q.Set("id", districtID)
-		q.Set("scope", "district")
-		req.URL.RawQuery = q.Encode()
-		if req.Method == http.MethodPost {
-			r.authenticated(r.userReports.CreateReport)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid district ID")
 		return
 	}
 
@@ -1030,147 +452,6 @@ func (r *Router) handleSchoolDistrictByID(w http.ResponseWriter, req *http.Reque
 		r.authenticated(r.schools.GetDistrict)(w, req)
 		return
 	}
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
-
-// handleDeletionProposals handles /api/v1/deletion-proposals
-func (r *Router) handleDeletionProposals(w http.ResponseWriter, req *http.Request) {
-	switch req.Method {
-	case http.MethodGet:
-		r.authenticated(r.deletionProposals.ListProposals)(w, req)
-	case http.MethodPost:
-		r.authenticated(r.deletionProposals.CreateProposal)(w, req)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-	}
-}
-
-// handleDeletionProposal handles /api/v1/deletion-proposals/:id and sub-routes
-func (r *Router) handleDeletionProposal(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/deletion-proposals/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
-		return
-	}
-
-	proposalID := parts[0]
-
-	if !isValidUUID(proposalID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid proposal ID format")
-		return
-	}
-
-	// Check for vote sub-route
-	if len(parts) >= 2 && parts[1] == "vote" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.deletionProposals.VoteOnProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Check for expire sub-route
-	if len(parts) >= 2 && parts[1] == "expire" {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.deletionProposals.ExpireProposal)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Handle GET request for proposal details
-	if req.Method == http.MethodGet {
-		q := req.URL.Query()
-		q.Set("id", proposalID)
-		req.URL.RawQuery = q.Encode()
-		r.authenticated(r.deletionProposals.GetProposal)(w, req)
-		return
-	}
-
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-}
-
-// handleBlockedAddress handles /api/v1/admin/blocked-addresses/:hash/expire
-func (r *Router) handleBlockedAddress(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/admin/blocked-addresses/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_hash", "Address hash required")
-		return
-	}
-
-	addressHash := parts[0]
-
-	// Check for expire sub-route
-	if len(parts) >= 2 && parts[1] == "expire" {
-		q := req.URL.Query()
-		q.Set("hash", addressHash)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.blocklistProposals.ExpireAddress)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	writeError(w, http.StatusNotFound, "not_found", "Endpoint not found")
-}
-
-// handleReportByID handles /api/v1/reports/:id and sub-routes
-func (r *Router) handleReportByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/reports/")
-	parts := strings.Split(path, "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Report ID required")
-		return
-	}
-
-	reportID := parts[0]
-
-	if !isValidUUID(reportID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid report ID format")
-		return
-	}
-
-	// Check for resolve sub-route
-	if len(parts) >= 2 && parts[1] == "resolve" {
-		q := req.URL.Query()
-		q.Set("id", reportID)
-		req.URL.RawQuery = q.Encode()
-
-		if req.Method == http.MethodPost {
-			r.authenticated(r.userReports.ResolveReport)(w, req)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
-		return
-	}
-
-	// Handle GET request for report details
-	if req.Method == http.MethodGet {
-		q := req.URL.Query()
-		q.Set("id", reportID)
-		req.URL.RawQuery = q.Encode()
-		r.authenticated(r.userReports.GetReport)(w, req)
-		return
-	}
-
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 }
 
@@ -1228,58 +509,483 @@ func (r *Router) handleEncryptionRekey(w http.ResponseWriter, req *http.Request)
 	r.encryption.SubmitRekeys(w, req)
 }
 
-// handleMeshtasticChannels handles /api/v1/meshtastic-channels
-func (r *Router) handleMeshtasticChannels(w http.ResponseWriter, req *http.Request) {
+
+// handleGroups handles /api/v1/groups
+func (r *Router) handleGroups(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
-		r.authenticated(r.meshtastic.List)(w, req)
+		r.authenticated(r.groups.List)(w, req)
 	case http.MethodPost:
-		r.authenticated(r.meshtastic.Create)(w, req)
+		r.authenticated(r.groups.Create)(w, req)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 	}
 }
 
-// handleMeshtasticChannelByID handles /api/v1/meshtastic-channels/:id and sub-routes
-func (r *Router) handleMeshtasticChannelByID(w http.ResponseWriter, req *http.Request) {
-	path := strings.TrimPrefix(req.URL.Path, "/api/v1/meshtastic-channels/")
+// handleGroupByID handles /api/v1/groups/:id and sub-routes
+func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/groups/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Group ID required")
+		return
+	}
+
 	parts := strings.Split(path, "/")
+	groupID := parts[0]
 
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(w, http.StatusBadRequest, "missing_id", "Meshtastic channel ID required")
-		return
-	}
-
-	channelID := parts[0]
-
-	if !isValidUUID(channelID) {
-		writeError(w, http.StatusBadRequest, "invalid_id", "Invalid channel ID format")
-		return
-	}
-
-	// Check for secret-proposals sub-route
-	if len(parts) >= 2 && parts[1] == "secret-proposals" {
+	// Check for members sub-route
+	if len(parts) >= 2 && parts[1] == "members" {
 		q := req.URL.Query()
-		q.Set("channel_id", channelID)
+		q.Set("id", groupID)
 		req.URL.RawQuery = q.Encode()
 
-		if req.Method == http.MethodPost {
-			r.authenticated(r.secretUpdates.CreateProposal)(w, req)
+		if req.Method == http.MethodGet {
+			r.authenticated(r.groups.ListMembers)(w, req)
 			return
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 		return
 	}
 
-	// Regular meshtastic channel operations
+	// Check for blocked-users sub-route:
+	//   POST   /api/v1/groups/{id}/blocked-users          → ban a user
+	//   DELETE /api/v1/groups/{id}/blocked-users/{userID} → lift a ban
+	if len(parts) >= 2 && parts[1] == "blocked-users" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		if len(parts) >= 3 && parts[2] != "" {
+			q.Set("user_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.groups.UnblockMember)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+		req.URL.RawQuery = q.Encode()
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.BlockMember)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for leave sub-route
+	if len(parts) >= 2 && parts[1] == "leave" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.Leave)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for resources sub-route: /api/v1/groups/{id}/resources[/{rid}]
+	if len(parts) >= 2 && parts[1] == "resources" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/groups/{id}/resources/{rid}
+			q.Set("rid", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			switch req.Method {
+			case http.MethodPut:
+				r.authenticated(r.groups.UpdateResource)(w, req)
+			case http.MethodDelete:
+				r.authenticated(r.groups.DeleteResource)(w, req)
+			default:
+				writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			}
+			return
+		}
+
+		// /api/v1/groups/{id}/resources
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateResource)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListResources)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for signal-groups sub-route: /api/v1/groups/{id}/signal-groups
+	if len(parts) >= 2 && parts[1] == "signal-groups" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateSignalGroup)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListSignalGroups)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for meshtastic-channels sub-route: /api/v1/groups/{id}/meshtastic-channels
+	if len(parts) >= 2 && parts[1] == "meshtastic-channels" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateMeshtasticChannel)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListMeshtasticChannels)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for invite-links sub-route: /api/v1/groups/{id}/invite-links
+	if len(parts) >= 2 && parts[1] == "invite-links" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateInviteLink)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListInviteLinks)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for invitations sub-route: /api/v1/groups/{id}/invitations
+	if len(parts) >= 2 && parts[1] == "invitations" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.CreateInvitation)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for trust-vouches sub-route: /api/v1/groups/{id}/trust-vouches[/{user_id}]
+	if len(parts) >= 2 && parts[1] == "trust-vouches" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		// GET /api/v1/groups/{id}/trust-vouches/{user_id}
+		if len(parts) >= 3 && parts[2] != "" {
+			q.Set("user_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			if req.Method == http.MethodGet {
+				r.authenticated(r.groups.GetTrustVouchStatus)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// POST /api/v1/groups/{id}/trust-vouches
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.VouchForMember)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for browse sub-route: /api/v1/groups/browse
+	if groupID == "browse" {
+		if req.Method == http.MethodGet {
+			r.authenticated(r.groups.Browse)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for join sub-route: /api/v1/groups/join/{token}
+	// Here groupID == "join" and parts[1] is the token
+	if groupID == "join" && len(parts) >= 2 {
+		q := req.URL.Query()
+		q.Set("token", parts[1])
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.JoinViaLink)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// Check for topic-board sub-route: /api/v1/groups/{id}/topic-board
+	if len(parts) >= 2 && parts[1] == "topic-board" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.CreateOrUpdatePosting)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.GetPosting)(w, req)
+		case http.MethodDelete:
+			r.authenticated(r.groups.RemovePosting)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Check for blocks sub-route: /api/v1/groups/{id}/blocks[/{gid}]
+	if len(parts) >= 2 && parts[1] == "blocks" {
+		q := req.URL.Query()
+		q.Set("id", groupID)
+		req.URL.RawQuery = q.Encode()
+
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/groups/{id}/blocks/{gid}
+			q.Set("gid", parts[2])
+			req.URL.RawQuery = q.Encode()
+
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.groups.UnblockGroup)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// /api/v1/groups/{id}/blocks
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.groups.BlockGroup)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.groups.ListBlockedGroups)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// Default: CRUD operations on group by ID
 	q := req.URL.Query()
-	q.Set("id", channelID)
+	q.Set("id", groupID)
 	req.URL.RawQuery = q.Encode()
 
 	switch req.Method {
+	case http.MethodGet:
+		r.authenticated(r.groups.Get)(w, req)
 	case http.MethodPut:
-		r.authenticated(r.meshtastic.Update)(w, req)
+		r.authenticated(r.groups.Update)(w, req)
+	case http.MethodDelete:
+		r.authenticated(r.groups.Delete)(w, req)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
 	}
+}
+
+// handleGroupInvitationByID handles /api/v1/group-invitations/:id/respond
+func (r *Router) handleGroupInvitationByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/group-invitations/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Invitation ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	invitationID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "respond" {
+		q := req.URL.Query()
+		q.Set("id", invitationID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.groups.RespondToInvitation)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
+}
+
+// handleConnections handles /api/v1/connections
+func (r *Router) handleConnections(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodPost:
+		r.authenticated(r.connections.ProposeConnection)(w, req)
+	case http.MethodGet:
+		r.authenticated(r.connections.ListMyConnections)(w, req)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleConnectionByID handles /api/v1/connections/{id} and sub-routes
+func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connections/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Connection ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	connectionID := parts[0]
+
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	req.URL.RawQuery = q.Encode()
+
+	// POST /api/v1/connections/{id}/invite
+	if len(parts) >= 2 && parts[1] == "invite" {
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.InviteToConnection)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// POST /api/v1/connections/{id}/leave
+	if len(parts) >= 2 && parts[1] == "leave" {
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.LeaveConnection)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// POST/GET /api/v1/connections/{id}/signal-group-proposals
+	if len(parts) >= 2 && parts[1] == "signal-group-proposals" {
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.connections.ProposeSignalChat)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.connections.ListChatProposals)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// POST/GET/DELETE /api/v1/connections/{id}/shared-resources[/{rid}]
+	if len(parts) >= 2 && parts[1] == "shared-resources" {
+		if len(parts) >= 3 && parts[2] != "" {
+			// /api/v1/connections/{id}/shared-resources/{rid}
+			q := req.URL.Query()
+			q.Set("resource_id", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodDelete {
+				r.authenticated(r.connections.UnshareResource)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+		switch req.Method {
+		case http.MethodPost:
+			r.authenticated(r.connections.ShareResource)(w, req)
+		case http.MethodGet:
+			r.authenticated(r.connections.ListConnectionResources)(w, req)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+		return
+	}
+
+	// GET /api/v1/connections/{id}/signal-groups
+	if len(parts) >= 2 && parts[1] == "signal-groups" {
+		if req.Method == http.MethodGet {
+			r.authenticated(r.connections.ListConnectionSignalGroups)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	// GET /api/v1/connections/{id}
+	if req.Method == http.MethodGet {
+		r.authenticated(r.connections.GetConnection)(w, req)
+		return
+	}
+
+	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+}
+
+// handleConnectionChatProposalByID handles /api/v1/connection-chat-proposals/{id}/vote
+func (r *Router) handleConnectionChatProposalByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connection-chat-proposals/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	proposalID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "vote" {
+		q := req.URL.Query()
+		q.Set("id", proposalID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.VoteOnChatProposal)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
+}
+
+// handleConnectionProposalByID handles /api/v1/connection-proposals/{id}/respond
+func (r *Router) handleConnectionProposalByID(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimPrefix(req.URL.Path, "/api/v1/connection-proposals/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "missing_id", "Proposal ID required")
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	proposalID := parts[0]
+
+	if len(parts) >= 2 && parts[1] == "respond" {
+		q := req.URL.Query()
+		q.Set("id", proposalID)
+		req.URL.RawQuery = q.Encode()
+
+		if req.Method == http.MethodPost {
+			r.authenticated(r.connections.RespondToProposal)(w, req)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not_found", "Not found")
 }

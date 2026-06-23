@@ -47,7 +47,8 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 	regionRepo := database.NewRegionRepository(&database.DB{DB: keyDB})
 	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
 
-	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo)
+	userRepo := database.NewUserRepository(&database.DB{DB: keyDB})
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -70,7 +71,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil, nil, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,
@@ -106,6 +107,33 @@ func testClaims() *middleware.Claims {
 		IsSuperuser:      false,
 		TokenType:        middleware.TokenTypeFull,
 	}
+}
+
+// userGetByIDColumns is the list of columns returned by UserRepository.GetByID.
+var userGetByIDColumns = []string{
+	"id", "username", "email", "password_hash", "verification_tier",
+	"postcard_verified", "vouch_verified", "is_superuser",
+	"mfa_secret", "mfa_enabled", "mfa_backup_codes", "mfa_setup_required",
+	"email_verified", "email_normalized",
+	"is_blocked", "blocked_at", "blocked_by", "block_reason",
+	"address_hash", "created_at", "last_login", "deleted_at",
+	"failed_login_attempts", "locked_until", "failed_mfa_attempts",
+}
+
+// expectUserGetByID sets up a sqlmock expectation for UserRepository.GetByID
+// returning a non-superuser.
+func expectUserGetByID(mock sqlmock.Sqlmock, userID string, isSuperuser bool) {
+	mock.ExpectQuery("SELECT id, username, email, password_hash").
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows(userGetByIDColumns).AddRow(
+			userID, "testuser", "test@example.com", "hash",
+			int(models.TierPostcard), false, false, isSuperuser,
+			nil, false, nil, false,
+			true, nil,
+			false, nil, nil, nil,
+			nil, time.Now(), nil, nil,
+			0, nil, 0,
+		))
 }
 
 // parseResponseBody decodes the JSON response body into a map.
@@ -871,18 +899,17 @@ func TestEncryptionHandler_GetPendingRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_Success(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// For each entry, the handler first checks GetWrappedDEK to verify the caller has a valid key
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-1", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+	// The handler authorizes each entry against the caller's advertised
+	// pending-rekey set (GetPendingRekeys), loaded once up front.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "target-user-1", "pub-1", "caller-dek-1").
+			AddRow("secret-2", "target-user-2", "pub-2", "caller-dek-2"))
 
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-1", sqlmock.AnyArg(), "secret-1", "target-user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-2", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-2"))
 
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("new-wrapped-dek-2", sqlmock.AnyArg(), "secret-2", "target-user-2").
@@ -926,6 +953,41 @@ func TestEncryptionHandler_SubmitRekeys_Success(t *testing.T) {
 	}
 }
 
+func TestEncryptionHandler_SubmitRekeys_RejectsForgedTarget(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Caller is legitimately offered a rekey for (secret-1, victim) only.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "victim", "pub-victim", "caller-dek-1"))
+
+	// Attacker submits a rekey for a DIFFERENT, unadvertised target for the same
+	// secret. No UPDATE must be issued — the (secret, target) pair is not in the
+	// caller's pending set, so the forged blob is rejected (key-injection guard).
+	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
+		Rekeys: []models.RekeyEntry{
+			{SecretID: "secret-1", TargetUserID: "other-user", WrappedDEK: "forged-blob"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitRekeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	body := parseResponseBody(t, recorder)
+	if c, _ := body["rekeyed"].(float64); int(c) != 0 {
+		t.Errorf("expected rekeyed=0 (forged target rejected), got %v", c)
+	}
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestEncryptionHandler_SubmitRekeys_EmptyArray(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
@@ -951,22 +1013,21 @@ func TestEncryptionHandler_SubmitRekeys_EmptyArray(t *testing.T) {
 func TestEncryptionHandler_SubmitRekeys_PartialFailures(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
-	// First entry: caller has valid key, succeeds
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-1", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-1"))
+	// Pending set advertised to the caller: secret-1/target-1 and secret-3/target-3
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}).
+			AddRow("secret-1", "target-1", "pub-1", "caller-dek-1").
+			AddRow("secret-3", "target-3", "pub-3", "caller-dek-3"))
 
+	// First entry: in pending set, succeeds
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-1", sqlmock.AnyArg(), "secret-1", "target-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Second entry: skipped (empty SecretID) — no GetWrappedDEK call
+	// Second entry: skipped (empty SecretID) — no UPDATE
 
-	// Third entry: caller has valid key, but DB returns error on update
-	suite.secretMock.ExpectQuery("SELECT wrapped_dek FROM encrypted_secret_keys").
-		WithArgs("secret-3", "user-123").
-		WillReturnRows(sqlmock.NewRows([]string{"wrapped_dek"}).AddRow("caller-dek-3"))
-
+	// Third entry: in pending set, but DB returns error on update
 	suite.secretMock.ExpectExec("UPDATE encrypted_secret_keys").
 		WithArgs("dek-3", sqlmock.AnyArg(), "secret-3", "target-3").
 		WillReturnError(context.DeadlineExceeded)
@@ -1066,6 +1127,9 @@ func TestEncryptionHandler_SubmitRekeys_NilSecretRepo(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// Membership check: IsUserInRegion (uses recursive CTE on keyMock since regionRepo shares keyDB)
 	suite.keyMock.ExpectQuery("WITH RECURSIVE user_accessible_regions").
 		WithArgs("user-123", "region-abc").
@@ -1106,6 +1170,9 @@ func TestEncryptionHandler_GetPublicKeys_ByRegion(t *testing.T) {
 func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
 
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
 	// Membership check: GetUserSchool (schoolRepo shares keyDB)
 	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
 		WithArgs("user-123", "school-xyz").
@@ -1145,6 +1212,9 @@ func TestEncryptionHandler_GetPublicKeys_BySchool(t *testing.T) {
 
 func TestEncryptionHandler_GetPublicKeys_ByDistrict(t *testing.T) {
 	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
 
 	// Membership check: ListByDistrict returns one school, then GetUserSchool confirms membership
 	schoolColumns := []string{"id", "nces_id", "name", "city", "state", "district_id", "district_name", "latitude", "longitude", "member_count", "verified_count", "admin_count"}
@@ -1237,5 +1307,434 @@ func TestEncryptionHandler_GetPublicKeys_MissingAuth(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_RegionNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// IsUserInRegion returns false
+	suite.keyMock.ExpectQuery("WITH RECURSIVE user_accessible_regions").
+		WithArgs("user-123", "region-nope").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(false))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?region_id=region-nope", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_SchoolNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// GetUserSchool returns no rows (not a member)
+	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
+		WithArgs("user-123", "school-nope").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "school_id", "is_admin", "verification_status", "verified_at"}))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?school_id=school-nope", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_DistrictNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// ListByDistrict returns one school, but user is not a member of it
+	schoolColumns := []string{"id", "nces_id", "name", "city", "state", "district_id", "district_name", "latitude", "longitude", "member_count", "verified_count", "admin_count"}
+	suite.keyMock.ExpectQuery("SELECT s.id, s.nces_id, s.name").
+		WithArgs("district-nope").
+		WillReturnRows(sqlmock.NewRows(schoolColumns).
+			AddRow("school-in-district", "654321", "Other School", "Nowhere", "TX", "district-nope", "Other District", 30.0, -97.0, 5, 2, 1))
+
+	// GetUserSchool returns no rows for the school in the district
+	suite.keyMock.ExpectQuery("SELECT id, user_id, school_id, is_admin, verification_status, verified_at FROM user_schools").
+		WithArgs("user-123", "school-in-district").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "school_id", "is_admin", "verification_status", "verified_at"}))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?district_id=district-nope", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembership(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	superuserClaims := &middleware.Claims{
+		UserID:           "superuser-1",
+		Username:         "superuser",
+		Email:            "super@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      true,
+		TokenType:        middleware.TokenTypeFull,
+	}
+
+	// Superuser check via isSuperuserFromDB — returns true, so membership check is skipped
+	expectUserGetByID(suite.keyMock, "superuser-1", true)
+
+	columns := []string{"user_id", "public_key"}
+	suite.keyMock.ExpectQuery("SELECT ek.user_id, ek.public_key FROM user_encryption_keys").
+		WithArgs("region-abc").
+		WillReturnRows(
+			sqlmock.NewRows(columns).
+				AddRow("user-1", "pub-key-1"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?region_id=region-abc", nil, superuserClaims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+// =============================================================================
+// Additional edge-case tests
+// =============================================================================
+
+func TestEncryptionHandler_UploadKeys_DBError(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	suite.keyMock.ExpectExec("INSERT INTO user_encryption_keys").
+		WithArgs(
+			"user-123",
+			"pub-key",
+			"wrapped-key",
+			"salt",
+			"iv",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnError(context.DeadlineExceeded)
+
+	requestBody, _ := json.Marshal(models.CreateEncryptionKeyRequest{
+		PublicKey:         "pub-key",
+		WrappedPrivateKey: "wrapped-key",
+		KeySalt:           "salt",
+		KeyIV:             "iv",
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/keys", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.UploadKeys(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_UpdateKeys_InvalidJSON(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	invalidBody := []byte("{not valid json}")
+	req := authenticatedRequest(http.MethodPut, "/api/v1/encryption/keys", invalidBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.UpdateKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "invalid_request" {
+		t.Errorf("expected error 'invalid_request', got %v", body["error"])
+	}
+}
+
+func TestEncryptionHandler_RotateKeys_InvalidJSON(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	invalidBody := []byte("{not valid json}")
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/keys/rotate", invalidBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.RotateKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "invalid_request" {
+		t.Errorf("expected error 'invalid_request', got %v", body["error"])
+	}
+}
+
+func TestEncryptionHandler_RotateKeys_DBError(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	suite.keyMock.ExpectExec("INSERT INTO user_encryption_keys").
+		WithArgs(
+			"user-123",
+			"pub-key",
+			"wrapped-key",
+			"salt",
+			"iv",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnError(context.DeadlineExceeded)
+
+	requestBody, _ := json.Marshal(models.RotateEncryptionKeyRequest{
+		PublicKey:         "pub-key",
+		WrappedPrivateKey: "wrapped-key",
+		KeySalt:           "salt",
+		KeyIV:             "iv",
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/keys/rotate", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.RotateKeys(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetKeys_DBError(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	suite.keyMock.ExpectQuery("SELECT user_id, public_key, wrapped_private_key, key_salt, key_iv, created_at, rotated_at FROM user_encryption_keys").
+		WithArgs("user-123").
+		WillReturnError(context.DeadlineExceeded)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/keys", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetKeys(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPendingRekeys_DBError(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnError(context.DeadlineExceeded)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/pending-rekeys", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPendingRekeys(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitRekeys_InvalidJSON(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	invalidBody := []byte("{not valid json}")
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/rekey", invalidBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitRekeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "invalid_request" {
+		t.Errorf("expected error 'invalid_request', got %v", body["error"])
+	}
+}
+
+func TestEncryptionHandler_SubmitRekeys_RejectsPairNotInPendingSet(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// GetPendingRekeys returns nothing — the (secret, target) pair was never
+	// advertised to this caller, so it must be rejected (key-injection guard).
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"})) // empty result
+
+	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
+		Rekeys: []models.RekeyEntry{
+			{
+				SecretID:     "secret-1",
+				TargetUserID: "target-1",
+				WrappedDEK:   "new-dek-1",
+			},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitRekeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	rekeyedCount, ok := body["rekeyed"].(float64)
+	if !ok {
+		t.Fatalf("expected rekeyed to be a number, got %T", body["rekeyed"])
+	}
+	if int(rekeyedCount) != 0 {
+		t.Errorf("expected rekeyed=0 (pair not in pending set), got %v", rekeyedCount)
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_UpdateKeys_DBError(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	suite.keyMock.ExpectExec("UPDATE user_encryption_keys").
+		WithArgs("wrapped-key", "salt", "iv", "user-123").
+		WillReturnError(context.DeadlineExceeded)
+
+	requestBody, _ := json.Marshal(models.UpdateEncryptionKeyRequest{
+		WrappedPrivateKey: "wrapped-key",
+		KeySalt:           "salt",
+		KeyIV:             "iv",
+	})
+
+	req := authenticatedRequest(http.MethodPut, "/api/v1/encryption/keys", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.UpdateKeys(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitRekeys_SkipsEntriesWithMissingFields(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// The pending set is loaded once up front; every entry is then skipped for
+	// missing required fields before any UPDATE.
+	suite.secretMock.ExpectQuery("SELECT DISTINCT esk_need.secret_id").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"secret_id", "target_user_id", "target_public_key", "caller_wrapped_dek"}))
+
+	// All entries have missing required fields — none should hit an UPDATE
+	requestBody, _ := json.Marshal(models.SubmitRekeysRequest{
+		Rekeys: []models.RekeyEntry{
+			{SecretID: "", TargetUserID: "u1", WrappedDEK: "d1"},
+			{SecretID: "s2", TargetUserID: "", WrappedDEK: "d2"},
+			{SecretID: "s3", TargetUserID: "u3", WrappedDEK: ""},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitRekeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	rekeyedCount, ok := body["rekeyed"].(float64)
+	if !ok {
+		t.Fatalf("expected rekeyed to be a number, got %T", body["rekeyed"])
+	}
+	if int(rekeyedCount) != 0 {
+		t.Errorf("expected rekeyed=0 (all entries had missing fields), got %v", rekeyedCount)
+	}
+
+	// No DB calls should have been made for the secret mock
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
 	}
 }

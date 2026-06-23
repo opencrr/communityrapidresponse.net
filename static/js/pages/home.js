@@ -22,10 +22,10 @@ export async function render(container) {
         <div class="hero">
             <div class="hero__map" id="home-map"></div>
             <div class="hero__content">
-                <h1 class="hero__title">Connect with your neighbors through verified Signal groups</h1>
+                <h1 class="hero__title">Connect with your neighbors through address-verified Signal groups</h1>
                 <p class="hero__description">
                     Community Rapid Response helps communities organize by connecting neighbors through
-                    geographic-based Signal group chats. Verify your address to join your local community.
+                    geographic-based Signal group chats where members have verified addresses in the area.
                 </p>
                 <div class="hero__actions">
                     ${authenticated ? `
@@ -33,8 +33,8 @@ export async function render(container) {
                             <a href="/verify" class="btn btn--primary btn--lg" data-link>Verify Your Address</a>
                             <a href="/communities" class="btn btn--secondary btn--lg" data-link>Explore Communities</a>
                         ` : `
-                            <a href="/dashboard" class="btn btn--primary btn--lg" data-link>Go to Dashboard</a>
-                            <a href="/groups" class="btn btn--secondary btn--lg" data-link>View Groups</a>
+                            <a href="/groups" class="btn btn--primary btn--lg" data-link>My Groups</a>
+                            <a href="/discover" class="btn btn--secondary btn--lg" data-link>Discover</a>
                         `}
                     ` : `
                         <a href="/register" class="btn btn--primary btn--lg" data-link>Get Started</a>

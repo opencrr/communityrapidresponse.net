@@ -148,7 +148,7 @@ func (r *EncryptionKeyRepository) GetPublicKeysForRegion(ctx context.Context, re
 		FROM user_encryption_keys ek
 		INNER JOIN user_regions ur ON ek.user_id = ur.user_id
 		INNER JOIN users u ON ek.user_id = u.id
-		WHERE ur.region_id = ? AND u.vouch_verified = TRUE
+		WHERE ur.region_id = ? AND u.vouch_verified = TRUE AND u.is_superuser = FALSE
 	`
 	return r.queryPublicKeys(ctx, query, regionID)
 }
@@ -159,7 +159,8 @@ func (r *EncryptionKeyRepository) GetPublicKeysForSchool(ctx context.Context, sc
 		SELECT ek.user_id, ek.public_key
 		FROM user_encryption_keys ek
 		INNER JOIN user_schools us ON ek.user_id = us.user_id
-		WHERE us.school_id = ? AND us.verification_status = 'verified'
+		INNER JOIN users u ON ek.user_id = u.id
+		WHERE us.school_id = ? AND us.verification_status = 'verified' AND u.is_superuser = FALSE
 	`
 	return r.queryPublicKeys(ctx, query, schoolID)
 }
@@ -171,7 +172,8 @@ func (r *EncryptionKeyRepository) GetPublicKeysForDistrict(ctx context.Context, 
 		FROM user_encryption_keys ek
 		INNER JOIN user_schools us ON ek.user_id = us.user_id
 		INNER JOIN schools s ON us.school_id = s.id
-		WHERE s.district_id = ? AND us.verification_status = 'verified'
+		INNER JOIN users u ON ek.user_id = u.id
+		WHERE s.district_id = ? AND us.verification_status = 'verified' AND u.is_superuser = FALSE
 	`
 	return r.queryPublicKeys(ctx, query, districtID)
 }

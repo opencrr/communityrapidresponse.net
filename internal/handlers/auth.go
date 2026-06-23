@@ -156,15 +156,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate request
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "Username, email, and password are required")
+	// Struct-level validation from tags
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
-	if len(req.Password) < 12 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Password must be at least 12 characters")
-		return
+	// Username format: letters, numbers, underscores only
+	for _, c := range req.Username {
+		if !isUsernameChar(c) {
+			writeError(w, http.StatusBadRequest, "validation_error", "Username must contain only letters, numbers, and underscores")
+			return
+		}
 	}
 
 	if len(req.Password) > 128 {
@@ -213,7 +216,16 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, database.ErrUserAlreadyExists) ||
 			errors.Is(err, database.ErrEmailAlreadyExists) ||
 			errors.Is(err, database.ErrNormalizedEmailAlreadyExists) {
-			writeError(w, http.StatusConflict, "account_exists", "An account with these credentials already exists")
+			// Anti-enumeration: same response as success.
+			// Perform a dummy bcrypt comparison so the timing roughly matches
+			// the success path (which already ran bcrypt.GenerateFromPassword).
+			// This prevents an attacker from distinguishing duplicate accounts
+			// via response latency.
+			dummyHash := "$2a$12$000000000000000000000uGWDRhGTsKOQJF5K5CO1MJvVf6bhn6Ey"
+			_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(req.Password))
+			writeJSON(w, http.StatusCreated, models.RegisterResponse{
+				Message: "Registration successful. Please check your email for verification.",
+			})
 			return
 		}
 		writeServerError(w, r, err, "Failed to create user", "auth", "register")
@@ -265,6 +277,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -415,6 +432,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   maxAge,
 	})
 
+	// NOTE: Token is included in response body for programmatic API clients.
+	// Browser clients should use the httpOnly cookie set above as their primary auth mechanism.
+
 	// If email verification required, return different response
 	if emailAction != "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -499,7 +519,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return user with verification fields and JWT claims for debugging
+	// Return user with verification fields (never expose JWT claims)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user": map[string]interface{}{
 			"id":                    user.ID,
@@ -517,15 +537,6 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 			"regions":               user.Regions,
 			"authorized_boundaries": user.AuthorizedBoundaries,
 		},
-		"jwt_claims": map[string]interface{}{
-			"user_id":           claims.UserID,
-			"email":             claims.Email,
-			"is_superuser":      claims.IsSuperuser,
-			"postcard_verified": claims.PostcardVerified,
-			"vouch_verified":    claims.VouchVerified,
-			"verification_tier": claims.VerificationTier,
-			"token_type":        claims.TokenType,
-		},
 	})
 }
 
@@ -533,6 +544,13 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	// Get user from context for audit logging
 	claims := middleware.GetUserFromContext(r.Context())
+
+	// Invalidate all tokens for this user so stolen JWTs cannot be reused
+	if claims != nil && h.userRepo != nil {
+		if err := h.userRepo.InvalidateTokens(r.Context(), claims.UserID); err != nil {
+			slog.WarnContext(r.Context(), "failed to invalidate tokens on logout", "error", err, "user_id", claims.UserID)
+		}
+	}
 
 	// Clear the cookie
 	sameSite := http.SameSiteLaxMode

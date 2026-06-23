@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
@@ -18,6 +19,7 @@ type adminTestSuite struct {
 	db         *database.DB
 	userRepo   *database.UserRepository
 	regionRepo *database.RegionRepository
+	auditRepo  *database.AuditRepository
 	handler    *AdminHandler
 }
 
@@ -25,13 +27,15 @@ func setupAdminTestSuite(t *testing.T) *adminTestSuite {
 	db := testDB(t)
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
-	handler := NewAdminHandler(userRepo, regionRepo, nil)
+	auditRepo := database.NewAuditRepository(db)
+	handler := NewAdminHandler(userRepo, regionRepo, auditRepo)
 
 	return &adminTestSuite{
 		t:          t,
 		db:         db,
 		userRepo:   userRepo,
 		regionRepo: regionRepo,
+		auditRepo:  auditRepo,
 		handler:    handler,
 	}
 }
@@ -857,127 +861,252 @@ func TestAdminHandler_RequireSuperuser_DBRecheck(t *testing.T) {
 }
 
 // =============================================================================
-// Pagination Boundary Edge-Case Tests
+// GetAuditLogs Tests
 // =============================================================================
 
-func TestAdminHandler_ListUsers_PaginationEdgeCases(t *testing.T) {
+func TestAdminHandler_GetAuditLogs(t *testing.T) {
 	suite := setupAdminTestSuite(t)
 
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@admintest.com'")
 
-	superuser := suite.createTestUser("pagination_super", true, false)
-	defer suite.cleanup(superuser.ID)
+	superuser := suite.createTestUser("audit_super", true, false)
+	regularUser := suite.createTestUser("audit_regular", false, false)
 
-	makeSuperuserClaims := func() *middleware.Claims {
-		return &middleware.Claims{
+	defer suite.cleanup(superuser.ID, regularUser.ID)
+
+	// Seed an audit log entry so we have something to query
+	if suite.auditRepo != nil {
+		resourceType := "user"
+		_ = suite.auditRepo.Log(context.Background(), &superuser.ID, models.AuditActionSuperuserUserSearch, &resourceType, nil, map[string]interface{}{
+			"query": "test_audit_query",
+		})
+	}
+
+	t.Run("superuser can list audit logs", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs", nil)
+		claims := &middleware.Claims{
 			UserID:      superuser.ID,
 			Email:       superuser.Email,
 			IsSuperuser: true,
 		}
-	}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
 
-	tests := []struct {
-		name         string
-		query        string
-		expectStatus int
-		expectPage   float64
-		expectLimit  float64
-	}{
-		{"negative page defaults to 1", "page=-5", http.StatusOK, 1, 20},
-		{"negative limit defaults to 20", "limit=-10", http.StatusOK, 1, 20},
-		{"zero page defaults to 1", "page=0", http.StatusOK, 1, 20},
-		{"zero limit defaults to 20", "limit=0", http.StatusOK, 1, 20},
-		{"non-numeric page defaults to 1", "page=abc", http.StatusOK, 1, 20},
-		{"non-numeric limit defaults to 20", "limit=xyz", http.StatusOK, 1, 20},
-		{"very large page succeeds with empty results", "page=999999", http.StatusOK, 999999, 20},
-		{"limit over 100 defaults to 20", "limit=500", http.StatusOK, 1, 20},
-		{"limit at boundary 100 succeeds", "limit=100", http.StatusOK, 1, 100},
-		{"float page defaults to 1", "page=1.5", http.StatusOK, 1, 20},
-		{"float limit defaults to 20", "limit=2.5", http.StatusOK, 1, 20},
-		{"overflow int page defaults to 1", "page=99999999999999999999", http.StatusOK, 1, 20},
-		{"overflow int limit defaults to 20", "limit=99999999999999999999", http.StatusOK, 1, 20},
-		{"page with special chars defaults to 1", "page=%27DROP+TABLE", http.StatusOK, 1, 20},
-	}
+		rec := httptest.NewRecorder()
+		suite.handler.GetAuditLogs(rec, req)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/v1/admin/users?"+tt.query, nil)
-			claims := makeSuperuserClaims()
-			ctx := middleware.ContextWithUser(req.Context(), claims)
-			req = req.WithContext(ctx)
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
 
-			rec := httptest.NewRecorder()
-			suite.handler.ListUsers(rec, req)
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
 
-			if rec.Code != tt.expectStatus {
-				t.Fatalf("Expected status %d, got %d: %s", tt.expectStatus, rec.Code, rec.Body.String())
+		if _, ok := body["logs"]; !ok {
+			t.Error("Expected 'logs' key in response")
+		}
+		if _, ok := body["total"]; !ok {
+			t.Error("Expected 'total' key in response")
+		}
+	})
+
+	t.Run("non-superuser cannot list audit logs", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs", nil)
+		claims := &middleware.Claims{
+			UserID:      regularUser.ID,
+			Email:       regularUser.Email,
+			IsSuperuser: false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetAuditLogs(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d", rec.Code)
+		}
+	})
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs", nil)
+		rec := httptest.NewRecorder()
+		suite.handler.GetAuditLogs(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("filter by action", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs?action=superuser_user_search", nil)
+		claims := &middleware.Claims{
+			UserID:      superuser.ID,
+			Email:       superuser.Email,
+			IsSuperuser: true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetAuditLogs(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		logs := body["logs"].([]interface{})
+		for _, log := range logs {
+			entry := log.(map[string]interface{})
+			if entry["action"] != "superuser_user_search" {
+				t.Errorf("Expected action 'superuser_user_search', got %v", entry["action"])
 			}
+		}
+	})
 
-			if tt.expectStatus == http.StatusOK {
-				var body map[string]interface{}
-				_ = json.NewDecoder(rec.Body).Decode(&body)
+	t.Run("pagination defaults", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs?page=0&limit=-1", nil)
+		claims := &middleware.Claims{
+			UserID:      superuser.ID,
+			Email:       superuser.Email,
+			IsSuperuser: true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
 
-				if page, ok := body["page"].(float64); ok {
-					if page != tt.expectPage {
-						t.Errorf("Expected page %v, got %v", tt.expectPage, page)
-					}
-				}
+		rec := httptest.NewRecorder()
+		suite.handler.GetAuditLogs(rec, req)
 
-				if limit, ok := body["limit"].(float64); ok {
-					if limit != tt.expectLimit {
-						t.Errorf("Expected limit %v, got %v", tt.expectLimit, limit)
-					}
-				}
-			}
-		})
-	}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		// The handler defaults page to 1 and limit to 50 for invalid values
+		// We can't easily verify the parsed filter values, but the request should succeed
+	})
 }
 
 // =============================================================================
-// GetUser Edge-Case Tests
+// ExportAuditLogs Tests
 // =============================================================================
 
-func TestAdminHandler_GetUser_MalformedID(t *testing.T) {
+func TestAdminHandler_ExportAuditLogs(t *testing.T) {
 	suite := setupAdminTestSuite(t)
 
 	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@admintest.com'")
 
-	superuser := suite.createTestUser("getuser_malformed_super", true, false)
-	defer suite.cleanup(superuser.ID)
+	superuser := suite.createTestUser("export_super", true, false)
+	regularUser := suite.createTestUser("export_regular", false, false)
 
-	tests := []struct {
-		name       string
-		id         string
-		wantStatus int
-	}{
-		{"empty ID", "", http.StatusBadRequest},
-		{"whitespace ID", "   ", http.StatusNotFound},
-		{"SQL injection", "' OR '1'='1", http.StatusNotFound},
-		{"very long string", string(make([]byte, 500)), http.StatusNotFound},
-		{"non-existent valid UUID", "00000000-0000-0000-0000-000000000000", http.StatusNotFound},
-	}
+	defer suite.cleanup(superuser.ID, regularUser.ID)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/api/v1/admin/users/test", nil)
-			q := req.URL.Query()
-			q.Set("id", tt.id)
-			req.URL.RawQuery = q.Encode()
-
-			claims := &middleware.Claims{
-				UserID:      superuser.ID,
-				Email:       superuser.Email,
-				IsSuperuser: true,
-			}
-			ctx := middleware.ContextWithUser(req.Context(), claims)
-			req = req.WithContext(ctx)
-
-			rec := httptest.NewRecorder()
-			suite.handler.GetUser(rec, req)
-
-			if rec.Code != tt.wantStatus {
-				t.Errorf("Expected status %d, got %d: %s", tt.wantStatus, rec.Code, rec.Body.String())
-			}
+	// Seed an audit log entry
+	if suite.auditRepo != nil {
+		_ = suite.auditRepo.Log(context.Background(), &superuser.ID, models.AuditActionSuperuserUserSearch, nil, nil, map[string]interface{}{
+			"query": "export_test",
 		})
 	}
+
+	t.Run("export as JSON (default)", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs/export", nil)
+		claims := &middleware.Claims{
+			UserID:      superuser.ID,
+			Email:       superuser.Email,
+			IsSuperuser: true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ExportAuditLogs(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		contentType := rec.Header().Get("Content-Type")
+		if contentType != "application/json" {
+			t.Errorf("Expected Content-Type 'application/json', got '%s'", contentType)
+		}
+
+		disposition := rec.Header().Get("Content-Disposition")
+		if !strings.HasPrefix(disposition, "attachment; filename=audit_logs_") {
+			t.Errorf("Expected Content-Disposition attachment header, got '%s'", disposition)
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode JSON export: %v", err)
+		}
+
+		if _, ok := body["logs"]; !ok {
+			t.Error("Expected 'logs' key in export")
+		}
+		if _, ok := body["count"]; !ok {
+			t.Error("Expected 'count' key in export")
+		}
+		if _, ok := body["exported_at"]; !ok {
+			t.Error("Expected 'exported_at' key in export")
+		}
+	})
+
+	t.Run("export as CSV", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs/export?format=csv", nil)
+		claims := &middleware.Claims{
+			UserID:      superuser.ID,
+			Email:       superuser.Email,
+			IsSuperuser: true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ExportAuditLogs(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		contentType := rec.Header().Get("Content-Type")
+		if contentType != "text/csv" {
+			t.Errorf("Expected Content-Type 'text/csv', got '%s'", contentType)
+		}
+
+		// Verify CSV has a header row
+		csvBody := rec.Body.String()
+		if !strings.Contains(csvBody, "ID,User ID,Action") {
+			t.Error("Expected CSV header row with 'ID,User ID,Action'")
+		}
+	})
+
+	t.Run("non-superuser cannot export", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs/export", nil)
+		claims := &middleware.Claims{
+			UserID:      regularUser.ID,
+			Email:       regularUser.Email,
+			IsSuperuser: false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ExportAuditLogs(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d", rec.Code)
+		}
+	})
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/admin/audit-logs/export", nil)
+		rec := httptest.NewRecorder()
+		suite.handler.ExportAuditLogs(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
 }

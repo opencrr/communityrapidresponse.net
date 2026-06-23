@@ -69,18 +69,11 @@ func main() {
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verificationRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	signalGroupRepo := database.NewSignalGroupRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	secretUpdateProposalRepo := database.NewSecretUpdateProposalRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
-	membershipRepo := database.NewMembershipRepository(db)
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, &cfg.Blocklist)
-	deletionProposalRepo := database.NewDeletionProposalRepository(db)
-
-	// User report repository
-	userReportRepo := database.NewUserReportRepository(db)
 
 	// Encryption key repository
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
@@ -88,19 +81,12 @@ func main() {
 	// School repositories
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 
 	// Start audit log cleanup worker (runs every 24 hours, retains 90 days)
 	auditRepo.StartCleanupWorker(context.Background(), 24*time.Hour, 90*24*time.Hour)
 
 	// Start secret proposal expiration worker (runs every hour)
 	secretUpdateProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
-
-	// Start membership request expiration worker (runs every hour)
-	membershipRepo.StartExpirationWorker(context.Background(), time.Hour)
-
-	// Start blocklist proposal expiration worker (runs every hour)
-	blocklistProposalRepo.StartExpirationWorker(context.Background(), time.Hour)
 
 	// Initialize services
 	mailService, err := services.NewMailService(cfg)
@@ -222,82 +208,50 @@ func main() {
 	authHandler.SetRateLimiter(rateLimiter)
 
 	mfaHandler := handlers.NewMFAHandler(db, userRepo, mfaService, jwtAuth, cfg.Server.SecureCookies, auditRepo)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mapboxService, auditRepo)
-	signalGroupHandler := handlers.NewSignalGroupHandler(db, signalGroupRepo, encryptedSecretRepo, regionRepo, auditRepo)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mapboxService, auditRepo)
 	verificationHandler := handlers.NewVerificationHandler(
 		db,
 		verificationRepo,
-		vouchRepo,
 		userRepo,
 		regionRepo,
 		mailService,
 		mapboxService,
 		auditRepo,
-		cfg.Bootstrap.CooldownEnabled,
-		cfg.Bootstrap.CooldownMinutes,
 	)
-	if cfg.Bootstrap.CooldownEnabled {
-		slog.Info("bootstrap vouch cooldown enabled", "cooldown_minutes", cfg.Bootstrap.CooldownMinutes)
-	} else {
-		slog.Info("bootstrap vouch cooldown disabled")
-	}
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, auditRepo)
-	membershipHandler := handlers.NewMembershipHandler(db, membershipRepo, regionRepo, userRepo, auditRepo)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		db, blocklistProposalRepo, regionRepo, userRepo, auditRepo,
-		&cfg.Consensus, &cfg.Blocklist,
-	)
-
-	deletionProposalHandler := handlers.NewDeletionProposalHandler(
-		db, deletionProposalRepo, signalGroupRepo, regionRepo, schoolRepo,
-		userRepo, auditRepo, &cfg.Consensus,
-	)
 
 	// Initialize NCES service for lazy-loading district boundaries
 	ncesService := services.NewNCESService()
 
+	// Initialize meshtastic channel repository
+	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
+
+	// Initialize group repository and handler
+	groupRepo := database.NewGroupRepository(db)
+	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler.SetRateLimiter(rateLimiter)
+
 	// Initialize school handler
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo,
-		signalGroupRepo, encryptedSecretRepo, userRepo, auditRepo,
-		ncesService,
-		&cfg.Consensus, cfg.Bootstrap.CooldownEnabled, cfg.Bootstrap.CooldownMinutes,
+		schoolRepo, districtRepo, groupRepo, userRepo, auditRepo, ncesService,
 	)
 
-	// Initialize user report handler
-	userReportHandler := handlers.NewUserReportHandler(
-		db, userReportRepo, regionRepo, schoolRepo, userRepo, auditRepo,
-	)
-
-	// Initialize meshtastic channel repository and handler
-	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	meshtasticHandler := handlers.NewMeshtasticHandler(
-		db, meshtasticChannelRepo, encryptedSecretRepo, regionRepo, schoolRepo, auditRepo,
-	)
+	// Initialize connection repository and handler
+	connectionRepo := database.NewConnectionRepository(db)
+	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
 
 	// Initialize encryption handler
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo)
-
-	// Initialize secret update handler
-	secretUpdateHandler := handlers.NewSecretUpdateHandler(
-		db, secretUpdateProposalRepo, encryptedSecretRepo, encryptionKeyRepo,
-		regionRepo, schoolRepo, signalGroupRepo, meshtasticChannelRepo,
-		auditRepo, &cfg.Consensus,
-	)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo)
 
 	// Wire status cache to handlers for immediate cache eviction on privilege changes
 	adminHandler.SetStatusCache(statusCache)
 	verificationHandler.SetStatusCache(statusCache)
-	blocklistProposalHandler.SetStatusCache(statusCache)
 
 	// Wire JWT auth to verification handler for issuing fresh tokens after postcard verification
 	verificationHandler.SetJWTAuth(jwtAuth, cfg.Server.SecureCookies)
 
 	// Wire notification service to handlers
 	verificationHandler.SetNotificationService(notificationService)
-	blocklistProposalHandler.SetNotificationService(notificationService)
-	membershipHandler.SetNotificationService(notificationService)
-	secretUpdateHandler.SetNotificationService(notificationService)
 	encryptionHandler.SetNotificationService(notificationService)
 
 	// Setup CSRF protection
@@ -307,9 +261,14 @@ func main() {
 		SecureCookies: cfg.Server.SecureCookies,
 	}
 
-	// Build Content-Security-Policy directives
+	// Build Content-Security-Policy directives.
+	// NOTE: script-src has NO 'unsafe-inline' (inline scripts were externalized to
+	// config.js / env-banner.js). style-src DOES retain 'unsafe-inline' because
+	// Mapbox GL JS sets inline style attributes on map elements at runtime;
+	// removing it breaks map rendering. Keep these directives in sync with
+	// nginx.conf / nginx.test.conf, which serve the SPA document.
 	cspDirectives := "default-src 'self'; " +
-		"script-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
+		"script-src 'self' https://api.mapbox.com; " +
 		"style-src 'self' https://api.mapbox.com 'unsafe-inline'; " +
 		"img-src 'self' data: blob: https://api.mapbox.com; " +
 		"connect-src 'self' https://api.mapbox.com https://events.mapbox.com; " +
@@ -329,17 +288,12 @@ func main() {
 		authHandler,
 		mfaHandler,
 		regionHandler,
-		signalGroupHandler,
 		verificationHandler,
 		adminHandler,
-		membershipHandler,
-		blocklistProposalHandler,
-		deletionProposalHandler,
 		schoolHandler,
-		userReportHandler,
 		encryptionHandler,
-		secretUpdateHandler,
-		meshtasticHandler,
+		groupHandler,
+		connectionHandler,
 		jwtAuth,
 		rateLimiter,
 		rateLimitConfig,

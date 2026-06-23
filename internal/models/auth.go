@@ -2,7 +2,7 @@ package models
 
 // RegisterRequest represents user registration request
 type RegisterRequest struct {
-	Username string `json:"username" validate:"required,min=3,max=50,alphanum"`
+	Username string `json:"username" validate:"required,min=3,max=50"`
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=12"`
 }
@@ -16,9 +16,10 @@ type RegisterResponse struct {
 	Message               string `json:"message,omitempty"`
 }
 
-// LoginRequest represents user login request
+// LoginRequest represents user login request.
+// The Email field accepts either an email address or username.
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
+	Email    string `json:"email" validate:"required"`
 	Password string `json:"password" validate:"required"`
 }
 

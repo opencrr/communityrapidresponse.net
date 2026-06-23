@@ -17,6 +17,7 @@ type EncryptionHandler struct {
 	encryptedSecretRepo *database.EncryptedSecretRepository
 	regionRepo          *database.RegionRepository
 	schoolRepo          *database.SchoolRepository
+	userRepo            *database.UserRepository
 	notificationService NotificationServiceInterface
 }
 
@@ -26,12 +27,14 @@ func NewEncryptionHandler(
 	encryptedSecretRepo *database.EncryptedSecretRepository,
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
+	userRepo *database.UserRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
 		encryptedSecretRepo: encryptedSecretRepo,
 		regionRepo:          regionRepo,
 		schoolRepo:          schoolRepo,
+		userRepo:            userRepo,
 	}
 }
 
@@ -51,6 +54,11 @@ func (h *EncryptionHandler) UploadKeys(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateEncryptionKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -118,6 +126,11 @@ func (h *EncryptionHandler) UpdateKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	if req.WrappedPrivateKey == "" || req.KeySalt == "" || req.KeyIV == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "All encryption key fields are required")
 		return
@@ -148,6 +161,11 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	var req models.RotateEncryptionKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -198,6 +216,15 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
 
+	// SCOPE LIMITATION: only region/school/district recipient enumeration exists.
+	// Group- and connection-owned signal chats are intentionally NOT supported here
+	// yet (they are metadata-only — see DESIGN/PR "Known limitations"). Do NOT add
+	// group_id/connection_id branches without also landing DEK revocation
+	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
+	// connection-leave / tier-downgrade. Enumeration without revocation lets a
+	// removed member who cached the unwrapped DEK keep decrypting.
+	// Tracked: github.com/opencrr/communityrapidresponse.net/issues/91.
+
 	// Exactly one scope must be provided
 	scopeCount := 0
 	if regionID != "" {
@@ -214,8 +241,15 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "encryption", "verify_superuser")
+		return
+	}
+
 	// Verify caller is a member of the requested scope (superusers bypass)
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		if regionID != "" {
 			isMember, memberErr := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
 			if memberErr != nil {
@@ -254,7 +288,6 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	}
 
 	var keys []models.PublicKeyEntry
-	var err error
 
 	if regionID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)
@@ -330,15 +363,28 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Authorize against the exact set of (secret, target) pairs the server
+	// advertised to this caller as pending. GetPendingRekeys guarantees the
+	// caller holds a valid (non-rekey-needed) key for the secret AND the target
+	// genuinely needs re-keying. Without this, any member holding a secret could
+	// overwrite an arbitrary entitled member's wrapped DEK with a forged blob.
+	pending, err := h.encryptedSecretRepo.GetPendingRekeys(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to load pending re-keys", "encryption", "submit_rekeys")
+		return
+	}
+	allowed := make(map[string]bool, len(pending))
+	for _, p := range pending {
+		allowed[p.SecretID+"\x00"+p.TargetUserID] = true
+	}
+
 	successCount := 0
 	for _, entry := range req.Rekeys {
 		if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
 			continue
 		}
-		// Verify the caller has a valid (non-rekey-needed) wrapped DEK for this secret
-		_, dekErr := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), entry.SecretID, claims.UserID)
-		if dekErr != nil {
-			slog.WarnContext(r.Context(), "rejecting re-key: caller has no valid key", "secret_id", entry.SecretID, "caller_id", claims.UserID)
+		if !allowed[entry.SecretID+"\x00"+entry.TargetUserID] {
+			slog.WarnContext(r.Context(), "rejecting re-key: pair not in caller's pending set", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "caller_id", claims.UserID)
 			continue
 		}
 		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {

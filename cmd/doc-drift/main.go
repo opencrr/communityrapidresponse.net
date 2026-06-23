@@ -42,6 +42,7 @@ func (r report) hasDrift() bool {
 }
 
 func (r report) print(w *os.File) {
+	// #nosec G705 -- w is os.Stdout in this internal CLI tool; terminal output is not an XSS sink.
 	_, _ = fmt.Fprintf(w, "== %s ==\n", r.check)
 	if !r.hasDrift() {
 		_, _ = fmt.Fprintln(w, "  no drift detected")
@@ -50,12 +51,14 @@ func (r report) print(w *os.File) {
 	if len(r.documentedButMissing) > 0 {
 		_, _ = fmt.Fprintln(w, "  documented but missing in code:")
 		for _, s := range r.documentedButMissing {
+			// #nosec G705 -- CLI stdout, not an XSS sink.
 			_, _ = fmt.Fprintf(w, "    - %s\n", s)
 		}
 	}
 	if len(r.realButUndocumented) > 0 {
 		_, _ = fmt.Fprintln(w, "  in code but undocumented:")
 		for _, s := range r.realButUndocumented {
+			// #nosec G705 -- CLI stdout, not an XSS sink.
 			_, _ = fmt.Fprintf(w, "    - %s\n", s)
 		}
 	}

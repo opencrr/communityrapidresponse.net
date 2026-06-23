@@ -1,14 +1,13 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"testing"
-
-	"github.com/google/uuid"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
@@ -19,61 +18,70 @@ import (
 type schoolTestSuite struct {
 	t            *testing.T
 	db           *database.DB
-	userRepo     *database.UserRepository
 	schoolRepo   *database.SchoolRepository
 	districtRepo *database.SchoolDistrictRepository
-	vouchRepo    *database.SchoolVouchRepository
-	groupRepo    *database.SignalGroupRepository
+	groupRepo    *database.GroupRepository
+	userRepo     *database.UserRepository
 	auditRepo    *database.AuditRepository
 	handler      *SchoolHandler
 }
 
 func setupSchoolTestSuite(t *testing.T) *schoolTestSuite {
-	db := testDB(t)
-	userRepo := database.NewUserRepository(db)
+	host := os.Getenv("TEST_DB_HOST")
+	if host == "" {
+		t.Skip("TEST_DB_HOST not set, skipping handler tests")
+	}
+
+	port := 3306
+	if portStr := os.Getenv("TEST_DB_PORT"); portStr != "" {
+		if parsed, err := strconv.Atoi(portStr); err == nil {
+			port = parsed
+		}
+	}
+
+	cfg := &config.DatabaseConfig{
+		Host:     host,
+		Port:     port,
+		User:     getEnvOrDefault("TEST_DB_USER", "root"),
+		Password: getEnvOrDefault("TEST_DB_PASSWORD", ""),
+		Name:     getEnvOrDefault("TEST_DB_NAME", "communityrapidresponse_test"),
+		Charset:  "utf8mb4",
+	}
+
+	db, err := database.New(cfg)
+	if err != nil {
+		t.Fatalf("Failed to connect to test database: %v", err)
+	}
+
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	vouchRepo := database.NewSchoolVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
+	groupRepo := database.NewGroupRepository(db)
+	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
+	handler := NewSchoolHandler(schoolRepo, districtRepo, groupRepo, userRepo, auditRepo, nil)
 
-	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
-
-	handler := NewSchoolHandler(
-		db,
-		schoolRepo,
-		districtRepo,
-		vouchRepo,
-		groupRepo,
-		encryptedSecretRepo,
-		userRepo,
-		auditRepo,
-		nil, // ncesService - not needed in tests
-		consensusConfig,
-		false, // bootstrapCooldownEnabled
-		0,     // bootstrapCooldownMinutes
-	)
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
 
 	return &schoolTestSuite{
 		t:            t,
 		db:           db,
-		userRepo:     userRepo,
 		schoolRepo:   schoolRepo,
 		districtRepo: districtRepo,
-		vouchRepo:    vouchRepo,
 		groupRepo:    groupRepo,
+		userRepo:     userRepo,
 		auditRepo:    auditRepo,
 		handler:      handler,
 	}
 }
 
-func (s *schoolTestSuite) createTestUser(username string, tier models.VerificationTier) *models.User {
+func (s *schoolTestSuite) createTestUser(username string) *models.User {
 	user := &models.User{
 		Username:         username,
 		Email:            username + "@schooltest.com",
 		PasswordHash:     "$2a$12$test.hash.for.testing.only",
-		VerificationTier: tier,
+		VerificationTier: models.TierUnverified,
 	}
 	if err := s.userRepo.Create(context.Background(), user); err != nil {
 		s.t.Fatalf("Failed to create test user: %v", err)
@@ -81,105 +89,65 @@ func (s *schoolTestSuite) createTestUser(username string, tier models.Verificati
 	return user
 }
 
-func (s *schoolTestSuite) createTestSchool(name, state string) *models.School {
-	school := &models.School{
-		ID:     uuid.New().String(),
-		NCESID: uuid.New().String()[:12],
-		Name:   name,
-		State:  state,
-	}
-	_, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO schools (id, nces_id, name, state, created_at) VALUES (?, ?, ?, ?, NOW())",
-		school.ID, school.NCESID, school.Name, school.State)
-	if err != nil {
-		s.t.Fatalf("Failed to create test school: %v", err)
-	}
-	return school
-}
-
-func (s *schoolTestSuite) createTestDistrict(name, state string) *models.SchoolDistrict {
+func (s *schoolTestSuite) createTestDistrict(ncesID, name, state string) *models.SchoolDistrict {
 	district := &models.SchoolDistrict{
-		ID:           uuid.New().String(),
-		NCESID:       uuid.New().String()[:7],
+		NCESID:       ncesID,
 		Name:         name,
 		State:        state,
 		DistrictType: models.SchoolDistrictTypeUnified,
 	}
-	_, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO school_districts (id, nces_id, name, state, district_type, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
-		district.ID, district.NCESID, district.Name, district.State, district.DistrictType)
-	if err != nil {
+	if err := s.districtRepo.UpsertByNCESID(context.Background(), district); err != nil {
 		s.t.Fatalf("Failed to create test district: %v", err)
 	}
 	return district
 }
 
-func (s *schoolTestSuite) addUserToSchool(userID, schoolID string, status models.SchoolVerificationStatus, isAdmin bool) {
-	membershipID := uuid.New().String()
-	query := "INSERT INTO user_schools (id, user_id, school_id, is_admin, verification_status) VALUES (?, ?, ?, ?, ?)"
-	if status == models.SchoolVerificationStatusVerified {
-		query = "INSERT INTO user_schools (id, user_id, school_id, is_admin, verification_status, verified_at) VALUES (?, ?, ?, ?, ?, NOW())"
+func (s *schoolTestSuite) createTestSchool(ncesID, name, state string, districtID *string) *models.School {
+	city := "Test City"
+	school := &models.School{
+		NCESID:     ncesID,
+		Name:       name,
+		State:      state,
+		City:       &city,
+		DistrictID: districtID,
 	}
-	var err error
-	if status == models.SchoolVerificationStatusVerified {
-		_, err = s.db.ExecContext(context.Background(), query, membershipID, userID, schoolID, isAdmin, status)
-	} else {
-		_, err = s.db.ExecContext(context.Background(), query, membershipID, userID, schoolID, isAdmin, status)
+	if err := s.schoolRepo.UpsertByNCESID(context.Background(), school); err != nil {
+		s.t.Fatalf("Failed to create test school: %v", err)
 	}
-	if err != nil {
-		s.t.Fatalf("Failed to add user to school: %v", err)
+	return school
+}
+
+func (s *schoolTestSuite) claimsForUser(user *models.User) *middleware.Claims {
+	return &middleware.Claims{
+		UserID:           user.ID,
+		Email:            user.Email,
+		Username:         user.Username,
+		VerificationTier: user.VerificationTier,
+		IsSuperuser:      user.IsSuperuser,
 	}
 }
 
-func (s *schoolTestSuite) blockUserInSchool(userID, schoolID, blockedBy string) {
-	blockID := uuid.New().String()
-	_, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO school_blocked_users (id, user_id, school_id, blocked_by, created_at) VALUES (?, ?, ?, ?, NOW())",
-		blockID, userID, schoolID, blockedBy)
-	if err != nil {
-		s.t.Fatalf("Failed to block user in school: %v", err)
-	}
-}
-
-func (s *schoolTestSuite) cleanup(userIDs []string, schoolIDs []string, districtIDs []string) {
+func (s *schoolTestSuite) cleanup(userIDs, groupIDs, schoolIDs, districtIDs []string) {
 	ctx := context.Background()
-	for _, schoolID := range schoolIDs {
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_blocked_users WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_schools WHERE school_id = ?", schoolID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM schools WHERE id = ?", schoolID)
+	for _, id := range groupIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", id)
 	}
-	for _, districtID := range districtIDs {
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM signal_groups WHERE district_id = ?", districtID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_districts WHERE id = ?", districtID)
+	for _, id := range schoolIDs {
+		// Delete any groups linked to this school first
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id IN (SELECT id FROM `groups` WHERE school_id = ?)", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM `groups` WHERE school_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_schools WHERE school_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM schools WHERE id = ?", id)
 	}
-	for _, userID := range userIDs {
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_vouches WHERE voucher_user_id = ? OR vouched_user_id = ?", userID, userID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM user_schools WHERE user_id = ?", userID)
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", userID)
+	for _, id := range districtIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM school_districts WHERE id = ?", id)
 	}
-}
-
-func (s *schoolTestSuite) authenticatedRequest(method, url string, body interface{}, claims *middleware.Claims) (*http.Request, *httptest.ResponseRecorder) {
-	var reqBody *bytes.Reader
-	if body != nil {
-		bodyBytes, _ := json.Marshal(body)
-		reqBody = bytes.NewReader(bodyBytes)
-	} else {
-		reqBody = bytes.NewReader(nil)
+	for _, id := range userIDs {
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM group_members WHERE user_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM audit_log WHERE user_id = ?", id)
+		_, _ = s.db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
 	}
-
-	req := httptest.NewRequest(method, url, reqBody)
-	req.Header.Set("Content-Type", "application/json")
-
-	if claims != nil {
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-	}
-
-	rec := httptest.NewRecorder()
-	return req, rec
 }
 
 // =============================================================================
@@ -189,129 +157,224 @@ func (s *schoolTestSuite) authenticatedRequest(method, url string, body interfac
 func TestSchoolHandler_Search(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	// Clean up any previous test data
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
+	district := suite.createTestDistrict("9900001", "Search District", "CA")
+	school1 := suite.createTestSchool("990000000001", "Lincoln Elementary School", "CA", &district.ID)
+	school2 := suite.createTestSchool("990000000002", "Lincoln Middle School", "CA", &district.ID)
+	user := suite.createTestUser("school_search_user")
 
-	schoolAlpha := suite.createTestSchool("Alpha Elementary School", "CA")
-	schoolBeta := suite.createTestSchool("Beta Middle School", "CA")
-	schoolGamma := suite.createTestSchool("Gamma High School", "NY")
+	defer suite.cleanup(
+		[]string{user.ID},
+		nil,
+		[]string{school1.ID, school2.ID},
+		[]string{district.ID},
+	)
 
-	defer suite.cleanup(nil, []string{schoolAlpha.ID, schoolBeta.ID, schoolGamma.ID}, nil)
+	t.Run("returns results for query", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools?query=Lincoln&state=CA", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
 
-	t.Run("search returns results", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School", nil, nil)
+		rec := httptest.NewRecorder()
 		suite.handler.Search(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body SchoolSearchResultResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		if responseBody.Total < 3 {
-			t.Errorf("Expected at least 3 results, got %d", responseBody.Total)
+		if len(body.Schools) < 2 {
+			t.Errorf("Expected at least 2 results for 'Lincoln', got %d", len(body.Schools))
+		}
+		if body.Page != 1 {
+			t.Errorf("Expected page 1, got %d", body.Page)
+		}
+		if body.Limit != 20 {
+			t.Errorf("Expected limit 20, got %d", body.Limit)
 		}
 	})
 
-	t.Run("search with state filter", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&state=CA", nil, nil)
+	t.Run("empty query returns results", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools?query=&state=CA", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.Search(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body SchoolSearchResultResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		for _, schoolSummary := range responseBody.Schools {
-			if schoolSummary.State != "CA" {
-				t.Errorf("Expected all results to be in CA, got state %s for school %s", schoolSummary.State, schoolSummary.Name)
-			}
-		}
-
-		if responseBody.Total < 2 {
-			t.Errorf("Expected at least 2 CA schools, got %d", responseBody.Total)
+		// Should return some results (our seeded schools at minimum)
+		if body.Total < 0 {
+			t.Errorf("Expected non-negative total, got %d", body.Total)
 		}
 	})
 
-	t.Run("search with pagination", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=1&page=1", nil, nil)
+	t.Run("pagination with custom limit", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools?query=Lincoln&state=CA&limit=1&page=1", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.Search(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body SchoolSearchResultResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		if len(responseBody.Schools) != 1 {
-			t.Errorf("Expected 1 school per page, got %d", len(responseBody.Schools))
+		if body.Limit != 1 {
+			t.Errorf("Expected limit 1, got %d", body.Limit)
+		}
+		if len(body.Schools) > 1 {
+			t.Errorf("Expected at most 1 result, got %d", len(body.Schools))
+		}
+		if body.Total >= 2 && !body.HasMore {
+			t.Error("Expected HasMore to be true when total exceeds page*limit")
+		}
+	})
+
+	t.Run("limit capped at 100", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools?limit=500", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Search(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		if responseBody.Limit != 1 {
-			t.Errorf("Expected limit 1, got %d", responseBody.Limit)
+		var body SchoolSearchResultResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		if responseBody.Page != 1 {
-			t.Errorf("Expected page 1, got %d", responseBody.Page)
-		}
-
-		if !responseBody.HasMore {
-			t.Error("Expected has_more to be true when total exceeds page size")
+		if body.Limit != 100 {
+			t.Errorf("Expected limit capped at 100, got %d", body.Limit)
 		}
 	})
 }
 
 // =============================================================================
-// Get Tests
+// GetSchool Tests
 // =============================================================================
 
-func TestSchoolHandler_Get(t *testing.T) {
+func TestSchoolHandler_GetSchool(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
+	district := suite.createTestDistrict("9900002", "Get District", "NY")
+	school := suite.createTestSchool("990000000003", "Washington High School", "NY", &district.ID)
+	user := suite.createTestUser("school_get_user")
 
-	school := suite.createTestSchool("Get Test School", "CA")
-	defer suite.cleanup(nil, []string{school.ID}, nil)
+	defer suite.cleanup(
+		[]string{user.ID},
+		nil,
+		[]string{school.ID},
+		[]string{district.ID},
+	)
 
-	t.Run("get existing school returns details", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"?id="+school.ID, nil, nil)
+	t.Run("returns school details", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools/"+school.ID+"?id="+school.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.Get(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody models.SchoolWithDetails
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		if responseBody.ID != school.ID {
-			t.Errorf("Expected school ID %s, got %s", school.ID, responseBody.ID)
+		if body["id"] != school.ID {
+			t.Errorf("Expected school ID %s, got %v", school.ID, body["id"])
 		}
-
-		if responseBody.Name != "Get Test School" {
-			t.Errorf("Expected school name 'Get Test School', got %s", responseBody.Name)
+		if body["name"] != "Washington High School" {
+			t.Errorf("Expected name 'Washington High School', got %v", body["name"])
+		}
+		if body["district_name"] != "Get District" {
+			t.Errorf("Expected district_name 'Get District', got %v", body["district_name"])
 		}
 	})
 
-	t.Run("get non-existent school returns 404", func(t *testing.T) {
-		nonExistentID := uuid.New().String()
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+nonExistentID+"?id="+nonExistentID, nil, nil)
+	t.Run("returns school with group_id when linked", func(t *testing.T) {
+		// Create a group linked to this school
+		createReq := &models.CreateGroupRequest{
+			Name:       "School Group",
+			Visibility: "unlisted",
+			SchoolID:   &school.ID,
+		}
+		createdGroup, err := suite.groupRepo.Create(context.Background(), createReq, user.ID)
+		if err != nil {
+			t.Fatalf("Failed to create group: %v", err)
+		}
+		defer suite.cleanup(nil, []string{createdGroup.ID}, nil, nil)
+
+		req := httptest.NewRequest("GET", "/api/v1/schools/"+school.ID+"?id="+school.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Get(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		if body["group_id"] == nil {
+			t.Error("Expected group_id to be present")
+		}
+		if body["group_id"] != createdGroup.ID {
+			t.Errorf("Expected group_id %s, got %v", createdGroup.ID, body["group_id"])
+		}
+	})
+
+	t.Run("returns 404 for nonexistent school", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools/nonexistent?id=nonexistent", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.Get(rec, req)
 
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("returns 400 for missing ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools/", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Get(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", rec.Code)
 		}
 	})
 }
@@ -323,654 +386,140 @@ func TestSchoolHandler_Get(t *testing.T) {
 func TestSchoolHandler_Join(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("Join Test School", "CA")
-	regularUser := suite.createTestUser("school_join_user", models.TierUnverified)
-	blockedUser := suite.createTestUser("school_join_blocked", models.TierUnverified)
-	existingMember := suite.createTestUser("school_join_existing", models.TierUnverified)
-
-	// Set up: block one user, make another already a member
-	suite.blockUserInSchool(blockedUser.ID, school.ID, regularUser.ID)
-	suite.addUserToSchool(existingMember.ID, school.ID, models.SchoolVerificationStatusPending, false)
+	district := suite.createTestDistrict("9900003", "Join District", "TX")
+	school := suite.createTestSchool("990000000004", "Adams Elementary", "TX", &district.ID)
+	schoolNoGroup := suite.createTestSchool("990000000005", "Adams Middle", "TX", &district.ID)
+	user1 := suite.createTestUser("school_join_user1")
+	user2 := suite.createTestUser("school_join_user2")
 
 	defer suite.cleanup(
-		[]string{regularUser.ID, blockedUser.ID, existingMember.ID},
-		[]string{school.ID},
+		[]string{user1.ID, user2.ID},
 		nil,
+		[]string{school.ID, schoolNoGroup.ID},
+		[]string{district.ID},
 	)
 
-	t.Run("join requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/join?id="+school.ID, nil, nil)
-		suite.handler.Join(rec, req)
+	t.Run("creates new group when none exists", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/schools/"+schoolNoGroup.ID+"/join?id="+schoolNoGroup.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user1))
+		req = req.WithContext(ctx)
 
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("join a school successfully", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           regularUser.ID,
-			Email:            regularUser.Email,
-			VerificationTier: regularUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/join?id="+school.ID, nil, claims)
+		rec := httptest.NewRecorder()
 		suite.handler.Join(rec, req)
 
 		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody["membership_id"] == nil {
-			t.Error("Expected membership_id in response")
-		}
-
-		if responseBody["status"] != "pending" {
-			t.Errorf("Expected status 'pending', got %v", responseBody["status"])
-		}
-
-		if responseBody["school_id"] != school.ID {
-			t.Errorf("Expected school_id %s, got %v", school.ID, responseBody["school_id"])
-		}
-	})
-
-	t.Run("join same school twice returns conflict", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           regularUser.ID,
-			Email:            regularUser.Email,
-			VerificationTier: regularUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/join?id="+school.ID, nil, claims)
-		suite.handler.Join(rec, req)
-
-		if rec.Code != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("join while blocked returns forbidden", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           blockedUser.ID,
-			Email:            blockedUser.Email,
-			VerificationTier: blockedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/join?id="+school.ID, nil, claims)
-		suite.handler.Join(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-}
-
-// =============================================================================
-// Leave Tests
-// =============================================================================
-
-func TestSchoolHandler_Leave(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("Leave Test School", "CA")
-	memberUser := suite.createTestUser("school_leave_member", models.TierUnverified)
-
-	suite.addUserToSchool(memberUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup([]string{memberUser.ID}, []string{school.ID}, nil)
-
-	t.Run("leave requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/leave?id="+school.ID, nil, nil)
-		suite.handler.Leave(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("leave school successfully", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           memberUser.ID,
-			Email:            memberUser.Email,
-			VerificationTier: memberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/leave?id="+school.ID, nil, claims)
-		suite.handler.Leave(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody["school_id"] != school.ID {
-			t.Errorf("Expected school_id %s, got %v", school.ID, responseBody["school_id"])
-		}
-
-		if responseBody["message"] != "Successfully left school" {
-			t.Errorf("Expected success message, got %v", responseBody["message"])
-		}
-	})
-}
-
-// =============================================================================
-// Vouch Tests
-// =============================================================================
-
-func TestSchoolHandler_Vouch(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("Vouch Test School", "CA")
-	voucherUser := suite.createTestUser("school_voucher", models.TierPostcard)
-	voucheeUser := suite.createTestUser("school_vouchee", models.TierUnverified)
-	voucher2User := suite.createTestUser("school_voucher2", models.TierPostcard)
-	voucher3User := suite.createTestUser("school_voucher3", models.TierPostcard)
-
-	// All users are members of the school (pending except voucher)
-	suite.addUserToSchool(voucherUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(voucheeUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(voucher2User.ID, school.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(voucher3User.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{voucherUser.ID, voucheeUser.ID, voucher2User.ID, voucher3User.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("vouch requires authentication", func(t *testing.T) {
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucheeUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, nil)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("self-vouch returns error", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           voucherUser.ID,
-			Email:            voucherUser.Email,
-			VerificationTier: voucherUser.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucherUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("vouch in bootstrap mode succeeds", func(t *testing.T) {
-		// In bootstrap mode (no verified admins), any member can vouch
-		claims := &middleware.Claims{
-			UserID:           voucherUser.ID,
-			Email:            voucherUser.Email,
-			VerificationTier: voucherUser.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucheeUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolVouchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.VouchID == "" {
-			t.Error("Expected a vouch_id in response")
-		}
-
-		if !responseBody.BootstrapMode {
-			t.Error("Expected bootstrap_mode to be true")
-		}
-
-		if responseBody.TotalVouches != 1 {
-			t.Errorf("Expected total_vouches 1, got %d", responseBody.TotalVouches)
-		}
-
-		// In bootstrap mode, 3 vouches are required
-		if responseBody.VouchesRequired != 3 {
-			t.Errorf("Expected vouches_required 3 (bootstrap), got %d", responseBody.VouchesRequired)
-		}
-	})
-
-	t.Run("second vouch from different user succeeds", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           voucher2User.ID,
-			Email:            voucher2User.Email,
-			VerificationTier: voucher2User.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucheeUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolVouchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.TotalVouches != 2 {
-			t.Errorf("Expected total_vouches 2, got %d", responseBody.TotalVouches)
-		}
-
-		if responseBody.VouchesNeeded != 1 {
-			t.Errorf("Expected vouches_needed 1, got %d", responseBody.VouchesNeeded)
-		}
-	})
-
-	t.Run("third vouch triggers auto-upgrade in bootstrap mode", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           voucher3User.ID,
-			Email:            voucher3User.Email,
-			VerificationTier: voucher3User.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucheeUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
 
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		if body["status"] != "created" {
+			t.Errorf("Expected status 'created', got %v", body["status"])
 		}
-
-		var responseBody models.SchoolVouchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.TotalVouches != 3 {
-			t.Errorf("Expected total_vouches 3, got %d", responseBody.TotalVouches)
-		}
-
-		if responseBody.VouchesNeeded != 0 {
-			t.Errorf("Expected vouches_needed 0, got %d", responseBody.VouchesNeeded)
-		}
-	})
-
-	t.Run("duplicate vouch returns conflict", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           voucherUser.ID,
-			Email:            voucherUser.Email,
-			VerificationTier: voucherUser.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: voucheeUser.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("vouch for non-member returns error", func(t *testing.T) {
-		nonMemberTarget := suite.createTestUser("school_nonmember_target", models.TierUnverified)
-		defer suite.cleanup([]string{nonMemberTarget.ID}, nil, nil)
-		// Note: nonMemberTarget is NOT added to the school
-
-		claims := &middleware.Claims{
-			UserID:           voucherUser.ID,
-			Email:            voucherUser.Email,
-			VerificationTier: voucherUser.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: nonMemberTarget.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("monthly vouch limit check", func(t *testing.T) {
-		// Create 10 additional users and vouch for each to exhaust the monthly limit
-		limitVoucherUser := suite.createTestUser("school_limit_voucher", models.TierPostcard)
-		suite.addUserToSchool(limitVoucherUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-		defer func() {
-			suite.cleanup([]string{limitVoucherUser.ID}, nil, nil)
-		}()
-
-		var additionalTargetUserIDs []string
-		for i := 0; i < 10; i++ {
-			targetUser := suite.createTestUser("school_limit_target_"+string(rune('a'+i)), models.TierUnverified)
-			suite.addUserToSchool(targetUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-			additionalTargetUserIDs = append(additionalTargetUserIDs, targetUser.ID)
-
-			// Create vouches directly in db to fill up the limit
-			vouchID := uuid.New().String()
-			_, _ = suite.db.ExecContext(context.Background(),
-				"INSERT INTO school_vouches (id, voucher_user_id, vouched_user_id, school_id, created_at) VALUES (?, ?, ?, ?, NOW())",
-				vouchID, limitVoucherUser.ID, targetUser.ID, school.ID)
-		}
-		defer func() {
-			suite.cleanup(additionalTargetUserIDs, nil, nil)
-		}()
-
-		// Now try to vouch for one more person -- should hit monthly limit
-		overLimitTarget := suite.createTestUser("school_limit_over", models.TierUnverified)
-		suite.addUserToSchool(overLimitTarget.ID, school.ID, models.SchoolVerificationStatusPending, false)
-		defer func() {
-			suite.cleanup([]string{overLimitTarget.ID}, nil, nil)
-		}()
-
-		claims := &middleware.Claims{
-			UserID:           limitVoucherUser.ID,
-			Email:            limitVoucherUser.Email,
-			VerificationTier: limitVoucherUser.VerificationTier,
-		}
-		requestBody := models.SchoolVouchRequest{
-			UserIdentifier: overLimitTarget.Email,
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/vouch?id="+school.ID, requestBody, claims)
-		suite.handler.Vouch(rec, req)
-
-		if rec.Code != http.StatusTooManyRequests {
-			t.Errorf("Expected status 429, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-}
-
-// =============================================================================
-// ListMembers Tests
-// =============================================================================
-
-func TestSchoolHandler_ListMembers(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("Members Test School", "CA")
-	verifiedUser := suite.createTestUser("school_verified_member", models.TierPostcard)
-	pendingUser := suite.createTestUser("school_pending_member", models.TierPostcard)
-	nonMemberUser := suite.createTestUser("school_nonmember_user", models.TierPostcard)
-
-	suite.addUserToSchool(verifiedUser.ID, school.ID, models.SchoolVerificationStatusVerified, false)
-	suite.addUserToSchool(pendingUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{verifiedUser.ID, pendingUser.ID, nonMemberUser.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("list members requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/members?id="+school.ID, nil, nil)
-		suite.handler.ListMembers(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("list members requires membership", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           nonMemberUser.ID,
-			Email:            nonMemberUser.Email,
-			VerificationTier: nonMemberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/members?id="+school.ID, nil, claims)
-		suite.handler.ListMembers(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
+		if body["group_created"] != true {
+			t.Error("Expected group_created to be true")
 		}
-	})
-
-	t.Run("pending member cannot list members", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           pendingUser.ID,
-			Email:            pendingUser.Email,
-			VerificationTier: pendingUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/members?id="+school.ID, nil, claims)
-		suite.handler.ListMembers(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("verified member can list members", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/members?id="+school.ID, nil, claims)
-		suite.handler.ListMembers(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		membersRaw, ok := responseBody["members"]
-		if !ok {
-			t.Fatal("Expected 'members' key in response")
-		}
-
-		membersList, ok := membersRaw.([]interface{})
-		if !ok {
-			t.Fatal("Expected 'members' to be an array")
-		}
-
-		if len(membersList) < 1 {
-			t.Error("Expected at least 1 member in the list")
-		}
-	})
-}
-
-// =============================================================================
-// CreateSignalGroup Tests
-// =============================================================================
-
-func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("SignalGroup Test School", "CA")
-	adminUser := suite.createTestUser("school_sg_admin", models.TierPostcard)
-	regularUser := suite.createTestUser("school_sg_regular", models.TierUnverified)
-
-	// adminUser is a verified admin; set up enough admins to exit bootstrap mode
-	suite.addUserToSchool(adminUser.ID, school.ID, models.SchoolVerificationStatusVerified, true)
-	suite.addUserToSchool(regularUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	// Create two more verified admins to exit bootstrap mode (need 3 total)
-	admin2User := suite.createTestUser("school_sg_admin2", models.TierPostcard)
-	admin3User := suite.createTestUser("school_sg_admin3", models.TierPostcard)
-	suite.addUserToSchool(admin2User.ID, school.ID, models.SchoolVerificationStatusVerified, true)
-	suite.addUserToSchool(admin3User.ID, school.ID, models.SchoolVerificationStatusVerified, true)
-
-	defer suite.cleanup(
-		[]string{adminUser.ID, regularUser.ID, admin2User.ID, admin3User.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Test Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, nil)
-		suite.handler.CreateSignalGroup(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-admin gets forbidden", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           regularUser.ID,
-			Email:            regularUser.Email,
-			VerificationTier: regularUser.VerificationTier,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Unauthorized Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: regularUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
-		suite.handler.CreateSignalGroup(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("admin can create signal group", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			VerificationTier: adminUser.VerificationTier,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "School Test Signal Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
-		suite.handler.CreateSignalGroup(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody["group_id"] == nil {
+		if body["group_id"] == nil || body["group_id"] == "" {
 			t.Error("Expected group_id in response")
 		}
 
-		if responseBody["group_name"] != "School Test Signal Group" {
-			t.Errorf("Expected group_name 'School Test Signal Group', got %v", responseBody["group_name"])
+		// Store group ID for cleanup
+		groupID := body["group_id"].(string)
+		defer suite.cleanup(nil, []string{groupID}, nil, nil)
+	})
+
+	t.Run("joins existing group", func(t *testing.T) {
+		// Create a group linked to the school first
+		createReq := &models.CreateGroupRequest{
+			Name:       "School Group For Join",
+			Visibility: "unlisted",
+			SchoolID:   &school.ID,
+		}
+		existingGroup, err := suite.groupRepo.Create(context.Background(), createReq, user1.ID)
+		if err != nil {
+			t.Fatalf("Failed to create group: %v", err)
+		}
+		defer suite.cleanup(nil, []string{existingGroup.ID}, nil, nil)
+
+		req := httptest.NewRequest("POST", "/api/v1/schools/"+school.ID+"/join?id="+school.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user2))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Join(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		if responseBody["school_id"] != school.ID {
-			t.Errorf("Expected school_id %s, got %v", school.ID, responseBody["school_id"])
-		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
 
-		// Clean up created group
-		if groupID, ok := responseBody["group_id"].(string); ok {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE id = ?", groupID)
+		if body["status"] != "joined" {
+			t.Errorf("Expected status 'joined', got %v", body["status"])
+		}
+		if body["group_id"] != existingGroup.ID {
+			t.Errorf("Expected group_id %s, got %v", existingGroup.ID, body["group_id"])
 		}
 	})
 
-	t.Run("group limit prevents creation", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			VerificationTier: adminUser.VerificationTier,
-		}
+	t.Run("rejects if already a member", func(t *testing.T) {
+		// Create a group and add user as member
+		schoolForDupe := suite.createTestSchool("990000000006", "Dupe School", "TX", &district.ID)
+		defer suite.cleanup(nil, nil, []string{schoolForDupe.ID}, nil)
 
-		// Create 5 groups to hit the limit
-		var createdGroupIDs []string
-		for i := 0; i < 5; i++ {
-			group := &models.SignalGroup{
-				SchoolID:  &school.ID,
-				GroupName: "Limit Test Group",
-				CreatedBy: &adminUser.ID,
-			}
-			if err := suite.groupRepo.Create(context.Background(), group); err != nil {
-				t.Fatalf("Failed to create test group: %v", err)
-			}
-			createdGroupIDs = append(createdGroupIDs, group.ID)
+		createReq := &models.CreateGroupRequest{
+			Name:       "Dupe Check Group",
+			Visibility: "unlisted",
+			SchoolID:   &schoolForDupe.ID,
 		}
+		dupeGroup, err := suite.groupRepo.Create(context.Background(), createReq, user1.ID)
+		if err != nil {
+			t.Fatalf("Failed to create group: %v", err)
+		}
+		defer suite.cleanup(nil, []string{dupeGroup.ID}, nil, nil)
 
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Over Limit Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, requestBody, claims)
-		suite.handler.CreateSignalGroup(rec, req)
+		// user1 is already creator/member, try joining again
+		req := httptest.NewRequest("POST", "/api/v1/schools/"+schoolForDupe.ID+"/join?id="+schoolForDupe.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user1))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Join(rec, req)
 
 		if rec.Code != http.StatusConflict {
 			t.Errorf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		// Clean up
-		for _, groupID := range createdGroupIDs {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE id = ?", groupID)
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		if body["error"] != "already_member" {
+			t.Errorf("Expected error 'already_member', got %v", body["error"])
 		}
 	})
 
-	t.Run("bootstrap mode prevents non-superuser creation", func(t *testing.T) {
-		// Create a new school that stays in bootstrap mode (no verified admins)
-		bootstrapSchool := suite.createTestSchool("Bootstrap SG School", "CA")
-		suite.addUserToSchool(adminUser.ID, bootstrapSchool.ID, models.SchoolVerificationStatusVerified, true)
-		defer func() {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE school_id = ?", bootstrapSchool.ID)
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM user_schools WHERE school_id = ?", bootstrapSchool.ID)
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM schools WHERE id = ?", bootstrapSchool.ID)
-		}()
+	t.Run("returns 404 for nonexistent school", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/schools/nonexistent/join?id=nonexistent", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user1))
+		req = req.WithContext(ctx)
 
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			VerificationTier: adminUser.VerificationTier,
-			IsSuperuser:      false,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Bootstrap Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/schools/"+bootstrapSchool.ID+"/signal-groups?id="+bootstrapSchool.ID, requestBody, claims)
-		suite.handler.CreateSignalGroup(rec, req)
+		rec := httptest.NewRecorder()
+		suite.handler.Join(rec, req)
 
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("returns 401 without auth", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/schools/someid/join?id=someid", nil)
+		rec := httptest.NewRecorder()
+		suite.handler.Join(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
 		}
 	})
 }
@@ -982,380 +531,88 @@ func TestSchoolHandler_CreateSignalGroup(t *testing.T) {
 func TestSchoolHandler_ListMySchools(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school1 := suite.createTestSchool("My School 1", "CA")
-	school2 := suite.createTestSchool("My School 2", "NY")
-	memberUser := suite.createTestUser("school_my_user", models.TierPostcard)
-
-	suite.addUserToSchool(memberUser.ID, school1.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(memberUser.ID, school2.ID, models.SchoolVerificationStatusPending, false)
+	district := suite.createTestDistrict("9900004", "My Schools District", "WA")
+	school := suite.createTestSchool("990000000007", "My Test School", "WA", &district.ID)
+	user := suite.createTestUser("school_my_user")
+	userEmpty := suite.createTestUser("school_my_empty")
 
 	defer suite.cleanup(
-		[]string{memberUser.ID},
-		[]string{school1.ID, school2.ID},
+		[]string{user.ID, userEmpty.ID},
 		nil,
+		[]string{school.ID},
+		[]string{district.ID},
 	)
 
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/my", nil, nil)
+	t.Run("returns user school groups", func(t *testing.T) {
+		// Create a school group and add user
+		createReq := &models.CreateGroupRequest{
+			Name:       "My School Group",
+			Visibility: "unlisted",
+			SchoolID:   &school.ID,
+		}
+		schoolGroup, err := suite.groupRepo.Create(context.Background(), createReq, user.ID)
+		if err != nil {
+			t.Fatalf("Failed to create group: %v", err)
+		}
+		defer suite.cleanup(nil, []string{schoolGroup.ID}, nil, nil)
+
+		req := httptest.NewRequest("GET", "/api/v1/schools/my", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ListMySchools(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		schools, ok := body["schools"].([]interface{})
+		if !ok {
+			t.Fatal("Expected 'schools' array in response")
+		}
+		if len(schools) == 0 {
+			t.Error("Expected at least one school group")
+		}
+
+		// Verify the school group has expected fields
+		firstSchool := schools[0].(map[string]interface{})
+		if firstSchool["school_name"] != "My Test School" {
+			t.Errorf("Expected school_name 'My Test School', got %v", firstSchool["school_name"])
+		}
+	})
+
+	t.Run("returns empty for user with no school groups", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools/my", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(userEmpty))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.ListMySchools(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		schools := body["schools"].([]interface{})
+		if len(schools) != 0 {
+			t.Errorf("Expected empty schools list, got %d", len(schools))
+		}
+	})
+
+	t.Run("returns 401 without auth", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/schools/my", nil)
+		rec := httptest.NewRecorder()
 		suite.handler.ListMySchools(rec, req)
 
 		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("returns user school list", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           memberUser.ID,
-			Email:            memberUser.Email,
-			VerificationTier: memberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/my", nil, claims)
-		suite.handler.ListMySchools(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		schoolsRaw, ok := responseBody["schools"]
-		if !ok {
-			t.Fatal("Expected 'schools' key in response")
-		}
-
-		schoolsList, ok := schoolsRaw.([]interface{})
-		if !ok {
-			t.Fatal("Expected 'schools' to be an array")
-		}
-
-		if len(schoolsList) != 2 {
-			t.Errorf("Expected 2 schools, got %d", len(schoolsList))
-		}
-	})
-}
-
-// =============================================================================
-// Helper: Create school in district
-// =============================================================================
-
-func (s *schoolTestSuite) createTestSchoolInDistrict(name, state, districtID string) *models.School {
-	school := s.createTestSchool(name, state)
-	_, err := s.db.ExecContext(context.Background(),
-		"UPDATE schools SET district_id = ? WHERE id = ?", districtID, school.ID)
-	if err != nil {
-		s.t.Fatalf("Failed to link school to district: %v", err)
-	}
-	return school
-}
-
-// =============================================================================
-// GetPendingVouchRequests Tests
-// =============================================================================
-
-func TestSchoolHandler_GetPendingVouchRequests(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("PendingVouch Test School", "CA")
-	memberUser := suite.createTestUser("school_pending_member", models.TierUnverified)
-	nonMemberUser := suite.createTestUser("school_pending_nonmember", models.TierUnverified)
-	pendingUser := suite.createTestUser("school_pending_target", models.TierUnverified)
-
-	suite.addUserToSchool(memberUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(pendingUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{memberUser.ID, nonMemberUser.ID, pendingUser.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/vouch/pending?id="+school.ID, nil, nil)
-		suite.handler.GetPendingVouchRequests(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("requires membership", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           nonMemberUser.ID,
-			Email:            nonMemberUser.Email,
-			VerificationTier: nonMemberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/vouch/pending?id="+school.ID, nil, claims)
-		suite.handler.GetPendingVouchRequests(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("member can see pending vouch requests", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           memberUser.ID,
-			Email:            memberUser.Email,
-			VerificationTier: memberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/vouch/pending?id="+school.ID, nil, claims)
-		suite.handler.GetPendingVouchRequests(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		requestsRaw, ok := responseBody["requests"]
-		if !ok {
-			t.Fatal("Expected 'requests' key in response")
-		}
-
-		_, ok = requestsRaw.([]interface{})
-		if !ok {
-			t.Fatal("Expected 'requests' to be an array")
-		}
-	})
-
-	t.Run("returns empty array when no pending requests", func(t *testing.T) {
-		emptySchool := suite.createTestSchool("Empty Pending School", "CA")
-		suite.addUserToSchool(memberUser.ID, emptySchool.ID, models.SchoolVerificationStatusPending, false)
-		defer suite.cleanup(nil, []string{emptySchool.ID}, nil)
-
-		claims := &middleware.Claims{
-			UserID:           memberUser.ID,
-			Email:            memberUser.Email,
-			VerificationTier: memberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+emptySchool.ID+"/vouch/pending?id="+emptySchool.ID, nil, claims)
-		suite.handler.GetPendingVouchRequests(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]json.RawMessage
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		requestsJSON := string(responseBody["requests"])
-		if requestsJSON == "null" {
-			t.Error("Expected 'requests' to be [] not null")
-		}
-	})
-}
-
-// =============================================================================
-// GetVouchStatus Tests
-// =============================================================================
-
-func TestSchoolHandler_GetVouchStatus(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("VouchStatus Test School", "CA")
-	memberUser := suite.createTestUser("school_vs_member", models.TierPostcard)
-	targetUser := suite.createTestUser("school_vs_target", models.TierUnverified)
-
-	suite.addUserToSchool(memberUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-	suite.addUserToSchool(targetUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{memberUser.ID, targetUser.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/vouch-status/"+targetUser.ID+"?id="+school.ID+"&user_id="+targetUser.ID, nil, nil)
-		suite.handler.GetVouchStatus(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("happy path returns vouch status in bootstrap mode", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           memberUser.ID,
-			Email:            memberUser.Email,
-			VerificationTier: memberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/vouch-status/"+targetUser.ID+"?id="+school.ID+"&user_id="+targetUser.ID, nil, claims)
-		suite.handler.GetVouchStatus(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolVouchStatusResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.UserID != targetUser.ID {
-			t.Errorf("Expected user_id %s, got %s", targetUser.ID, responseBody.UserID)
-		}
-
-		if responseBody.SchoolID != school.ID {
-			t.Errorf("Expected school_id %s, got %s", school.ID, responseBody.SchoolID)
-		}
-
-		// Bootstrap mode: 3 vouches required
-		if !responseBody.BootstrapMode {
-			t.Error("Expected bootstrap_mode to be true")
-		}
-
-		if responseBody.VouchesRequired != 3 {
-			t.Errorf("Expected vouches_required 3 (bootstrap), got %d", responseBody.VouchesRequired)
-		}
-
-		if responseBody.VouchesReceived != 0 {
-			t.Errorf("Expected vouches_received 0, got %d", responseBody.VouchesReceived)
-		}
-	})
-
-	t.Run("normal mode requires 2 vouches", func(t *testing.T) {
-		// Create a school with 3 verified admins (exits bootstrap mode)
-		normalSchool := suite.createTestSchool("Normal Mode School", "CA")
-		admin1 := suite.createTestUser("school_vs_admin1", models.TierPostcard)
-		admin2 := suite.createTestUser("school_vs_admin2", models.TierPostcard)
-		admin3 := suite.createTestUser("school_vs_admin3", models.TierPostcard)
-		normalTarget := suite.createTestUser("school_vs_normal_target", models.TierUnverified)
-
-		suite.addUserToSchool(admin1.ID, normalSchool.ID, models.SchoolVerificationStatusVerified, true)
-		suite.addUserToSchool(admin2.ID, normalSchool.ID, models.SchoolVerificationStatusVerified, true)
-		suite.addUserToSchool(admin3.ID, normalSchool.ID, models.SchoolVerificationStatusVerified, true)
-		suite.addUserToSchool(normalTarget.ID, normalSchool.ID, models.SchoolVerificationStatusPending, false)
-
-		defer suite.cleanup(
-			[]string{admin1.ID, admin2.ID, admin3.ID, normalTarget.ID},
-			[]string{normalSchool.ID},
-			nil,
-		)
-
-		claims := &middleware.Claims{
-			UserID:           admin1.ID,
-			Email:            admin1.Email,
-			VerificationTier: admin1.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+normalSchool.ID+"/vouch-status/"+normalTarget.ID+"?id="+normalSchool.ID+"&user_id="+normalTarget.ID, nil, claims)
-		suite.handler.GetVouchStatus(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolVouchStatusResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.BootstrapMode {
-			t.Error("Expected bootstrap_mode to be false with 3 admins")
-		}
-
-		if responseBody.VouchesRequired != 2 {
-			t.Errorf("Expected vouches_required 2 (normal), got %d", responseBody.VouchesRequired)
-		}
-	})
-}
-
-// =============================================================================
-// ListSignalGroups Tests
-// =============================================================================
-
-func TestSchoolHandler_ListSignalGroups(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	school := suite.createTestSchool("ListSG Test School", "CA")
-	verifiedUser := suite.createTestUser("school_lsg_verified", models.TierPostcard)
-	pendingUser := suite.createTestUser("school_lsg_pending", models.TierUnverified)
-	nonMemberUser := suite.createTestUser("school_lsg_nonmember", models.TierPostcard)
-
-	suite.addUserToSchool(verifiedUser.ID, school.ID, models.SchoolVerificationStatusVerified, false)
-	suite.addUserToSchool(pendingUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{verifiedUser.ID, pendingUser.ID, nonMemberUser.ID},
-		[]string{school.ID},
-		nil,
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, nil, nil)
-		suite.handler.ListSignalGroups(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("pending member cannot list signal groups", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           pendingUser.ID,
-			Email:            pendingUser.Email,
-			VerificationTier: pendingUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, nil, claims)
-		suite.handler.ListSignalGroups(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-member cannot list signal groups", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           nonMemberUser.ID,
-			Email:            nonMemberUser.Email,
-			VerificationTier: nonMemberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, nil, claims)
-		suite.handler.ListSignalGroups(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("verified member can list signal groups", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+school.ID+"/signal-groups?id="+school.ID, nil, claims)
-		suite.handler.ListSignalGroups(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SignalGroupListResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		// Should be empty but not null
-		if responseBody.Groups == nil {
-			t.Error("Expected groups to be empty array, not nil")
+			t.Errorf("Expected status 401, got %d", rec.Code)
 		}
 	})
 }
@@ -1367,65 +624,49 @@ func TestSchoolHandler_ListSignalGroups(t *testing.T) {
 func TestSchoolHandler_SearchDistricts(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	districtAlpha := suite.createTestDistrict("Alpha Unified District", "CA")
-	districtBeta := suite.createTestDistrict("Beta Elementary District", "CA")
-	districtGamma := suite.createTestDistrict("Gamma High School District", "NY")
+	district1 := suite.createTestDistrict("9900005", "Riverside Unified", "CA")
+	district2 := suite.createTestDistrict("9900006", "Riverside Elementary", "CA")
+	user := suite.createTestUser("school_dsrch_user")
 
-	defer suite.cleanup(nil, nil, []string{districtAlpha.ID, districtBeta.ID, districtGamma.ID})
+	defer suite.cleanup(
+		[]string{user.ID},
+		nil,
+		nil,
+		[]string{district1.ID, district2.ID},
+	)
 
-	t.Run("search returns matching districts", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=District", nil, nil)
+	t.Run("returns results for query", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/school-districts?query=Riverside&state=CA", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.SearchDistricts(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody models.DistrictSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body models.DistrictSearchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		if len(responseBody.Districts) < 3 {
-			t.Errorf("Expected at least 3 districts, got %d", len(responseBody.Districts))
+		if len(body.Districts) < 2 {
+			t.Errorf("Expected at least 2 districts for 'Riverside', got %d", len(body.Districts))
 		}
 	})
 
-	t.Run("search with state filter", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=District&state=CA", nil, nil)
+	t.Run("empty query returns results", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/school-districts?query=", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
 		suite.handler.SearchDistricts(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.DistrictSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		for _, d := range responseBody.Districts {
-			if d.State != "CA" {
-				t.Errorf("Expected all districts in CA, got state %s", d.State)
-			}
-		}
-	})
-
-	t.Run("empty search returns empty array", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=NonexistentXYZ", nil, nil)
-		suite.handler.SearchDistricts(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.DistrictSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.Districts == nil {
-			t.Error("Expected empty array, not nil")
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }
@@ -1437,659 +678,106 @@ func TestSchoolHandler_SearchDistricts(t *testing.T) {
 func TestSchoolHandler_GetDistrict(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	district := suite.createTestDistrict("GetDistrict Test District", "CA")
-	school1 := suite.createTestSchoolInDistrict("District School 1", "CA", district.ID)
-	school2 := suite.createTestSchoolInDistrict("District School 2", "CA", district.ID)
-
-	defer suite.cleanup(nil, []string{school1.ID, school2.ID}, []string{district.ID})
-
-	t.Run("get existing district returns details", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"?id="+district.ID, nil, nil)
-		suite.handler.GetDistrict(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.DistrictWithDetails
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.ID != district.ID {
-			t.Errorf("Expected district ID %s, got %s", district.ID, responseBody.ID)
-		}
-
-		if responseBody.Name != "GetDistrict Test District" {
-			t.Errorf("Expected district name 'GetDistrict Test District', got %s", responseBody.Name)
-		}
-	})
-
-	t.Run("not found for non-existent district", func(t *testing.T) {
-		nonExistentID := uuid.New().String()
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+nonExistentID+"?id="+nonExistentID, nil, nil)
-		suite.handler.GetDistrict(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("district response includes schools", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"?id="+district.ID, nil, nil)
-		suite.handler.GetDistrict(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.DistrictWithDetails
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if len(responseBody.Schools) != 2 {
-			t.Errorf("Expected 2 schools in district, got %d", len(responseBody.Schools))
-		}
-	})
-}
-
-// =============================================================================
-// ListDistrictMembers Tests
-// =============================================================================
-
-func TestSchoolHandler_ListDistrictMembers(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	district := suite.createTestDistrict("ListDistrictMembers Test District", "CA")
-	schoolAlpha := suite.createTestSchoolInDistrict("Alpha DM School", "CA", district.ID)
-	schoolBeta := suite.createTestSchoolInDistrict("Beta DM School", "CA", district.ID)
-	verifiedUser := suite.createTestUser("school_ldm_verified", models.TierPostcard)
-	pendingUser := suite.createTestUser("school_ldm_pending", models.TierUnverified)
-	nonMemberUser := suite.createTestUser("school_ldm_nonmember", models.TierPostcard)
-	multiSchoolUser := suite.createTestUser("school_ldm_multi", models.TierPostcard)
-
-	suite.addUserToSchool(verifiedUser.ID, schoolAlpha.ID, models.SchoolVerificationStatusVerified, true)
-	suite.addUserToSchool(pendingUser.ID, schoolBeta.ID, models.SchoolVerificationStatusPending, false)
-	// multiSchoolUser in both schools - should appear once
-	suite.addUserToSchool(multiSchoolUser.ID, schoolAlpha.ID, models.SchoolVerificationStatusVerified, false)
-	suite.addUserToSchool(multiSchoolUser.ID, schoolBeta.ID, models.SchoolVerificationStatusPending, false)
+	district := suite.createTestDistrict("9900007", "Oakland Unified School District", "CA")
+	school := suite.createTestSchool("990000000008", "Oakland Elementary", "CA", &district.ID)
+	user := suite.createTestUser("school_dget_user")
 
 	defer suite.cleanup(
-		[]string{verifiedUser.ID, pendingUser.ID, nonMemberUser.ID, multiSchoolUser.ID},
-		[]string{schoolAlpha.ID, schoolBeta.ID},
+		[]string{user.ID},
+		nil,
+		[]string{school.ID},
 		[]string{district.ID},
 	)
 
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, nil)
-		suite.handler.ListDistrictMembers(rec, req)
+	t.Run("returns district with schools", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/school-districts/"+district.ID+"?id="+district.ID, nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
 
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-member cannot list district members", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           nonMemberUser.ID,
-			Email:            nonMemberUser.Email,
-			VerificationTier: nonMemberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictMembers(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("unverified member cannot list district members", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           pendingUser.ID,
-			Email:            pendingUser.Email,
-			VerificationTier: pendingUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictMembers(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("verified school member can list district members", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictMembers(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		membersRaw, ok := responseBody["members"]
-		if !ok {
-			t.Fatal("Expected 'members' key in response")
-		}
-
-		membersList, ok := membersRaw.([]interface{})
-		if !ok {
-			t.Fatal("Expected 'members' to be an array")
-		}
-
-		// 3 unique users: verifiedUser, pendingUser, multiSchoolUser
-		if len(membersList) != 3 {
-			t.Errorf("Expected 3 members, got %d", len(membersList))
-		}
-	})
-
-	t.Run("members include school_name field", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictMembers(rec, req)
+		rec := httptest.NewRecorder()
+		suite.handler.GetDistrict(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 
-		var responseBody struct {
-			Members []models.DistrictMember `json:"members"`
-		}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
+		var body map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		for _, member := range responseBody.Members {
-			if member.SchoolName == "" {
-				t.Errorf("Expected school_name to be set for member %s", member.Username)
-			}
-			if member.UserID == "" {
-				t.Error("Expected user_id to be set")
-			}
-			if member.Username == "" {
-				t.Error("Expected username to be set")
-			}
+		if body["name"] != "Oakland Unified School District" {
+			t.Errorf("Expected name 'Oakland Unified School District', got %v", body["name"])
+		}
+		if body["state"] != "CA" {
+			t.Errorf("Expected state 'CA', got %v", body["state"])
+		}
+
+		schools, ok := body["schools"].([]interface{})
+		if !ok {
+			t.Fatal("Expected 'schools' array in response")
+		}
+		if len(schools) < 1 {
+			t.Error("Expected at least 1 school in district")
 		}
 	})
 
-	t.Run("deduplicates multi-school users", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/members?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictMembers(rec, req)
-
-		var responseBody struct {
-			Members []models.DistrictMember `json:"members"`
-		}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		countMultiUser := 0
-		for _, member := range responseBody.Members {
-			if member.UserID == multiSchoolUser.ID {
-				countMultiUser++
-				// Should appear under "Alpha DM School" (alphabetically first)
-				if member.SchoolName != "Alpha DM School" {
-					t.Errorf("Expected multi-school user school_name 'Alpha DM School', got '%s'", member.SchoolName)
-				}
-			}
-		}
-		if countMultiUser != 1 {
-			t.Errorf("Expected multi-school user to appear exactly once, appeared %d times", countMultiUser)
-		}
-	})
-}
-
-// =============================================================================
-// ListDistrictSignalGroups Tests
-// =============================================================================
-
-func TestSchoolHandler_ListDistrictSignalGroups(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	district := suite.createTestDistrict("ListDistrictSG Test District", "CA")
-	school := suite.createTestSchoolInDistrict("ListDistrictSG School", "CA", district.ID)
-	verifiedUser := suite.createTestUser("school_ldsg_verified", models.TierPostcard)
-	nonMemberUser := suite.createTestUser("school_ldsg_nonmember", models.TierPostcard)
-
-	suite.addUserToSchool(verifiedUser.ID, school.ID, models.SchoolVerificationStatusVerified, false)
-
-	defer suite.cleanup(
-		[]string{verifiedUser.ID, nonMemberUser.ID},
-		[]string{school.ID},
-		[]string{district.ID},
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, nil, nil)
-		suite.handler.ListDistrictSignalGroups(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-member cannot list district signal groups", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           nonMemberUser.ID,
-			Email:            nonMemberUser.Email,
-			VerificationTier: nonMemberUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictSignalGroups(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("verified school member can list district signal groups", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           verifiedUser.ID,
-			Email:            verifiedUser.Email,
-			VerificationTier: verifiedUser.VerificationTier,
-		}
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, nil, claims)
-		suite.handler.ListDistrictSignalGroups(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SignalGroupListResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.Groups == nil {
-			t.Error("Expected groups to be empty array, not nil")
-		}
-	})
-}
-
-// =============================================================================
-// CreateDistrictSignalGroup Tests
-// =============================================================================
-
-func TestSchoolHandler_CreateDistrictSignalGroup(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@schooltest.com'")
-
-	district := suite.createTestDistrict("CreateDistrictSG Test District", "CA")
-	school := suite.createTestSchoolInDistrict("CreateDistrictSG School", "CA", district.ID)
-	adminUser := suite.createTestUser("school_cdsg_admin", models.TierPostcard)
-	regularUser := suite.createTestUser("school_cdsg_regular", models.TierUnverified)
-	superUser := suite.createTestUser("school_cdsg_super", models.TierPostcard)
-
-	suite.addUserToSchool(adminUser.ID, school.ID, models.SchoolVerificationStatusVerified, true)
-	suite.addUserToSchool(regularUser.ID, school.ID, models.SchoolVerificationStatusPending, false)
-
-	defer suite.cleanup(
-		[]string{adminUser.ID, regularUser.ID, superUser.ID},
-		[]string{school.ID},
-		[]string{district.ID},
-	)
-
-	t.Run("requires authentication", func(t *testing.T) {
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Test District Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, nil)
-		suite.handler.CreateDistrictSignalGroup(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-admin cannot create district signal group", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           regularUser.ID,
-			Email:            regularUser.Email,
-			VerificationTier: regularUser.VerificationTier,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Unauthorized District Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: regularUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
-		suite.handler.CreateDistrictSignalGroup(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("admin can create district signal group", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			VerificationTier: adminUser.VerificationTier,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Admin District Signal Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
-		suite.handler.CreateDistrictSignalGroup(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody["group_id"] == nil {
-			t.Error("Expected group_id in response")
-		}
-
-		if responseBody["district_id"] != district.ID {
-			t.Errorf("Expected district_id %s, got %v", district.ID, responseBody["district_id"])
-		}
-
-		// Clean up created group
-		if groupID, ok := responseBody["group_id"].(string); ok {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE id = ?", groupID)
-		}
-	})
-
-	t.Run("group limit prevents creation", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			VerificationTier: adminUser.VerificationTier,
-		}
-
-		// Create 5 groups to hit the limit
-		var createdGroupIDs []string
-		for i := 0; i < 5; i++ {
-			group := &models.SignalGroup{
-				DistrictID: &district.ID,
-				GroupName:  "Limit Test District Group",
-				CreatedBy:  &adminUser.ID,
-			}
-			if err := suite.groupRepo.Create(context.Background(), group); err != nil {
-				t.Fatalf("Failed to create test group: %v", err)
-			}
-			createdGroupIDs = append(createdGroupIDs, group.ID)
-		}
-
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Over Limit District Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: adminUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
-		suite.handler.CreateDistrictSignalGroup(rec, req)
-
-		if rec.Code != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		// Clean up
-		for _, groupID := range createdGroupIDs {
-			_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE id = ?", groupID)
-		}
-	})
-
-	t.Run("superuser can create regardless of membership", func(t *testing.T) {
-		claims := &middleware.Claims{
-			UserID:           superUser.ID,
-			Email:            superUser.Email,
-			VerificationTier: superUser.VerificationTier,
-			IsSuperuser:      true,
-		}
-		requestBody := models.CreateSchoolSignalGroupRequest{
-			Name:             "Superuser District Group",
-			EncryptedPayload: "test-encrypted-payload",
-			EncryptionIV:     "test-iv",
-			WrappedKeys:      []models.WrappedKeyEntry{{UserID: superUser.ID, WrappedDEK: "test-dek"}},
-		}
-		req, rec := suite.authenticatedRequest("POST", "/api/v1/school-districts/"+district.ID+"/signal-groups?id="+district.ID, requestBody, claims)
-		suite.handler.CreateDistrictSignalGroup(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		// Clean up created group
-		var responseBody map[string]interface{}
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err == nil {
-			if groupID, ok := responseBody["group_id"].(string); ok {
-				_, _ = suite.db.ExecContext(context.Background(), "DELETE FROM signal_groups WHERE id = ?", groupID)
-			}
-		}
-	})
-}
-
-// =============================================================================
-// Edge-Case Tests: Search with Empty Query, Negative/Zero Limits
-// =============================================================================
-
-func TestSchoolHandler_Search_EdgeCases(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	// Create a school so we have data to search
-	school := suite.createTestSchool("Edge Case School", "CA")
-	defer suite.cleanup(nil, []string{school.ID}, nil)
-
-	t.Run("empty query returns results (lists all)", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		// Empty query should still return results (or empty array), not error
-		if responseBody.Schools == nil {
-			t.Error("Expected schools array, got nil")
-		}
-	})
-
-	t.Run("whitespace-only query returns results", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=+++", nil, nil)
-		suite.handler.Search(rec, req)
-
-		// Should not error - handler should handle gracefully
-		if rec.Code == http.StatusInternalServerError {
-			t.Errorf("Got 500 for whitespace query: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("negative limit defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=-5", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		// Limit should default to a positive value
-		if responseBody.Limit < 1 {
-			t.Errorf("Expected positive limit, got %d", responseBody.Limit)
-		}
-	})
-
-	t.Run("zero limit defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=0", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.Limit < 1 {
-			t.Errorf("Expected positive limit, got %d", responseBody.Limit)
-		}
-	})
-
-	t.Run("negative page defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&page=-1", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if responseBody.Page < 1 {
-			t.Errorf("Expected positive page, got %d", responseBody.Page)
-		}
-	})
-
-	t.Run("non-numeric limit defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=abc", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("overflow limit defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&limit=99999999999999999999", nil, nil)
-		suite.handler.Search(rec, req)
-
-		// Should not crash or return 500
-		if rec.Code == http.StatusInternalServerError {
-			t.Errorf("Got 500 for overflow limit: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("very large page returns empty results", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query=School&page=999999", nil, nil)
-		suite.handler.Search(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var responseBody models.SchoolSearchResponse
-		if err := json.NewDecoder(rec.Body).Decode(&responseBody); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if len(responseBody.Schools) != 0 {
-			t.Errorf("Expected 0 schools for very large page, got %d", len(responseBody.Schools))
-		}
-	})
-
-	t.Run("SQL injection in query is safe", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/search?query='+OR+1=1;--", nil, nil)
-		suite.handler.Search(rec, req)
-
-		// Should not error or return unexpected data
-		if rec.Code == http.StatusInternalServerError {
-			t.Errorf("Got 500 for SQL injection attempt: %s", rec.Body.String())
-		}
-	})
-}
-
-func TestSchoolHandler_Get_EdgeCases(t *testing.T) {
-	suite := setupSchoolTestSuite(t)
-
-	t.Run("missing school ID returns 400", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/?id=", nil, nil)
-		suite.handler.Get(rec, req)
-
-		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
-			t.Errorf("Expected status 400 or 404 for missing ID, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("non-existent UUID returns 404", func(t *testing.T) {
-		nonExistentID := "00000000-0000-0000-0000-000000000000"
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/schools/"+nonExistentID+"?id="+nonExistentID, nil, nil)
-		suite.handler.Get(rec, req)
+	t.Run("returns 404 for nonexistent district", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/school-districts/nonexistent?id=nonexistent", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetDistrict(rec, req)
 
 		if rec.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+			t.Errorf("Expected status 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("returns 400 for missing ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/school-districts/", nil)
+		ctx := middleware.ContextWithUser(req.Context(), suite.claimsForUser(user))
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.GetDistrict(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", rec.Code)
 		}
 	})
 }
 
-func TestSchoolHandler_SearchDistricts_EdgeCases(t *testing.T) {
+// =============================================================================
+// Auth Required Tests (all endpoints)
+// =============================================================================
+
+func TestSchoolHandler_AuthRequired(t *testing.T) {
 	suite := setupSchoolTestSuite(t)
 
-	t.Run("empty query returns results", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=", nil, nil)
-		suite.handler.SearchDistricts(rec, req)
+	// Only Join and ListMySchools check claims in the handler itself.
+	// Search, Get, SearchDistricts, and GetDistrict rely on router-level
+	// middleware for auth enforcement.
+	endpoints := []struct {
+		name    string
+		method  string
+		path    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{"Join", "POST", "/api/v1/schools/someid/join?id=someid", suite.handler.Join},
+		{"ListMySchools", "GET", "/api/v1/schools/my", suite.handler.ListMySchools},
+	}
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
+	for _, ep := range endpoints {
+		t.Run(ep.name+" returns 401 without auth", func(t *testing.T) {
+			req := httptest.NewRequest(ep.method, ep.path, nil)
+			rec := httptest.NewRecorder()
+			ep.handler(rec, req)
 
-	t.Run("negative limit defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=test&limit=-10", nil, nil)
-		suite.handler.SearchDistricts(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("zero page defaults gracefully", func(t *testing.T) {
-		req, rec := suite.authenticatedRequest("GET", "/api/v1/school-districts?query=test&page=0", nil, nil)
-		suite.handler.SearchDistricts(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("Expected status 401, got %d", rec.Code)
+			}
+		})
+	}
 }

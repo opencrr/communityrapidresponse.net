@@ -19,14 +19,16 @@ import (
 // RegionHandler handles region endpoints
 type RegionHandler struct {
 	regionRepo    *database.RegionRepository
+	userRepo      *database.UserRepository
 	mapboxService services.MapboxServiceInterface
 	auditRepo     *database.AuditRepository
 }
 
 // NewRegionHandler creates a new region handler
-func NewRegionHandler(regionRepo *database.RegionRepository, mapboxService services.MapboxServiceInterface, auditRepo *database.AuditRepository) *RegionHandler {
+func NewRegionHandler(regionRepo *database.RegionRepository, userRepo *database.UserRepository, mapboxService services.MapboxServiceInterface, auditRepo *database.AuditRepository) *RegionHandler {
 	return &RegionHandler{
 		regionRepo:    regionRepo,
+		userRepo:      userRepo,
 		mapboxService: mapboxService,
 		auditRepo:     auditRepo,
 	}
@@ -43,8 +45,26 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If ?mine=true, return only the user's own regions regardless of superuser status
+	if r.URL.Query().Get("mine") == "true" {
+		regions, err := h.regionRepo.ListForUser(r.Context(), claims.UserID)
+		if err != nil {
+			writeServerError(w, r, err, "Failed to list user regions", "regions", "list_for_user")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"regions": regions})
+		return
+	}
+
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "region", "list_regions")
+		return
+	}
+
 	// Superusers can see all regions and use filters
-	if claims.IsSuperuser {
+	if isSuperuser {
 		// Parse query parameters
 		var regionType *models.RegionType
 		if t := r.URL.Query().Get("type"); t != "" {
@@ -104,43 +124,6 @@ func (h *RegionHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.RegionListResponse{Regions: regions})
 }
 
-// ListAdmin handles GET /api/v1/communities/admin
-// Returns only regions where the user is an admin
-func (h *RegionHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	// Must have both postcard and vouch verification (or be superuser)
-	if !claims.IsSuperuser && (!claims.PostcardVerified || !claims.VouchVerified) {
-		writeError(w, http.StatusForbidden, "forbidden", "Admin access required (both postcard and vouch verification needed)")
-		return
-	}
-
-	// Superusers see all regions
-	if claims.IsSuperuser {
-		regions, err := h.regionRepo.List(r.Context(), nil, nil)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to list regions", "region", "list_regions")
-			return
-		}
-		writeJSON(w, http.StatusOK, models.RegionListResponse{Regions: regions})
-		return
-	}
-
-	// Regular admins see only regions they're admin of
-	regions, err := h.regionRepo.ListAdminRegions(r.Context(), claims.UserID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list admin regions", "region", "list_regions")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, models.RegionListResponse{Regions: regions})
-}
-
 // Get handles GET /api/v1/communities/:id
 // Superusers can see any region; regular users can only see regions they belong to
 func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -158,10 +141,17 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "region", "get_region")
+		return
+	}
+
 	// Determine userID for filtering sub-regions
 	// Superusers see all sub-regions (empty userID), regular users see only their accessible sub-regions
 	filterUserID := ""
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		// Check membership first for regular users
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, id)
 		if err != nil {
@@ -197,7 +187,7 @@ func (h *RegionHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	// Set membership flag — regular users already passed the membership check above;
 	// for superusers, check explicitly
-	if claims.IsSuperuser {
+	if isSuperuser {
 		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, id)
 		if err != nil {
 			slog.WarnContext(r.Context(), "failed to check superuser membership", "error", err)
@@ -219,8 +209,15 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "region", "create_region")
+		return
+	}
+
 	// Debug logging for region creation authorization
-	slog.DebugContext(r.Context(), "region create authorization", "user_id", claims.UserID, "is_superuser", claims.IsSuperuser, "postcard_verified", claims.PostcardVerified, "vouch_verified", claims.VouchVerified, "tier", claims.VerificationTier)
+	slog.DebugContext(r.Context(), "region create authorization", "user_id", claims.UserID, "is_superuser", isSuperuser, "postcard_verified", claims.PostcardVerified, "vouch_verified", claims.VouchVerified, "tier", claims.VerificationTier)
 
 	// Require at least Tier 1 (postcard verified)
 	if claims.VerificationTier < models.TierPostcard {
@@ -245,6 +242,11 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
+		return
+	}
+
 	// Convert geometry to GeoJSON string
 	geoJSON, err := json.Marshal(req.Geometry)
 	if err != nil {
@@ -253,7 +255,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate that the region is within US bounds (superusers can create regions anywhere)
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		withinUS, err := h.regionRepo.IsGeometryWithinUS(r.Context(), string(geoJSON))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "validation_error", "Invalid geometry - could not validate location")
@@ -267,7 +269,7 @@ func (h *RegionHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Validate that the region is within a region the user has admin access to
 	// Superusers bypass this check and can create regions anywhere
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		contained, err := h.regionRepo.IsContainedInAdminRegion(r.Context(), claims.UserID, string(geoJSON))
 		if err != nil {
 			writeServerError(w, r, err, "Failed to validate region boundary", "region", "admin_containment_check")
@@ -378,8 +380,15 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "region", "update_region")
+		return
+	}
+
 	// Check if user is admin of this region (or superuser)
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, id)
 		if err != nil {
 			writeServerError(w, r, err, "Failed to check permissions", "region", "update_region")
@@ -399,6 +408,11 @@ func (h *RegionHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "Community name is required")
+		return
+	}
+
+	if validationMsg := validateStruct(&req); validationMsg != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", validationMsg)
 		return
 	}
 
@@ -430,8 +444,15 @@ func (h *RegionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check superuser from DB for authorization
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "region", "delete_region")
+		return
+	}
+
 	// Only superusers can delete communities
-	if !claims.IsSuperuser {
+	if !isSuperuser {
 		writeError(w, http.StatusForbidden, "forbidden", "Only superusers can delete communities")
 		return
 	}
@@ -820,108 +841,3 @@ func (h *RegionHandler) validateTypeParentHierarchy(r *http.Request, regionType 
 	return nil
 }
 
-// ListMembers handles GET /api/v1/communities/:id/members
-// Returns region members with email stripped (member-visible, not admin-only)
-func (h *RegionHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	regionID := getPathParam(r, "id")
-	if regionID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "Community ID required")
-		return
-	}
-
-	// Check caller is a member of the region (or superuser)
-	if !claims.IsSuperuser {
-		isMember, err := h.regionRepo.IsUserInRegion(r.Context(), claims.UserID, regionID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check membership", "region", "list_members")
-			return
-		}
-		if !isMember {
-			writeError(w, http.StatusForbidden, "not_member", "You must be a member of this community")
-			return
-		}
-	}
-
-	users, err := h.regionRepo.GetUsersInRegion(r.Context(), regionID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to list members", "region", "list_members")
-		return
-	}
-
-	// Strip email from response — only expose id, username, is_admin
-	type memberResponse struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
-		IsAdmin  bool   `json:"is_admin"`
-	}
-
-	members := make([]memberResponse, len(users))
-	for i, u := range users {
-		members[i] = memberResponse{
-			ID:       u.ID,
-			Username: u.Username,
-			IsAdmin:  u.IsAdmin,
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"members": members,
-	})
-}
-
-// ListUsersInRegion handles GET /api/v1/communities/:id/users
-// Returns all verified users in the specified region
-// Only admins of the region (or superusers) can access this
-func (h *RegionHandler) ListUsersInRegion(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.GetUserFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
-	}
-
-	regionID := getPathParam(r, "id")
-	if regionID == "" {
-		writeError(w, http.StatusBadRequest, "missing_parameter", "Community ID required")
-		return
-	}
-
-	// Check if region exists
-	_, err := h.regionRepo.GetByID(r.Context(), regionID)
-	if errors.Is(err, database.ErrRegionNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", "Community not found")
-		return
-	}
-	if err != nil {
-		writeServerError(w, r, err, "Failed to get region", "region", "list_users")
-		return
-	}
-
-	// Check if user is admin of this region (or superuser)
-	if !claims.IsSuperuser {
-		isAdmin, err := h.regionRepo.IsUserAdmin(r.Context(), claims.UserID, regionID)
-		if err != nil {
-			writeServerError(w, r, err, "Failed to check permissions", "region", "list_users")
-			return
-		}
-		if !isAdmin {
-			writeError(w, http.StatusForbidden, "forbidden", "You must be an admin of this community to view users")
-			return
-		}
-	}
-
-	users, err := h.regionRepo.GetUsersInRegion(r.Context(), regionID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to get users", "region", "list_users")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"users": users,
-	})
-}

@@ -16,13 +16,8 @@ import loginPage from './pages/login.js';
 import registerPage from './pages/register.js';
 import mfaSetupPage from './pages/mfaSetup.js';
 import mfaVerifyPage from './pages/mfaVerify.js';
-import dashboardPage from './pages/dashboard.js';
-import regionsPage from './pages/regions.js';
 import regionDetailPage from './pages/regionDetail.js';
 import verificationPage from './pages/verification.js';
-import vouchPage from './pages/vouch.js';
-import groupsPage from './pages/groups.js';
-import meshtasticPage from './pages/meshtastic.js';
 import verifyEmailPage from './pages/verifyEmail.js';
 import createRegionPage from './pages/admin/createRegion.js';
 import manageGroupsPage from './pages/admin/manageGroups.js';
@@ -30,14 +25,8 @@ import manageMeshtasticPage from './pages/admin/manageMeshtastic.js';
 import manageUsersPage from './pages/admin/manageUsers.js';
 import auditLogsPage from './pages/admin/auditLogs.js';
 import secretProposalsPage from './pages/admin/secretProposals.js';
-import blocklistProposalsPage from './pages/admin/blocklistProposals.js';
-import deletionProposalsPage from './pages/admin/deletionProposals.js';
-import userReportsPage from './pages/admin/userReports.js';
-import blockedAddressesPage from './pages/admin/blockedAddresses.js';
-import membershipRequestsPage from './pages/admin/membershipRequests.js';
 import helpPage from './pages/help.js';
 import aboutPage from './pages/about.js';
-import membershipPage from './pages/membership.js';
 import profilePage from './pages/profile.js';
 import forgotPasswordPage from './pages/forgotPassword.js';
 import resetPasswordPage from './pages/resetPassword.js';
@@ -46,6 +35,14 @@ import schoolDetailPage from './pages/schoolDetail.js';
 import districtDetailPage from './pages/districtDetail.js';
 import privacyPage from './pages/privacy.js';
 import termsPage from './pages/terms.js';
+import groupDetailPage from './pages/groupDetail.js';
+import groupCreatePage from './pages/groupCreate.js';
+import groupManagePage from './pages/groupManage.js';
+import myGroupsPage from './pages/myGroups.js';
+import discoveryPage from './pages/discovery.js';
+import connectionsListPage from './pages/connectionsList.js';
+import connectionDetailPage from './pages/connectionDetail.js';
+import groupInvitationsPage from './pages/groupInvitations.js';
 
 // Route definitions
 // - auth: requires login
@@ -67,28 +64,29 @@ const routes = [
     { path: '/verify-email', page: verifyEmailPage, auth: false },
     { path: '/mfa/setup', page: mfaSetupPage, auth: false, mfaFlow: true },
     { path: '/mfa/verify', page: mfaVerifyPage, auth: false, mfaFlow: true },
-    { path: '/dashboard', page: dashboardPage, auth: true },
-    { path: '/communities', page: regionsPage, auth: true },
-    { path: '/communities/:id', page: regionDetailPage, auth: true },
+    { path: '/dashboard', redirect: '/groups' },
+    { path: '/communities', redirect: '/profile' },
+    { path: '/communities/:id', page: regionDetailPage, auth: true, requiresSuperuser: true },
     { path: '/schools', page: schoolsPage, auth: true },
     { path: '/schools/:id', page: schoolDetailPage, auth: true },
     { path: '/school-districts/:id', page: districtDetailPage, auth: true },
     { path: '/verify', page: verificationPage, auth: true },
-    { path: '/vouch', page: vouchPage, auth: true },
-    { path: '/groups', page: groupsPage, auth: true, requiresReadAccess: true },
-    { path: '/meshtastic', page: meshtasticPage, auth: true, requiresReadAccess: true },
+    { path: '/groups', page: myGroupsPage, auth: true },
+    { path: '/groups/browse', redirect: '/discover' },
+    { path: '/groups/create', page: groupCreatePage, auth: true },
+    { path: '/groups/:id', page: groupDetailPage, auth: true },
+    { path: '/groups/:id/manage', page: groupManagePage, auth: true },
+    { path: '/discover', page: discoveryPage, auth: true },
+    { path: '/connections', page: connectionsListPage, auth: true },
+    { path: '/connections/:id', page: connectionDetailPage, auth: true },
+    { path: '/invitations', page: groupInvitationsPage, auth: true },
+    { path: '/meshtastic', redirect: '/groups' },
     { path: '/admin/communities', page: createRegionPage, auth: true, requiresAdmin: true },
     { path: '/admin/groups', page: manageGroupsPage, auth: true, requiresAdmin: true },
     { path: '/admin/meshtastic', page: manageMeshtasticPage, auth: true, requiresAdmin: true },
     { path: '/admin/proposals', page: secretProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/blocklist-proposals', page: blocklistProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/deletion-proposals', page: deletionProposalsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/reports', page: userReportsPage, auth: true, requiresAdmin: true },
-    { path: '/admin/membership-requests', page: membershipRequestsPage, auth: true, requiresAdmin: true },
     { path: '/admin/users', page: manageUsersPage, auth: true, requiresSuperuser: true },
-    { path: '/admin/blocked-addresses', page: blockedAddressesPage, auth: true, requiresSuperuser: true },
     { path: '/admin/audit-logs', page: auditLogsPage, auth: true, requiresSuperuser: true },
-    { path: '/membership', page: membershipPage, auth: true },
 ];
 
 let currentPage = null;
@@ -181,6 +179,12 @@ async function handleRouteChange() {
 
     const { route, params } = match;
 
+    // Handle redirects
+    if (route.redirect) {
+        navigate(route.redirect);
+        return;
+    }
+
     // Check authentication
     if (route.auth && !isAuthenticated()) {
         navigate('/login');
@@ -189,7 +193,7 @@ async function handleRouteChange() {
 
     // Check guest-only routes
     if (route.guestOnly && isAuthenticated()) {
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 
@@ -201,14 +205,13 @@ async function handleRouteChange() {
 
     // Check admin requirement (needs BOTH postcard AND vouch verification)
     if (route.requiresAdmin && !isAdmin()) {
-        // Redirect to dashboard with message about needing both verifications
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 
     // Check superuser requirement (database-created accounts only)
     if (route.requiresSuperuser && !isSuperuser()) {
-        navigate('/dashboard');
+        navigate('/groups');
         return;
     }
 

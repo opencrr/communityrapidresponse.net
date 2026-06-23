@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Community Rapid Response - Connect with your neighbors through verified Signal group chats">
+    <meta name="description" content="Community Rapid Response - Connect with neighbors through Signal groups where members have verified addresses in the area">
     <title>Community Rapid Response</title>
 
     <!-- Favicon -->
-    <link rel="icon" href="/static/images/favicon.ico?v=c229873" sizes="any">
-    <link rel="icon" href="/static/images/favicon.svg?v=c229873" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png?v=c229873">
+    <link rel="icon" href="/static/images/favicon.ico?v=5134021" sizes="any">
+    <link rel="icon" href="/static/images/favicon.svg?v=5134021" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png?v=5134021">
 
     <!-- Mapbox GL JS -->
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
@@ -17,33 +17,14 @@
 
     <!-- Mapbox Draw Plugin -->
     <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.css" rel="stylesheet">
-    <script>window.MAPBOX_ACCESS_TOKEN = 'pk.eyJ1IjoiaWNlcmFwaWRyZXNwb25zZSIsImEiOiJjbWwxaDQzcW8wN3l0M2RvZmM4NzI3MmpvIn0.npz9qIXYLYC5qZo3dWY5qA';</script>
+    <script src="/static/js/config.js"></script>
     <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.4.3/mapbox-gl-draw.js"></script>
 
     <!-- Application Styles -->
-    <link rel="stylesheet" href="/static/dist/main-NKZTINQR.css">
+    <link rel="stylesheet" href="/static/dist/main-AOFRSWXK.css">
 </head>
 <body>
-    <script>
-    (function() {
-        var host = window.location.hostname;
-        var label;
-        if (host === 'staging.communityrapidresponse.net') {
-            label = 'STAGING';
-        } else if (host === 'communityrapidresponse.net') {
-            label = null;
-        } else {
-            label = 'DEV';
-        }
-        if (label) {
-            var banner = document.createElement('div');
-            banner.id = 'env-banner';
-            banner.textContent = label;
-            banner.style.cssText = 'position:sticky;top:0;z-index:9999;background:#d32f2f;color:#fff;text-align:center;padding:4px 0;font-weight:700;font-size:13px;letter-spacing:2px;';
-            document.body.prepend(banner);
-        }
-    })();
-    </script>
+    <script src="/static/js/env-banner.js"></script>
     <div id="app">
         <!-- Header will be injected here -->
         <header id="header"></header>
@@ -62,6 +43,6 @@
     </div>
 
     <!-- Application Scripts -->
-    <script type="module" src="/static/dist/app-CUS4SL6Z.js"></script>
+    <script type="module" src="/static/dist/app-LTI5QWET.js"></script>
 </body>
 </html>

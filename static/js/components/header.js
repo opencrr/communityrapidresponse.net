@@ -30,16 +30,19 @@ export function renderHeader() {
                 </a>
 
                 <div class="header__nav" id="main-nav">
-                    <a href="/" class="header__nav-link" data-link>Home</a>
-                    <a href="/communities" class="header__nav-link" data-link>Communities</a>
-                    <a href="/schools" class="header__nav-link" data-link>Schools</a>
                     <a href="/help" class="header__nav-link" data-link>Help</a>
                     <a href="/about" class="header__nav-link" data-link>About</a>
                     ${authenticated ? `
-                        <a href="/dashboard" class="header__nav-link" data-link>Dashboard</a>
-                        ${userHasReadAccess ? `<a href="/groups" class="header__nav-link" data-link>Groups</a>` : ''}
-                        ${userIsSuperuser ? `<a href="/admin/users" class="header__nav-link" data-link>Users</a>` : ''}
-                    ` : ''}
+                        <a href="/groups" class="header__nav-link" data-link>My Groups</a>
+                        <a href="/discover" class="header__nav-link" data-link>Discover</a>
+                        <a href="/connections" class="header__nav-link" data-link>Connections</a>
+                        <a href="/schools" class="header__nav-link" data-link>Schools</a>
+                        <a href="/profile" class="header__nav-link" data-link>Profile</a>
+                        ${userIsSuperuser ? `<a href="/admin/users" class="header__nav-link" data-link>Admin</a>` : ''}
+                    ` : `
+                        <a href="/login" class="header__nav-link" data-link>Login</a>
+                        <a href="/register" class="header__nav-link" data-link>Register</a>
+                    `}
                     <div class="header__mobile-actions">
                         ${authenticated ? `
                             <div class="header__user">

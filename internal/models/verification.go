@@ -104,37 +104,6 @@ type Vouch struct {
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 }
 
-// VouchRequest represents request to vouch for a user
-// UserIdentifier can be a user ID (UUID), email, or username
-// RegionID is optional - if not provided, the user's pending vouch region is used
-type VouchRequest struct {
-	VouchedUserID  string `json:"vouched_user_id"` // Deprecated: use UserIdentifier
-	UserIdentifier string `json:"user_id"`         // Can be UUID, email, or username
-	RegionID       string `json:"region_id"`       // Optional: auto-detected from pending request
-}
-
-// VouchResponse represents response after vouching
-type VouchResponse struct {
-	VouchID         string `json:"vouch_id"`
-	VouchesNeeded   int    `json:"vouches_needed"`
-	TotalVouches    int    `json:"total_vouches"`
-	BootstrapMode   bool   `json:"bootstrap_mode"`
-	AdminCount      int    `json:"admin_count"`
-	VouchesRequired int    `json:"vouches_required"`
-}
-
-// VouchStatusResponse represents vouch status for a user
-type VouchStatusResponse struct {
-	UserID          string        `json:"user_id"`
-	RegionID        string        `json:"region_id"`
-	VouchesReceived int           `json:"vouches_received"`
-	VouchesNeeded   int           `json:"vouches_needed"`
-	Vouchers        []VoucherInfo `json:"vouchers"`
-	BootstrapMode   bool          `json:"bootstrap_mode"`
-	AdminCount      int           `json:"admin_count"`
-	VouchesRequired int           `json:"vouches_required"`
-}
-
 // VoucherInfo represents info about a voucher
 type VoucherInfo struct {
 	UserID    string    `json:"user_id"`
@@ -149,25 +118,3 @@ const (
 	UserRegionStatusPending  UserRegionStatus = "pending"
 	UserRegionStatusVerified UserRegionStatus = "verified"
 )
-
-// VouchVerificationRequest represents request to initiate vouch verification
-// User provides their address to identify their community; address is never stored
-type VouchVerificationRequest struct {
-	Address Address `json:"address" validate:"required"`
-}
-
-// VouchVerificationResponse represents response after requesting vouch verification
-type VouchVerificationResponse struct {
-	UserRegionID     string        `json:"user_region_id"`
-	RegionID         string        `json:"region_id"`
-	RegionName       string        `json:"region_name"`
-	Status           string        `json:"status"`
-	VouchesNeeded    int           `json:"vouches_needed"`
-	Message          string        `json:"message"`
-	BootstrapMode    bool          `json:"bootstrap_mode,omitempty"`
-	AdminCount       int           `json:"admin_count,omitempty"`
-	VouchesRequired  int           `json:"vouches_required,omitempty"`
-	PrivacyNotice    string        `json:"privacy_notice"`
-	DetectedBoundary *BoundaryInfo `json:"detected_boundary,omitempty"`
-	Region           *RegionInfo   `json:"region,omitempty"`
-}

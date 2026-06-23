@@ -158,7 +158,7 @@ async function handleTOTPVerify(event) {
         }
 
         toast.success('Welcome back!');
-        navigate('/dashboard');
+        navigate('/groups');
     } catch (error) {
         let errorMessage = 'Failed to verify code. Please try again.';
 
@@ -218,7 +218,7 @@ async function handleBackupVerify(event) {
         }
 
         toast.success('Welcome back!');
-        navigate('/dashboard');
+        navigate('/groups');
     } catch (error) {
         let errorMessage = 'Failed to verify backup code. Please try again.';
 

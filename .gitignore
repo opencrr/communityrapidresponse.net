@@ -64,9 +64,17 @@ build-errors.log
 # Compiled seed schools binary
 /seed-schools
 
+# Compiled seed fixtures binary
+/seed-fixtures
+
 # Security audit and scan reports (sensitive - never commit)
 SECURITY_AUDIT.md
 PII_SCAN_REPORT.md
+
+# Node / Playwright
+node_modules/
+test-results/
+playwright-report/
 
 # Certificates and keys
 *.pem

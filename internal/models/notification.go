@@ -13,10 +13,7 @@ const (
 	NotificationTypeVerificationComplete NotificationType = "verification_complete"
 	NotificationTypeVouchReceived        NotificationType = "vouch_received"
 	NotificationTypeVouchComplete        NotificationType = "vouch_complete"
-	NotificationTypeBlocklistProposal    NotificationType = "blocklist_proposal"
-	NotificationTypeDeletionProposal     NotificationType = "deletion_proposal"
 	NotificationTypeInviteLinkProposal   NotificationType = "invite_link_proposal"
-	NotificationTypeSubRegionInvitation  NotificationType = "sub_region_invitation"
 	NotificationTypeRekeyingNeeded       NotificationType = "rekeying_needed"
 )
 
@@ -91,15 +88,6 @@ const (
 	AuditActionSuperuserUserSearch  = "superuser_user_search"
 	AuditActionSuperuserUserDelete  = "superuser_user_delete"
 
-	// Sub-region membership actions
-	AuditActionSubRegionRequestCreated  = "sub_region_request_created"
-	AuditActionSubRegionRequestVoted    = "sub_region_request_voted"
-	AuditActionSubRegionRequestApproved = "sub_region_request_approved"
-	AuditActionSubRegionRequestExpired  = "sub_region_request_expired"
-	AuditActionSubRegionInviteSent      = "sub_region_invite_sent"
-	AuditActionSubRegionInviteAccepted  = "sub_region_invite_accepted"
-	AuditActionSubRegionInviteDeclined  = "sub_region_invite_declined"
-
 	// Password actions
 	AuditActionPasswordChanged        = "password_changed"
 	AuditActionPasswordResetRequested = "password_reset_requested"
@@ -117,11 +105,6 @@ const (
 	// Account deletion
 	AuditActionAccountDeleted = "account_deleted"
 
-	// User reports
-	AuditActionReportCreated           = "report_created"
-	AuditActionReportDismissed         = "report_dismissed"
-	AuditActionReportResolvedBlocklist = "report_resolved_blocklist"
-
 	// Encryption key actions
 	AuditActionEncryptionKeyRotated = "encryption_key_rotated"
 	AuditActionSecretRekeyed        = "secret_rekeyed"
@@ -130,6 +113,34 @@ const (
 	AuditActionMeshtasticChannelCreated = "meshtastic_channel_created"
 	AuditActionMeshtasticChannelUpdated = "meshtastic_channel_updated"
 	AuditActionMeshtasticChannelDeleted = "meshtastic_channel_deleted"
+
+	// Group actions
+	AuditActionGroupCreated           = "group_created"
+	AuditActionGroupUpdated           = "group_updated"
+	AuditActionGroupDeleted           = "group_deleted"
+	AuditActionGroupMemberRemoved     = "group_member_removed"
+	AuditActionGroupInviteLinkCreated = "group_invite_link_created"
+	AuditActionGroupInvitationSent    = "group_invitation_sent"
+	AuditActionGroupMemberAdded           = "group_member_added"
+	AuditActionGroupTrustVouchCreated        = "group_trust_vouch_created"
+	AuditActionGroupSignalGroupCreated       = "group_signal_group_created"
+	AuditActionGroupResourceCreated          = "group_resource_created"
+	AuditActionGroupResourceUpdated          = "group_resource_updated"
+	AuditActionGroupResourceDeleted          = "group_resource_deleted"
+	AuditActionGroupBlocked                  = "group_blocked"
+	AuditActionGroupUnblocked                = "group_unblocked"
+	AuditActionTopicBoardPosted              = "topic_board_posted"
+	AuditActionTopicBoardRemoved             = "topic_board_removed"
+
+	// Connection actions
+	AuditActionConnectionProposed         = "connection_proposed"
+	AuditActionConnectionAccepted         = "connection_accepted"
+	AuditActionConnectionLeft             = "connection_left"
+	AuditActionConnectionChatProposed     = "connection_chat_proposed"
+	AuditActionConnectionChatVoted        = "connection_chat_voted"
+	AuditActionConnectionChatApproved         = "connection_chat_approved"
+	AuditActionConnectionResourceShared       = "connection_resource_shared"
+	AuditActionConnectionResourceUnshared     = "connection_resource_unshared"
 
 	// Account lockout
 	AuditActionAccountLocked          = "account_locked"

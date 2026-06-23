@@ -532,3 +532,241 @@ func TestPostgridService_APIError(t *testing.T) {
 		t.Error("Expected error for API failure")
 	}
 }
+
+func TestPostgridService_ValidateAddress_CorrectedStatus(t *testing.T) {
+	// Postgrid returns "corrected" for addresses that are deliverable but were adjusted
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"status":          "corrected",
+				"addressType":     "residential",
+				"cmra":            false,
+				"line1":           "123 MAIN STREET",
+				"city":            "SAN FRANCISCO",
+				"provinceOrState": "CA",
+				"postalOrZip":     "94102-1234",
+				"country":         "us",
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "test_api_key",
+		AddressVerificationBaseURL: server.URL,
+		PrintMailAPIKey:            "",
+		PrintMailBaseURL:           "https://api.postgrid.com/print-mail/v1",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	result, err := service.ValidateAddress(context.Background(), address)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !result.IsDeliverable {
+		t.Error("Expected corrected address to be deliverable")
+	}
+	if result.Deliverability != "corrected" {
+		t.Errorf("Expected deliverability 'corrected', got '%s'", result.Deliverability)
+	}
+	// Standardized address should reflect the corrected values
+	if result.StandardizedAddress.Line1 != "123 MAIN STREET" {
+		t.Errorf("Expected standardized line1 '123 MAIN STREET', got '%s'", result.StandardizedAddress.Line1)
+	}
+	if result.StandardizedAddress.PostalCode != "94102-1234" {
+		t.Errorf("Expected corrected postal code '94102-1234', got '%s'", result.StandardizedAddress.PostalCode)
+	}
+}
+
+func TestPostgridService_ValidateAddress_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "test_api_key",
+		AddressVerificationBaseURL: server.URL,
+		PrintMailAPIKey:            "",
+		PrintMailBaseURL:           "https://api.postgrid.com/print-mail/v1",
+	})
+
+	address := &models.Address{
+		Line1: "123 Main St",
+		City:  "San Francisco",
+		State: "CA",
+	}
+
+	_, err := service.ValidateAddress(context.Background(), address)
+	if err == nil {
+		t.Error("Expected error for malformed JSON response")
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("Expected 'failed to parse response' error, got: %v", err)
+	}
+}
+
+func TestPostgridService_SendPostcard_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": "bad request"}`))
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "",
+		AddressVerificationBaseURL: "https://api.postgrid.com/v1",
+		PrintMailAPIKey:            "test_print_api_key",
+		PrintMailBaseURL:           server.URL,
+		ReturnName:                 "Test Org",
+		ReturnLine1:                "123 Test St",
+		ReturnCity:                 "Test City",
+		ReturnState:                "CA",
+		ReturnZip:                  "94102",
+		ReturnCountry:              "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	_, err := service.SendPostcard(context.Background(), address, "ABC123", "REF04")
+	if err == nil {
+		t.Error("Expected error for API failure")
+	}
+	if !strings.Contains(err.Error(), "API error") {
+		t.Errorf("Expected 'API error' in error message, got: %v", err)
+	}
+}
+
+func TestPostgridService_SendPostcard_InvalidAPIKeyFallback(t *testing.T) {
+	// When Postgrid returns invalid_api_key, the service falls back to mock mode
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error": "invalid_api_key"}`))
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "",
+		AddressVerificationBaseURL: "https://api.postgrid.com/v1",
+		PrintMailAPIKey:            "test_print_api_key",
+		PrintMailBaseURL:           server.URL,
+		ReturnName:                 "Test Org",
+		ReturnLine1:                "123 Test St",
+		ReturnCity:                 "Test City",
+		ReturnState:                "CA",
+		ReturnZip:                  "94102",
+		ReturnCountry:              "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	requestID, err := service.SendPostcard(context.Background(), address, "ABC123", "REF05")
+	if err != nil {
+		t.Fatalf("Expected fallback to mock mode, got error: %v", err)
+	}
+	if requestID != "mock_postgrid_ABC123" {
+		t.Errorf("Expected mock request ID, got '%s'", requestID)
+	}
+}
+
+func TestPostgridService_SendPostcard_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{not valid json`))
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "",
+		AddressVerificationBaseURL: "https://api.postgrid.com/v1",
+		PrintMailAPIKey:            "test_print_api_key",
+		PrintMailBaseURL:           server.URL,
+		ReturnName:                 "Test Org",
+		ReturnLine1:                "123 Test St",
+		ReturnCity:                 "Test City",
+		ReturnState:                "CA",
+		ReturnZip:                  "94102",
+		ReturnCountry:              "US",
+	})
+
+	address := &models.Address{
+		Line1:      "123 Main St",
+		City:       "San Francisco",
+		State:      "CA",
+		PostalCode: "94102",
+	}
+
+	_, err := service.SendPostcard(context.Background(), address, "ABC123", "REF06")
+	if err == nil {
+		t.Error("Expected error for malformed JSON response")
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("Expected 'failed to parse response' error, got: %v", err)
+	}
+}
+
+func TestPostgridService_ValidateAddress_ErrorReasonExtraction(t *testing.T) {
+	// Test that specific error reasons are extracted from Postgrid's error response
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"status":      "failed",
+				"addressType": "",
+				"cmra":        false,
+				"errors": map[string][]string{
+					"city": {"City not found in state"},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	service := NewPostgridService(&config.PostgridConfig{
+		AddressVerificationAPIKey:  "test_api_key",
+		AddressVerificationBaseURL: server.URL,
+		PrintMailAPIKey:            "",
+		PrintMailBaseURL:           "https://api.postgrid.com/print-mail/v1",
+	})
+
+	result, err := service.ValidateAddress(context.Background(), &models.Address{
+		Line1:      "123 Main St",
+		City:       "Faketown",
+		State:      "CA",
+		PostalCode: "00000",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.IsDeliverable {
+		t.Error("Expected address to be undeliverable")
+	}
+	if !strings.Contains(result.Reason, "City not found") {
+		t.Errorf("Expected reason to contain 'City not found', got '%s'", result.Reason)
+	}
+}

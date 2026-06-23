@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,12 +116,9 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
-	groupRepo := database.NewSignalGroupRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	// Create JWT auth
@@ -152,15 +150,10 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 		"http://localhost:3000",
 		nil,
 	)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
-		nil, verifyRepo, vouchRepo, userRepo, regionRepo,
+		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
-		false, 30, // Bootstrap cooldown disabled for tests
-	)
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
 	)
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -171,27 +164,15 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-
-	// Create blocklist proposal handler
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		schoolHandler, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -401,9 +382,11 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Use a sanitized name for usernames (no spaces)
+			safeName := strings.ReplaceAll(tc.name, " ", "_")
 			// Register first user
 			req1 := map[string]string{
-				"username": "normtest1_" + tc.name,
+				"username": "normtest1_" + safeName,
 				"email":    tc.firstEmail,
 				"password": "testpassword123",
 			}
@@ -421,7 +404,7 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 
 			// Try to register second user
 			req2 := map[string]string{
-				"username": "normtest2_" + tc.name,
+				"username": "normtest2_" + safeName,
 				"email":    tc.secondEmail,
 				"password": "testpassword123",
 			}
@@ -433,11 +416,9 @@ func TestE2E_Registration_RejectsDuplicateNormalizedEmail(t *testing.T) {
 			_ = json.NewDecoder(resp2.Body).Decode(&body2)
 
 			if tc.shouldReject {
-				if resp2.StatusCode != http.StatusConflict {
-					t.Errorf("Expected status 409 (conflict), got %d", resp2.StatusCode)
-				}
-				if body2["error"] != "account_exists" {
-					t.Errorf("Expected error 'account_exists', got '%s'", body2["error"])
+				// Anti-enumeration: duplicate accounts now return 201 with success-like response
+				if resp2.StatusCode != http.StatusCreated {
+					t.Errorf("Expected status 201 (anti-enumeration), got %d", resp2.StatusCode)
 				}
 				suite.cleanup(userID1)
 			} else {

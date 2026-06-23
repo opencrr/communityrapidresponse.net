@@ -1,0 +1,23 @@
+{
+  "name": "communityrapidresponse.net",
+  "version": "1.0.0",
+  "description": "A secure platform that enables communities to connect within specific geographic regions through verified Signal group chats. The system proves residency before granting access, maintaining privacy through ephemeral verification data.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com-opencrr:opencrr/communityrapidresponse.net.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

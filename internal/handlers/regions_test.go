@@ -66,7 +66,7 @@ func setupRegionTestSuite(t *testing.T) *RegionTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	userRepo := database.NewUserRepository(db)
 	mockMapbox := mocks.NewMockMapboxService()
-	handler := NewRegionHandler(regionRepo, mockMapbox, nil)
+	handler := NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
@@ -791,136 +791,6 @@ func TestRegionHandler_Get_SuperuserCanAccessAny(t *testing.T) {
 
 		if rec.Code != http.StatusOK {
 			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-}
-
-// Tests for Sub-Regions Geographic Containment
-
-// =============================================================================
-// ListAdmin Tests - Admin Regions with Hierarchy
-// =============================================================================
-
-func TestRegionHandler_ListAdmin(t *testing.T) {
-	suite := setupRegionTestSuite(t)
-
-	// Create admin user (needs both postcard and vouch verification)
-	adminUser, _ := suite.createTestUser("listadminuser", models.TierPostcard, false)
-	ctx := context.Background()
-	_, _ = suite.db.ExecContext(ctx, "UPDATE users SET postcard_verified = TRUE, vouch_verified = TRUE WHERE id = ?", adminUser.ID)
-
-	// Create non-admin user
-	regularUser, _ := suite.createTestUser("listregularuser", models.TierPostcard, false)
-
-	// Create region hierarchy: state -> county -> city
-	stateRegion := suite.createTestRegion("Admin Test State", models.RegionTypeState, nil)
-	countyRegion := suite.createTestRegion("Admin Test County", models.RegionTypeCounty, &stateRegion.ID)
-	cityRegion := suite.createTestRegion("Admin Test City", models.RegionTypeCity, &countyRegion.ID)
-
-	// Make user admin of city only
-	_ = suite.regionRepo.AddUserToRegion(ctx, adminUser.ID, cityRegion.ID, true)
-
-	defer suite.cleanup([]string{adminUser.ID, regularUser.ID}, []string{cityRegion.ID, countyRegion.ID, stateRegion.ID})
-
-	t.Run("admin sees regions with hierarchy propagation", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/communities/admin", nil)
-
-		claims := &middleware.Claims{
-			UserID:           adminUser.ID,
-			Email:            adminUser.Email,
-			Username:         adminUser.Username,
-			VerificationTier: adminUser.VerificationTier,
-			PostcardVerified: true,
-			VouchVerified:    true,
-			IsSuperuser:      false,
-		}
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-
-		rec := httptest.NewRecorder()
-		suite.handler.ListAdmin(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var body models.RegionListResponse
-		_ = json.NewDecoder(rec.Body).Decode(&body)
-
-		// Should see all 3 regions (city direct admin, county parent, state grandparent)
-		if len(body.Regions) != 3 {
-			t.Errorf("Expected 3 regions, got %d", len(body.Regions))
-		}
-
-		// Verify all expected regions are present
-		regionIDs := make(map[string]bool)
-		for _, r := range body.Regions {
-			regionIDs[r.ID] = true
-		}
-
-		if !regionIDs[cityRegion.ID] {
-			t.Error("Expected city region in response")
-		}
-		if !regionIDs[countyRegion.ID] {
-			t.Error("Expected county region in response (parent)")
-		}
-		if !regionIDs[stateRegion.ID] {
-			t.Error("Expected state region in response (grandparent)")
-		}
-	})
-
-	t.Run("non-admin user gets forbidden", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/communities/admin", nil)
-
-		claims := &middleware.Claims{
-			UserID:           regularUser.ID,
-			Email:            regularUser.Email,
-			Username:         regularUser.Username,
-			VerificationTier: regularUser.VerificationTier,
-			PostcardVerified: true,
-			VouchVerified:    false, // Not vouch verified
-			IsSuperuser:      false,
-		}
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-
-		rec := httptest.NewRecorder()
-		suite.handler.ListAdmin(rec, req)
-
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("Expected status 403, got %d", rec.Code)
-		}
-	})
-
-	t.Run("superuser sees all regions", func(t *testing.T) {
-		superuser, _ := suite.createTestUser("listadminsuperuser", models.TierPostcard, true)
-		defer suite.cleanup([]string{superuser.ID}, []string{})
-
-		req := httptest.NewRequest("GET", "/api/v1/communities/admin", nil)
-
-		claims := &middleware.Claims{
-			UserID:           superuser.ID,
-			Email:            superuser.Email,
-			Username:         superuser.Username,
-			VerificationTier: superuser.VerificationTier,
-			IsSuperuser:      true,
-		}
-		ctx := middleware.ContextWithUser(req.Context(), claims)
-		req = req.WithContext(ctx)
-
-		rec := httptest.NewRecorder()
-		suite.handler.ListAdmin(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var body models.RegionListResponse
-		_ = json.NewDecoder(rec.Body).Decode(&body)
-
-		// Superuser should see at least the 3 test regions
-		if len(body.Regions) < 3 {
-			t.Errorf("Expected at least 3 regions for superuser, got %d", len(body.Regions))
 		}
 	})
 }
@@ -1679,4 +1549,688 @@ func abs(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// =============================================================================
+// Create Region Tests
+// =============================================================================
+
+func TestRegionHandler_Create_StateRegion(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createstatesu", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("superuser can create state region without parent", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name": "Test State Creation",
+			"type": models.RegionTypeState,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]string
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if body["region_id"] == "" {
+			t.Error("Expected region_id in response")
+		}
+		if body["name"] != "Test State Creation" {
+			t.Errorf("Expected name 'Test State Creation', got '%s'", body["name"])
+		}
+
+		// Cleanup created region
+		suite.cleanup([]string{}, []string{body["region_id"]})
+	})
+}
+
+func TestRegionHandler_Create_CountyWithStateParent(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createcountysu", models.TierPostcard, true)
+	stateRegion := suite.createTestRegion("County Parent State", models.RegionTypeState, nil)
+	defer suite.cleanup([]string{superuser.ID}, []string{stateRegion.ID})
+
+	t.Run("superuser can create county with state parent", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name":             "Test County",
+			"type":             models.RegionTypeCounty,
+			"parent_region_id": stateRegion.ID,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]string
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if body["region_id"] == "" {
+			t.Error("Expected region_id in response")
+		}
+
+		suite.cleanup([]string{}, []string{body["region_id"]})
+	})
+}
+
+func TestRegionHandler_Create_CityWithCountyParent(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createcitysu", models.TierPostcard, true)
+	stateRegion := suite.createTestRegion("City Parent State", models.RegionTypeState, nil)
+	countyRegion := suite.createTestRegion("City Parent County", models.RegionTypeCounty, &stateRegion.ID)
+	defer suite.cleanup([]string{superuser.ID}, []string{countyRegion.ID, stateRegion.ID})
+
+	t.Run("superuser can create city with county parent", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name":             "Test City",
+			"type":             models.RegionTypeCity,
+			"parent_region_id": countyRegion.ID,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]string
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		suite.cleanup([]string{}, []string{body["region_id"]})
+	})
+}
+
+func TestRegionHandler_Create_NonPostcardVerifiedForbidden(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	unverifiedUser, _ := suite.createTestUser("createunverified", models.TierVouched, false)
+	defer suite.cleanup([]string{unverifiedUser.ID}, []string{})
+
+	t.Run("non-postcard-verified user gets 403", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name": "Forbidden Region",
+			"type": models.RegionTypeState,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           unverifiedUser.ID,
+			Email:            unverifiedUser.Email,
+			Username:         unverifiedUser.Username,
+			VerificationTier: unverifiedUser.VerificationTier,
+			IsSuperuser:      false,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Expected status 403, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestRegionHandler_Create_MissingName(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createmissingname", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("missing name returns 400", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"type": models.RegionTypeState,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			if msg != "Community name is required" {
+				t.Errorf("Expected 'Community name is required', got '%s'", msg)
+			}
+		}
+	})
+}
+
+func TestRegionHandler_Create_MissingGeometry(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createmissinggeom", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("missing geometry returns 400", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name": "No Geometry Region",
+			"type": models.RegionTypeState,
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			if msg != "Community geometry is required" {
+				t.Errorf("Expected 'Community geometry is required', got '%s'", msg)
+			}
+		}
+	})
+}
+
+func TestRegionHandler_Create_InvalidParentHierarchy(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createbadhier", models.TierPostcard, true)
+	stateRegion := suite.createTestRegion("Bad Hierarchy State", models.RegionTypeState, nil)
+	defer suite.cleanup([]string{superuser.ID}, []string{stateRegion.ID})
+
+	t.Run("county with non-state parent returns 400", func(t *testing.T) {
+		// Create a city first (wrong parent type for county)
+		cityRegion := suite.createTestRegion("Wrong Parent City", models.RegionTypeCity, nil)
+		defer suite.cleanup([]string{}, []string{cityRegion.ID})
+
+		reqBody := map[string]interface{}{
+			"name":             "Bad County",
+			"type":             models.RegionTypeCounty,
+			"parent_region_id": cityRegion.ID,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			if msg != "county regions must have a state parent" {
+				t.Errorf("Expected 'county regions must have a state parent', got '%s'", msg)
+			}
+		}
+	})
+
+	t.Run("state with parent returns 400", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name":             "Bad State",
+			"type":             models.RegionTypeState,
+			"parent_region_id": stateRegion.ID,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			if msg != "state regions cannot have a parent region" {
+				t.Errorf("Expected 'state regions cannot have a parent region', got '%s'", msg)
+			}
+		}
+	})
+}
+
+func TestRegionHandler_Create_CreatorAddedAsAdmin(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("createadminadd", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("creator is added as admin of new region", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"name": "Admin Verify Region",
+			"type": models.RegionTypeState,
+			"geometry": map[string]interface{}{
+				"type":        "Polygon",
+				"coordinates": [][][]float64{{{-122.5, 37.7}, {-122.4, 37.7}, {-122.4, 37.8}, {-122.5, 37.8}, {-122.5, 37.7}}},
+			},
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/regions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.Create(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]string
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		regionID := body["region_id"]
+		defer suite.cleanup([]string{}, []string{regionID})
+
+		// Verify the creator is an admin of the region
+		isAdmin, err := suite.regionRepo.IsUserAdmin(context.Background(), superuser.ID, regionID)
+		if err != nil {
+			t.Fatalf("Failed to check admin status: %v", err)
+		}
+		if !isAdmin {
+			t.Error("Expected creator to be admin of the new region")
+		}
+	})
+}
+
+// =============================================================================
+// Update Region Additional Tests
+// =============================================================================
+
+func TestRegionHandler_Update_NonexistentRegion(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("updatenonexist", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("nonexistent region returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/regions/nonexistent-id", bytes.NewReader([]byte(`{"name":"New Name"}`)))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		q := req.URL.Query()
+		q.Set("id", "nonexistent-uuid-that-does-not-exist")
+		req.URL.RawQuery = q.Encode()
+
+		rec := httptest.NewRecorder()
+		suite.handler.Update(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestRegionHandler_Update_EmptyName(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("updateemptyname", models.TierPostcard, true)
+	region := suite.createTestRegion("Empty Name Test", models.RegionTypeCity, nil)
+	defer suite.cleanup([]string{superuser.ID}, []string{region.ID})
+
+	t.Run("empty name returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/regions/"+region.ID, bytes.NewReader([]byte(`{"name":""}`)))
+		req.Header.Set("Content-Type", "application/json")
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		q := req.URL.Query()
+		q.Set("id", region.ID)
+		req.URL.RawQuery = q.Encode()
+
+		rec := httptest.NewRecorder()
+		suite.handler.Update(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			if msg != "Community name is required" {
+				t.Errorf("Expected 'Community name is required', got '%s'", msg)
+			}
+		}
+	})
+}
+
+// =============================================================================
+// Delete Region Additional Tests
+// =============================================================================
+
+func TestRegionHandler_Delete_NonexistentRegion(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("deletenonexist", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("nonexistent region returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/regions/nonexistent-id", nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		q := req.URL.Query()
+		q.Set("id", "nonexistent-uuid-that-does-not-exist")
+		req.URL.RawQuery = q.Encode()
+
+		rec := httptest.NewRecorder()
+		suite.handler.Delete(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// =============================================================================
+// Get Region Additional Tests
+// =============================================================================
+
+func TestRegionHandler_Get_NonexistentRegion(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	superuser, _ := suite.createTestUser("getnonexist", models.TierPostcard, true)
+	defer suite.cleanup([]string{superuser.ID}, []string{})
+
+	t.Run("nonexistent region returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/regions/nonexistent-id", nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		q := req.URL.Query()
+		q.Set("id", "nonexistent-uuid-that-does-not-exist")
+		req.URL.RawQuery = q.Encode()
+
+		rec := httptest.NewRecorder()
+		suite.handler.Get(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// =============================================================================
+// List Region ?mine=true Tests
+// =============================================================================
+
+func TestRegionHandler_List_MineFilter(t *testing.T) {
+	suite := setupRegionTestSuite(t)
+
+	// Create superuser with membership in one region
+	superuser, _ := suite.createTestUser("listminesu", models.TierPostcard, true)
+
+	memberRegion := suite.createTestRegion("Mine Region", models.RegionTypeCity, nil)
+	otherRegion := suite.createTestRegion("Not Mine Region", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, superuser.ID, memberRegion.ID, false)
+
+	defer suite.cleanup([]string{superuser.ID}, []string{memberRegion.ID, otherRegion.ID})
+
+	t.Run("mine=true returns only user regions even for superuser", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/regions?mine=true", nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.List(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		regions, ok := body["regions"].([]interface{})
+		if !ok {
+			t.Fatal("Expected regions array in response")
+		}
+
+		foundMemberRegion := false
+		foundOtherRegion := false
+		for _, r := range regions {
+			reg := r.(map[string]interface{})
+			if reg["id"] == memberRegion.ID {
+				foundMemberRegion = true
+			}
+			if reg["id"] == otherRegion.ID {
+				foundOtherRegion = true
+			}
+		}
+
+		if !foundMemberRegion {
+			t.Error("Expected to find user's member region with mine=true")
+		}
+		if foundOtherRegion {
+			t.Error("Should not see non-member regions with mine=true")
+		}
+	})
+
+	t.Run("without mine=true superuser sees all regions", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/regions", nil)
+
+		claims := &middleware.Claims{
+			UserID:           superuser.ID,
+			Email:            superuser.Email,
+			Username:         superuser.Username,
+			VerificationTier: superuser.VerificationTier,
+			IsSuperuser:      true,
+		}
+		ctx := middleware.ContextWithUser(req.Context(), claims)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		suite.handler.List(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(rec.Body).Decode(&body)
+
+		regions, ok := body["regions"].([]interface{})
+		if !ok {
+			t.Fatal("Expected regions array in response")
+		}
+
+		foundOtherRegion := false
+		for _, r := range regions {
+			reg := r.(map[string]interface{})
+			if reg["id"] == otherRegion.ID {
+				foundOtherRegion = true
+			}
+		}
+
+		if !foundOtherRegion {
+			t.Error("Superuser should see all regions without mine=true filter")
+		}
+	})
 }

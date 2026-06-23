@@ -30,9 +30,7 @@ type NotificationE2ETestSuite struct {
 	userRepo            *database.UserRepository
 	regionRepo          *database.RegionRepository
 	verifyRepo          *database.VerificationRepository
-	vouchRepo           *database.VouchRepository
 	groupRepo           *database.SignalGroupRepository
-	membershipRepo      *database.MembershipRepository
 	notificationQueue   *database.DatabaseQueue
 	notificationService *services.NotificationService
 	emailTracker        *emailTracker
@@ -121,12 +119,10 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	userRepo := database.NewUserRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
-	vouchRepo := database.NewVouchRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
-	membershipRepo := database.NewMembershipRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	schoolVouchRepo := database.NewSchoolVouchRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
 	// Create notification queue and service
@@ -150,18 +146,12 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 
 	// Create handlers with notification service
 	authHandler := handlers.NewAuthHandler(userRepo, jwtAuth)
-	regionHandler := handlers.NewRegionHandler(regionRepo, mockMapbox, nil)
+	regionHandler := handlers.NewRegionHandler(regionRepo, userRepo, mockMapbox, nil)
 	verificationHandler := handlers.NewVerificationHandler(
-		nil, verifyRepo, vouchRepo, userRepo, regionRepo,
+		nil, verifyRepo, userRepo, regionRepo,
 		mockPostgrid, mockMapbox, nil,
-		false, 30, // Bootstrap cooldown disabled for tests
 	)
 	verificationHandler.SetNotificationService(notificationService)
-
-	consensusConfig := &config.ConsensusConfig{VotePercent: 50, VoteFloor: 3}
-	signalGroupHandler := handlers.NewSignalGroupHandler(
-		nil, groupRepo, nil, regionRepo, nil,
-	)
 
 	adminHandler := handlers.NewAdminHandler(userRepo, regionRepo, nil)
 
@@ -172,28 +162,15 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 	}
 	mfaService, _ := services.NewMFAService(mfaConfig)
 	mfaHandler := handlers.NewMFAHandler(nil, userRepo, mfaService, jwtAuth, false, nil)
-	membershipHandler := handlers.NewMembershipHandler(nil, membershipRepo, regionRepo, userRepo, nil)
-	membershipHandler.SetNotificationService(notificationService)
-
-	// Create blocklist proposal handler
-	blocklistConfig := &config.BlocklistConfig{
-		AddressBlocklistDuration:  2 * 365 * 24 * time.Hour,
-		ProposalRateLimitPerMonth: 5,
-	}
-	blocklistProposalRepo := database.NewBlocklistProposalRepository(db, blocklistConfig)
-	blocklistProposalHandler := handlers.NewBlocklistProposalHandler(
-		nil, blocklistProposalRepo, regionRepo, userRepo, nil, consensusConfig, blocklistConfig,
-	)
 
 	schoolHandler := handlers.NewSchoolHandler(
-		db, schoolRepo, districtRepo, schoolVouchRepo, groupRepo, nil,
-		userRepo, auditRepo, nil, consensusConfig, false, 0,
+		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
 	// Create router
 	router := handlers.NewRouter(
-		authHandler, mfaHandler, regionHandler, signalGroupHandler, verificationHandler, adminHandler,
-		membershipHandler, blocklistProposalHandler, nil, schoolHandler, nil, nil, nil, nil, jwtAuth, nil, nil, nil,
+		authHandler, mfaHandler, regionHandler, verificationHandler, adminHandler,
+		schoolHandler, nil, nil, nil, jwtAuth, nil, nil, nil,
 		[]string{"*"}, nil,
 	)
 	handler := router.Setup()
@@ -228,9 +205,7 @@ func SetupNotificationE2ETest(t *testing.T) *NotificationE2ETestSuite {
 		userRepo:            userRepo,
 		regionRepo:          regionRepo,
 		verifyRepo:          verifyRepo,
-		vouchRepo:           vouchRepo,
 		groupRepo:           groupRepo,
-		membershipRepo:      membershipRepo,
 		notificationQueue:   notificationQueue,
 		notificationService: notificationService,
 		emailTracker:        emailTracker,
@@ -529,7 +504,7 @@ func TestE2E_PostcardVerification_TriggersNotification(t *testing.T) {
 	_, err := suite.db.ExecContext(ctx, `
 		INSERT INTO verification_requests (id, user_id, verification_code, status, region_id, postgrid_request_id, boundary_type, boundary_name, boundary_state, created_at, expires_at)
 		VALUES (?, ?, ?, 'pending', ?, 'test-postgrid-id', 'neighborhood', 'Test Neighborhood', 'NY', NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY))
-	`, "e2e-verify-request", user.ID, "123456", region.ID)
+	`, "e2e-verify-request", user.ID, "a1b2c3d4e5f6a7b8", region.ID)
 	if err != nil {
 		t.Fatalf("Failed to create verification request: %v", err)
 	}
@@ -538,7 +513,7 @@ func TestE2E_PostcardVerification_TriggersNotification(t *testing.T) {
 
 	// Verify the code
 	resp := suite.request("POST", "/api/v1/verification/postcard/verify", map[string]interface{}{
-		"verification_code": "123456",
+		"verification_code": "a1b2c3d4e5f6a7b8",
 	}, token)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -580,159 +555,6 @@ func TestE2E_PostcardVerification_TriggersNotification(t *testing.T) {
 		t.Error("Expected email to be sent to verified user")
 	}
 }
-
-func TestE2E_VouchReceived_TriggersNotification(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create a region
-	region := suite.createRegion("e2e-vouch-region", "Vouch Region", nil)
-
-	// Create voucher (fully verified admin)
-	voucherToken, voucher := suite.createUser("e2e-voucher", "voucher@e2e.test", "voucher", true, true, false)
-	suite.addUserToRegion(voucher.ID, region.ID, true)
-
-	// Create vouchee (postcard verified, requesting vouch)
-	_, vouchee := suite.createUser("e2e-vouchee", "vouchee@e2e.test", "vouchee", true, false, false)
-
-	// Create pending vouch request
-	_, err := suite.db.ExecContext(ctx, `
-		INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at)
-		VALUES (UUID(), ?, ?, FALSE, 'pending', NOW())
-	`, vouchee.ID, region.ID)
-	if err != nil {
-		t.Fatalf("Failed to create pending user_region: %v", err)
-	}
-
-	suite.emailTracker.Reset()
-
-	// Voucher vouches for vouchee
-	resp := suite.request("POST", "/api/v1/verification/vouch", map[string]interface{}{
-		"vouched_user_id": vouchee.ID,
-		"region_id":       region.ID,
-	}, voucherToken)
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		t.Fatalf("Expected status 201, got %d: %v", resp.StatusCode, body)
-	}
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check vouch_received notification was queued
-	var count int
-	err = suite.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'vouch_received'
-	`, vouchee.ID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count notifications: %v", err)
-	}
-
-	if count == 0 {
-		t.Error("Expected vouch_received notification to be queued")
-	}
-
-	// Check email was sent to vouchee
-	emails := suite.emailTracker.GetSent()
-	found := false
-	for _, email := range emails {
-		if email.To == vouchee.Email {
-			found = true
-			if !contains(email.Subject, "Vouch") {
-				t.Errorf("Email subject should mention vouch: %s", email.Subject)
-			}
-		}
-	}
-	if !found {
-		t.Error("Expected email to be sent to vouchee")
-	}
-}
-
-func TestE2E_VouchComplete_TriggersNotification(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create region
-	region := suite.createRegion("e2e-vouch-complete-region", "Vouch Complete Region", nil)
-
-	// Create 3 admin vouchers (so region exits bootstrap mode - only 2 vouches needed)
-	voucherTokens := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		token, voucher := suite.createUser(
-			fmt.Sprintf("e2e-voucher-complete-%d", i),
-			fmt.Sprintf("vouchercomplete%d@e2e.test", i),
-			fmt.Sprintf("vouchercomplete%d", i),
-			true, true, false,
-		)
-		voucherTokens[i] = token
-		suite.addUserToRegion(voucher.ID, region.ID, true)
-	}
-
-	// Create vouchee
-	_, vouchee := suite.createUser("e2e-vouchee-complete", "voucheecomplete@e2e.test", "voucheecomplete", true, false, false)
-
-	// Create pending vouch request
-	_, err := suite.db.ExecContext(ctx, `
-		INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at)
-		VALUES (UUID(), ?, ?, FALSE, 'pending', NOW())
-	`, vouchee.ID, region.ID)
-	if err != nil {
-		t.Fatalf("Failed to create pending user_region: %v", err)
-	}
-
-	suite.emailTracker.Reset()
-
-	// First vouch
-	resp := suite.request("POST", "/api/v1/verification/vouch", map[string]interface{}{
-		"vouched_user_id": vouchee.ID,
-		"region_id":       region.ID,
-	}, voucherTokens[0])
-	_ = resp.Body.Close()
-
-	// Second vouch (should trigger vouch_complete)
-	resp = suite.request("POST", "/api/v1/verification/vouch", map[string]interface{}{
-		"vouched_user_id": vouchee.ID,
-		"region_id":       region.ID,
-	}, voucherTokens[1])
-	_ = resp.Body.Close()
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check vouch_complete notification was queued
-	var count int
-	err = suite.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'vouch_complete'
-	`, vouchee.ID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count notifications: %v", err)
-	}
-
-	if count == 0 {
-		t.Error("Expected vouch_complete notification to be queued")
-	}
-
-	// Check email was sent
-	emails := suite.emailTracker.GetSent()
-	foundComplete := false
-	for _, email := range emails {
-		if email.To == vouchee.Email && contains(email.Subject, "Vouch-Verified") {
-			foundComplete = true
-		}
-	}
-	if !foundComplete {
-		t.Error("Expected vouch_complete email to be sent")
-	}
-}
-
-// =============================================================================
-// E2E Tests: Security and Edge Cases
-// =============================================================================
 
 func TestE2E_BlockedUser_DoesNotReceiveNotifications(t *testing.T) {
 	suite := SetupNotificationE2ETest(t)
@@ -896,142 +718,6 @@ func TestE2E_Worker_RecoversFromFailures(t *testing.T) {
 
 	if status != string(models.NotificationStatusQueued) {
 		t.Errorf("Expected status 'queued' after retry, got '%s'", status)
-	}
-}
-
-// =============================================================================
-// E2E Tests: Sub-Region Invitation Notifications
-// =============================================================================
-
-func TestE2E_SubRegionInvitation_TriggersNotification(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create parent region
-	parentRegion := suite.createRegion("e2e-parent-invite-region", "Parent Region", nil)
-
-	// Create sub-region with parent
-	subRegion := suite.createRegion("e2e-sub-invite-region", "Sub Region", &parentRegion.ID)
-
-	// Create admin who will invite
-	adminToken, admin := suite.createUser("e2e-invite-admin", "inviteadmin@e2e.test", "InviteAdmin", true, true, false)
-	suite.addUserToRegion(admin.ID, parentRegion.ID, true)
-	suite.addUserToRegion(admin.ID, subRegion.ID, true)
-
-	// Create user to be invited (member of parent region)
-	_, invitee := suite.createUser("e2e-invitee", "invitee@e2e.test", "invitee", true, false, false)
-	suite.addUserToRegion(invitee.ID, parentRegion.ID, false)
-
-	suite.emailTracker.Reset()
-
-	// Admin invites user to sub-region
-	resp := suite.request("POST", fmt.Sprintf("/api/v1/communities/%s/invitations?id=%s", subRegion.ID, subRegion.ID), map[string]interface{}{
-		"user_id": invitee.ID,
-	}, adminToken)
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		var body map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		t.Fatalf("Expected status 201, got %d: %v", resp.StatusCode, body)
-	}
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check notification was queued
-	var count int
-	err := suite.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'sub_region_invitation'
-	`, invitee.ID).Scan(&count)
-	if err != nil {
-		t.Fatalf("Failed to count notifications: %v", err)
-	}
-
-	if count == 0 {
-		t.Error("Expected sub_region_invitation notification to be queued")
-	}
-
-	// Check email was sent to invitee
-	emails := suite.emailTracker.GetSent()
-	found := false
-	for _, email := range emails {
-		if email.To == invitee.Email {
-			found = true
-			if !contains(email.Subject, "Invited") {
-				t.Errorf("Email subject should mention invitation: %s", email.Subject)
-			}
-			// Verify inviter name is in the email body
-			if !contains(email.Body, "InviteAdmin") {
-				t.Error("Email body should contain inviter's username")
-			}
-		}
-	}
-	if !found {
-		t.Error("Expected email to be sent to invitee")
-	}
-}
-
-func TestE2E_SubRegionInvitation_EmailContent(t *testing.T) {
-	suite := SetupNotificationE2ETest(t)
-	ctx := context.Background()
-
-	// Create parent and sub-region
-	parentRegion := suite.createRegion("e2e-parent-content-region", "Parent Content Region", nil)
-	subRegion := suite.createRegion("e2e-sub-content-region", "Sub Content Region", &parentRegion.ID)
-
-	// Create admin and invitee
-	adminToken, admin := suite.createUser("e2e-content-admin", "contentadmin@e2e.test", "ContentAdmin", true, true, false)
-	suite.addUserToRegion(admin.ID, parentRegion.ID, true)
-	suite.addUserToRegion(admin.ID, subRegion.ID, true)
-
-	_, invitee := suite.createUser("e2e-content-invitee", "contentinvitee@e2e.test", "contentinvitee", true, false, false)
-	suite.addUserToRegion(invitee.ID, parentRegion.ID, false)
-
-	suite.emailTracker.Reset()
-
-	// Admin invites user
-	resp := suite.request("POST", fmt.Sprintf("/api/v1/communities/%s/invitations?id=%s", subRegion.ID, subRegion.ID), map[string]interface{}{
-		"user_id": invitee.ID,
-	}, adminToken)
-	_ = resp.Body.Close()
-
-	// Wait for notification processing
-	time.Sleep(3 * time.Second)
-
-	// Check email content
-	emails := suite.emailTracker.GetSent()
-	for _, email := range emails {
-		if email.To == invitee.Email {
-			// Should NOT contain sensitive data
-			if contains(email.Body, subRegion.ID) {
-				t.Error("Email should NOT contain region ID")
-			}
-			// Should contain login instructions
-			if !contains(email.Body, "log in") && !contains(email.Body, "Log in") {
-				t.Error("Email should instruct user to log in")
-			}
-			// Should mention expiration
-			if !contains(email.Body, "7 days") && !contains(email.Body, "expire") {
-				t.Error("Email should mention invitation expiration")
-			}
-		}
-	}
-
-	// Verify notification was cleaned up (processed)
-	var status string
-	err := suite.db.QueryRowContext(ctx, `
-		SELECT status FROM email_notifications
-		WHERE user_id = ? AND notification_type = 'sub_region_invitation'
-		ORDER BY queued_at DESC LIMIT 1
-	`, invitee.ID).Scan(&status)
-	if err != nil {
-		t.Fatalf("Failed to query notification: %v", err)
-	}
-
-	if status != string(models.NotificationStatusSent) {
-		t.Errorf("Expected notification status 'sent', got '%s'", status)
 	}
 }
 

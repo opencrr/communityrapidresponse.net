@@ -48,6 +48,7 @@ func TestCSRFProtection_SetsCookieOnGET(t *testing.T) {
 
 	if csrfCookie == nil {
 		t.Fatal("expected csrf_token cookie to be set")
+		return
 	}
 
 	if csrfCookie.HttpOnly {
@@ -179,9 +180,6 @@ func TestCSRFProtection_ExemptPathsBypass(t *testing.T) {
 	}))
 
 	exemptPaths := []string{
-		"/api/v1/auth/login",
-		"/api/v1/auth/register",
-		"/api/v1/auth/logout",
 		"/api/v1/auth/forgot-password",
 		"/api/v1/auth/reset-password",
 		"/api/v1/auth/verify-email",
@@ -247,6 +245,7 @@ func TestCSRFProtection_SecureCookieFlag(t *testing.T) {
 
 	if csrfCookie == nil {
 		t.Fatal("expected csrf_token cookie to be set")
+		return
 	}
 
 	if !csrfCookie.Secure {
