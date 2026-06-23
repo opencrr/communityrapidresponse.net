@@ -884,56 +884,6 @@ func (r *GroupRepository) GetInviteLinkByToken(ctx context.Context, token string
 	return link, nil
 }
 
-// ConsumeInviteLink atomically validates and increments the use count of an invite link.
-// Returns the link (with group_id) so the caller can add the member.
-func (r *GroupRepository) ConsumeInviteLink(ctx context.Context, token string) (*models.GroupInviteLink, error) {
-	var link models.GroupInviteLink
-
-	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
-		query := `
-			SELECT id, group_id, token, created_by, expires_at, max_uses, use_count, created_at
-			FROM group_invite_links
-			WHERE token = ?
-			FOR UPDATE
-		`
-		err := tx.QueryRowContext(ctx, query, token).Scan(
-			&link.ID, &link.GroupID, &link.Token, &link.CreatedBy,
-			&link.ExpiresAt, &link.MaxUses, &link.UseCount, &link.CreatedAt,
-		)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrInviteLinkNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("select invite link for update: %w", err)
-		}
-
-		// Check expiration
-		if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now().UTC()) {
-			return ErrInviteLinkExpired
-		}
-
-		// Check max uses
-		if link.MaxUses != nil && link.UseCount >= *link.MaxUses {
-			return ErrInviteLinkExhausted
-		}
-
-		// Increment use count
-		_, err = tx.ExecContext(ctx, "UPDATE group_invite_links SET use_count = use_count + 1 WHERE id = ?", link.ID)
-		if err != nil {
-			return fmt.Errorf("increment use count: %w", err)
-		}
-
-		link.UseCount++
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &link, nil
-}
-
 // JoinViaInviteLink performs the entire invite-link join in one transaction:
 // lock the link, validate expiry/exhaustion, confirm the group exists, reject
 // blocked or already-member users, insert the membership, and only then increment
@@ -1173,7 +1123,6 @@ func (r *GroupRepository) ListPendingInvitationsForGroup(ctx context.Context, gr
 	return invitations, rows.Err()
 }
 
-// RespondToInvitation accepts or declines an invitation. Does NOT add the user to the group.
 // GetInvitation reads an invitation by ID without mutating it. Used to run
 // accept-time checks (blocked invitee, inviter still a member) before the
 // invitation is marked accepted, so a rejected accept leaves it pending.
@@ -1196,15 +1145,18 @@ func (r *GroupRepository) GetInvitation(ctx context.Context, invitationID string
 	return &invitation, nil
 }
 
-func (r *GroupRepository) RespondToInvitation(ctx context.Context, invitationID, userID string, accept bool) (*models.GroupInvitation, error) {
-	query := `
+// DeclineInvitation marks a pending invitation as declined. It never adds the
+// user to a group. Accepting an invitation must go through AcceptInvitation,
+// which validates and inserts membership in a single transaction — there is
+// intentionally no repository path that marks an invitation accepted without
+// also adding the member, so the "accepted-but-not-a-member" bug cannot recur.
+func (r *GroupRepository) DeclineInvitation(ctx context.Context, invitationID, userID string) (*models.GroupInvitation, error) {
+	var invitation models.GroupInvitation
+	err := r.db.QueryRowContext(ctx, `
 		SELECT id, group_id, user_id, invited_by, status, created_at, expires_at, responded_at
 		FROM group_invitations
 		WHERE id = ?
-	`
-
-	var invitation models.GroupInvitation
-	err := r.db.QueryRowContext(ctx, query, invitationID).Scan(
+	`, invitationID).Scan(
 		&invitation.ID, &invitation.GroupID, &invitation.UserID, &invitation.InvitedBy,
 		&invitation.Status, &invitation.CreatedAt, &invitation.ExpiresAt, &invitation.RespondedAt,
 	)
@@ -1215,39 +1167,24 @@ func (r *GroupRepository) RespondToInvitation(ctx context.Context, invitationID,
 		return nil, fmt.Errorf("get invitation: %w", err)
 	}
 
-	// Verify ownership
-	if invitation.UserID != userID {
+	// Ownership + pending status (treat both as not-found).
+	if invitation.UserID != userID || invitation.Status != models.InvitationStatusPending {
 		return nil, ErrInvitationNotFound
 	}
-
-	// Verify pending status
-	if invitation.Status != models.InvitationStatusPending {
-		return nil, ErrInvitationNotFound
-	}
-
-	// Check expiration
 	if invitation.ExpiresAt != nil && invitation.ExpiresAt.Before(time.Now().UTC()) {
 		return nil, ErrInvitationExpired
 	}
 
-	newStatus := models.InvitationStatusDeclined
-	if accept {
-		newStatus = models.InvitationStatusAccepted
-	}
-
 	now := time.Now().UTC()
-	updateQuery := `
-		UPDATE group_invitations SET status = ?, responded_at = ?
-		WHERE id = ?
-	`
-	_, err = r.db.ExecContext(ctx, updateQuery, string(newStatus), now, invitationID)
-	if err != nil {
-		return nil, fmt.Errorf("update invitation: %w", err)
+	if _, err := r.db.ExecContext(ctx,
+		"UPDATE group_invitations SET status = ?, responded_at = ? WHERE id = ?",
+		string(models.InvitationStatusDeclined), now, invitationID,
+	); err != nil {
+		return nil, fmt.Errorf("decline invitation: %w", err)
 	}
 
-	invitation.Status = newStatus
+	invitation.Status = models.InvitationStatusDeclined
 	invitation.RespondedAt = &now
-
 	return &invitation, nil
 }
 

@@ -979,35 +979,44 @@ func TestGroupRepository_GetInviteLinkByToken(t *testing.T) {
 	})
 }
 
-func TestGroupRepository_ConsumeInviteLink(t *testing.T) {
+func TestGroupRepository_JoinViaInviteLink(t *testing.T) {
 	db := testDB(t)
 	repo := NewGroupRepository(db)
 	ctx := context.Background()
 
-	userID := createGroupTestUser(t, db, "invlink_consume1")
-	regionID := createGroupTestRegion(t, db, "InvLink Consume Region")
+	creatorID := createGroupTestUser(t, db, "invlink_join_creator")
+	regionID := createGroupTestRegion(t, db, "InvLink Join Region")
 
 	group, err := repo.Create(ctx, &models.CreateGroupRequest{
-		Name:      "Consume Link Group",
+		Name:      "Join Link Group",
 		RegionIDs: []string{regionID},
-	}, userID)
+	}, creatorID)
 	if err != nil {
 		t.Fatalf("Setup: Create failed: %v", err)
 	}
 
+	// JoinViaInviteLink adds membership, so each successful join needs a distinct
+	// user (an already-member is rejected). Track them all for cleanup.
+	joiners := []string{}
 	t.Cleanup(func() {
-		cleanupGroupTest(t, db, []string{group.ID}, []string{userID}, []string{regionID})
+		cleanupGroupTest(t, db, []string{group.ID}, append([]string{creatorID}, joiners...), []string{regionID})
 	})
+	newJoiner := func(name string) string {
+		id := createGroupTestUser(t, db, name)
+		joiners = append(joiners, id)
+		return id
+	}
 
-	t.Run("increments use count", func(t *testing.T) {
-		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{})
+	t.Run("join increments use count and adds membership", func(t *testing.T) {
+		link, err := repo.CreateInviteLink(ctx, group.ID, creatorID, &models.CreateInviteLinkRequest{})
 		if err != nil {
 			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
 		}
 
-		consumed, err := repo.ConsumeInviteLink(ctx, link.Token)
+		j1 := newJoiner("invlink_join_1")
+		consumed, err := repo.JoinViaInviteLink(ctx, link.Token, j1)
 		if err != nil {
-			t.Fatalf("ConsumeInviteLink failed: %v", err)
+			t.Fatalf("JoinViaInviteLink failed: %v", err)
 		}
 		if consumed.UseCount != 1 {
 			t.Errorf("Expected use_count 1, got %d", consumed.UseCount)
@@ -1015,11 +1024,14 @@ func TestGroupRepository_ConsumeInviteLink(t *testing.T) {
 		if consumed.GroupID != group.ID {
 			t.Errorf("Expected group_id %s, got %s", group.ID, consumed.GroupID)
 		}
+		if m, _ := repo.IsUserMember(ctx, group.ID, j1); !m {
+			t.Error("join must add the user as a member")
+		}
 
-		// Consume again
-		consumed2, err := repo.ConsumeInviteLink(ctx, link.Token)
+		j2 := newJoiner("invlink_join_2")
+		consumed2, err := repo.JoinViaInviteLink(ctx, link.Token, j2)
 		if err != nil {
-			t.Fatalf("Second ConsumeInviteLink failed: %v", err)
+			t.Fatalf("Second JoinViaInviteLink failed: %v", err)
 		}
 		if consumed2.UseCount != 2 {
 			t.Errorf("Expected use_count 2, got %d", consumed2.UseCount)
@@ -1027,51 +1039,34 @@ func TestGroupRepository_ConsumeInviteLink(t *testing.T) {
 	})
 
 	t.Run("returns ErrInviteLinkExpired for expired link", func(t *testing.T) {
-		expiresInHours := 1
-		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{
-			ExpiresInHours: &expiresInHours,
-		})
+		link, err := repo.CreateInviteLink(ctx, group.ID, creatorID, &models.CreateInviteLinkRequest{})
 		if err != nil {
 			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
 		}
-
-		// Force expiration in the past
-		_, err = db.ExecContext(ctx, "UPDATE group_invite_links SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", link.ID)
-		if err != nil {
+		if _, err := db.ExecContext(ctx, "UPDATE group_invite_links SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", link.ID); err != nil {
 			t.Fatalf("Failed to backdate link: %v", err)
 		}
-
-		_, err = repo.ConsumeInviteLink(ctx, link.Token)
-		if err != ErrInviteLinkExpired {
+		if _, err := repo.JoinViaInviteLink(ctx, link.Token, newJoiner("invlink_join_exp")); err != ErrInviteLinkExpired {
 			t.Errorf("Expected ErrInviteLinkExpired, got %v", err)
 		}
 	})
 
 	t.Run("returns ErrInviteLinkExhausted when max uses reached", func(t *testing.T) {
 		maxUses := 1
-		link, err := repo.CreateInviteLink(ctx, group.ID, userID, &models.CreateInviteLinkRequest{
-			MaxUses: &maxUses,
-		})
+		link, err := repo.CreateInviteLink(ctx, group.ID, creatorID, &models.CreateInviteLinkRequest{MaxUses: &maxUses})
 		if err != nil {
 			t.Fatalf("Setup: CreateInviteLink failed: %v", err)
 		}
-
-		// First consume should succeed
-		_, err = repo.ConsumeInviteLink(ctx, link.Token)
-		if err != nil {
-			t.Fatalf("First consume failed: %v", err)
+		if _, err := repo.JoinViaInviteLink(ctx, link.Token, newJoiner("invlink_join_x1")); err != nil {
+			t.Fatalf("First join failed: %v", err)
 		}
-
-		// Second consume should fail
-		_, err = repo.ConsumeInviteLink(ctx, link.Token)
-		if err != ErrInviteLinkExhausted {
+		if _, err := repo.JoinViaInviteLink(ctx, link.Token, newJoiner("invlink_join_x2")); err != ErrInviteLinkExhausted {
 			t.Errorf("Expected ErrInviteLinkExhausted, got %v", err)
 		}
 	})
 
 	t.Run("returns ErrInviteLinkNotFound for bad token", func(t *testing.T) {
-		_, err := repo.ConsumeInviteLink(ctx, "nonexistent_token_value")
-		if err != ErrInviteLinkNotFound {
+		if _, err := repo.JoinViaInviteLink(ctx, "nonexistent_token_value", creatorID); err != ErrInviteLinkNotFound {
 			t.Errorf("Expected ErrInviteLinkNotFound, got %v", err)
 		}
 	})
@@ -1312,7 +1307,7 @@ func TestGroupRepository_ListPendingInvitationsForUser(t *testing.T) {
 	})
 }
 
-func TestGroupRepository_RespondToInvitation(t *testing.T) {
+func TestGroupRepository_InvitationResponse(t *testing.T) {
 	db := testDB(t)
 	repo := NewGroupRepository(db)
 	ctx := context.Background()
@@ -1334,51 +1329,52 @@ func TestGroupRepository_RespondToInvitation(t *testing.T) {
 		cleanupGroupTest(t, db, []string{group.ID}, []string{adminID, inviteeID, invitee2ID}, []string{regionID})
 	})
 
-	t.Run("accept invitation", func(t *testing.T) {
+	// AcceptInvitation is the only path that marks an invitation accepted, and it
+	// adds membership in the same transaction.
+	t.Run("accept adds membership transactionally", func(t *testing.T) {
 		invitation, err := repo.CreateInvitation(ctx, group.ID, inviteeID, adminID)
 		if err != nil {
 			t.Fatalf("Setup: CreateInvitation failed: %v", err)
 		}
 
-		result, err := repo.RespondToInvitation(ctx, invitation.ID, inviteeID, true)
+		result, err := repo.AcceptInvitation(ctx, invitation.ID, inviteeID)
 		if err != nil {
-			t.Fatalf("RespondToInvitation (accept) failed: %v", err)
+			t.Fatalf("AcceptInvitation failed: %v", err)
 		}
 		if result.Status != models.InvitationStatusAccepted {
 			t.Errorf("Expected status 'accepted', got %q", result.Status)
 		}
-		if result.RespondedAt == nil {
-			t.Error("Expected responded_at to be set")
+		if isMember, _ := repo.IsUserMember(ctx, group.ID, inviteeID); !isMember {
+			t.Error("accept must add the user as a member")
 		}
 	})
 
-	t.Run("decline invitation", func(t *testing.T) {
+	// DeclineInvitation marks declined and never adds membership.
+	t.Run("decline marks declined without membership", func(t *testing.T) {
 		invitation, err := repo.CreateInvitation(ctx, group.ID, invitee2ID, adminID)
 		if err != nil {
 			t.Fatalf("Setup: CreateInvitation failed: %v", err)
 		}
 
-		result, err := repo.RespondToInvitation(ctx, invitation.ID, invitee2ID, false)
+		result, err := repo.DeclineInvitation(ctx, invitation.ID, invitee2ID)
 		if err != nil {
-			t.Fatalf("RespondToInvitation (decline) failed: %v", err)
+			t.Fatalf("DeclineInvitation failed: %v", err)
 		}
 		if result.Status != models.InvitationStatusDeclined {
 			t.Errorf("Expected status 'declined', got %q", result.Status)
 		}
+		if isMember, _ := repo.IsUserMember(ctx, group.ID, invitee2ID); isMember {
+			t.Error("decline must not add the user as a member")
+		}
 	})
 
-	t.Run("returns ErrInvitationNotFound for wrong user", func(t *testing.T) {
-		// invitee's invitation was already accepted, create fresh one for invitee2 to test wrong user
-		// Actually invitee2's invitation was declined. Let's just use a random ID.
-		wrongUserID := uuid.New().String()
-		// Use the invitee2's invitation ID but wrong user
-		_, err := repo.RespondToInvitation(ctx, uuid.New().String(), wrongUserID, true)
-		if err != ErrInvitationNotFound {
+	t.Run("decline returns ErrInvitationNotFound for wrong user", func(t *testing.T) {
+		if _, err := repo.DeclineInvitation(ctx, uuid.New().String(), uuid.New().String()); err != ErrInvitationNotFound {
 			t.Errorf("Expected ErrInvitationNotFound, got %v", err)
 		}
 	})
 
-	t.Run("returns ErrInvitationExpired for expired invitation", func(t *testing.T) {
+	t.Run("accept returns ErrInvitationExpired for expired invitation", func(t *testing.T) {
 		invitee3ID := createGroupTestUser(t, db, "inv_respond_invitee3")
 		defer func() {
 			_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id = ?", invitee3ID)
@@ -1390,13 +1386,11 @@ func TestGroupRepository_RespondToInvitation(t *testing.T) {
 		}
 
 		// Backdate to expire
-		_, err = db.ExecContext(ctx, "UPDATE group_invitations SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", invitation.ID)
-		if err != nil {
+		if _, err := db.ExecContext(ctx, "UPDATE group_invitations SET expires_at = '2020-01-01 00:00:00' WHERE id = ?", invitation.ID); err != nil {
 			t.Fatalf("Failed to backdate: %v", err)
 		}
 
-		_, err = repo.RespondToInvitation(ctx, invitation.ID, invitee3ID, true)
-		if err != ErrInvitationExpired {
+		if _, err := repo.AcceptInvitation(ctx, invitation.ID, invitee3ID); err != ErrInvitationExpired {
 			t.Errorf("Expected ErrInvitationExpired, got %v", err)
 		}
 	})

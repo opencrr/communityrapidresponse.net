@@ -283,10 +283,12 @@ async function loadSignalGroups(groupId) {
                             ${sg.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(sg.description)}</p>` : ''}
                             ${sg.access_tier ? `<span class="tier-badge tier-badge--${sg.access_tier}">${formatAccessTier(sg.access_tier)}</span>` : ''}
                             <div class="group-invite" style="margin-top: var(--space-3);">
-                                <span class="group-invite__link">${escapeHtml(sg._decryptedLink || 'Invite link hidden')}</span>
                                 ${sg._decryptedLink ? `
+                                    <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
                                     <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
-                                ` : ''}
+                                ` : `
+                                    <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this group's Signal invite link isn't stored encrypted here yet. Ask a group admin to share it.</span>
+                                `}
                             </div>
                         </div>
                     </div>

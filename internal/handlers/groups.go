@@ -1112,7 +1112,7 @@ func (h *GroupHandler) RespondToInvitation(w http.ResponseWriter, r *http.Reques
 
 	// Decline: simple status update, no membership change.
 	if !req.Accept {
-		if _, err := h.groupRepo.RespondToInvitation(r.Context(), invitationID, claims.UserID, false); err != nil {
+		if _, err := h.groupRepo.DeclineInvitation(r.Context(), invitationID, claims.UserID); err != nil {
 			if errors.Is(err, database.ErrInvitationNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "Invitation not found")
 				return

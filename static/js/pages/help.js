@@ -319,7 +319,7 @@ export async function render(container) {
                         <h3>Your privacy</h3>
                         <ul>
                             <li>Addresses are never stored &mdash; used only for postcard mailing, then discarded</li>
-                            <li>Signal invite links are encrypted end-to-end &mdash; only group members can see them</li>
+                            <li>For neighborhood, school, and district chats, Signal invite links are stored encrypted so only verified members can decrypt them. Group- and connection-owned chats are currently listed for coordination only &mdash; their invite links are shared out-of-band, not stored on the platform.</li>
                             <li>The platform doesn't track which Signal groups you join</li>
                             <li>Group membership is visible to other group members, not to the public</li>
                         </ul>
@@ -349,9 +349,15 @@ export async function render(container) {
                     <section class="help-section">
                         <h3>Encryption</h3>
                         <p>
-                            Signal invite links and sensitive data are encrypted using envelope
-                            encryption (RSA + AES-256-GCM). Only authorized group members can
-                            decrypt them.
+                            For neighborhood, school, and district Signal chats, invite links and
+                            sensitive data are stored using envelope encryption (RSA + AES-256-GCM),
+                            so only authorized, verified members can decrypt them.
+                        </p>
+                        <p>
+                            Signal chats owned by groups and connections are currently listed for
+                            coordination only: their invite links are shared out-of-band rather than
+                            stored encrypted on the platform. Encrypted storage for these chats is a
+                            planned addition.
                         </p>
                     </section>
                 </div>

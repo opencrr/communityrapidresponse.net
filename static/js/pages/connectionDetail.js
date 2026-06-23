@@ -183,8 +183,12 @@ async function loadSignalChats(connectionId) {
                         ${sg.access_level ? `<span class="visibility-badge visibility-badge--${sg.access_level}">${formatAccessLevel(sg.access_level)}</span>` : ''}
                     </div>
                     <div class="group-invite" style="margin-top: var(--space-3);">
-                        <span class="group-invite__link">${escapeHtml(sg._decryptedLink || 'Invite link hidden')}</span>
-                        ${sg._decryptedLink ? `<button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>` : ''}
+                        ${sg._decryptedLink ? `
+                            <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
+                            <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
+                        ` : `
+                            <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this connection's Signal invite link isn't stored encrypted here yet. Ask a connection admin to share it.</span>
+                        `}
                     </div>
                 </div>
             </div>

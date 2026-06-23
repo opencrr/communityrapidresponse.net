@@ -223,6 +223,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
 	// connection-leave / tier-downgrade. Enumeration without revocation lets a
 	// removed member who cached the unwrapped DEK keep decrypting.
+	// Tracked: github.com/opencrr/communityrapidresponse.net/issues/91.
 
 	// Exactly one scope must be provided
 	scopeCount := 0

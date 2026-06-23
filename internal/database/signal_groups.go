@@ -418,8 +418,8 @@ func (r *SignalGroupRepository) ListByConnection(ctx context.Context, connection
 // ENCRYPTION LIMITATION: group-owned chats are metadata-only today. There is no
 // recipient public-key enumeration for the group scope (see the GetPublicKeys
 // handler), so wrapped DEKs are not provisioned and there is no revocation path on
-// membership/tier change. Wiring encryption here is a tracked follow-up and must
-// land together with revocation.
+// membership/tier change. Wiring encryption here must land together with
+// revocation. Tracked: github.com/opencrr/communityrapidresponse.net/issues/91.
 func (r *SignalGroupRepository) CreateForOwnerGroup(ctx context.Context, group *models.SignalGroup) error {
 	if group.OwnerGroupID == nil || *group.OwnerGroupID == "" {
 		return errors.New("owner_group_id is required")
