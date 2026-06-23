@@ -1562,3 +1562,96 @@ func TestSecretUpdateProposalRepository_GetByIDForUpdate(t *testing.T) {
 		t.Errorf("Expected ID '%s', got '%s'", proposal.ID, retrieved.ID)
 	}
 }
+
+func TestEncryptedSecretRepository_RevokeConnectionSecretKeysForGroup(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "revoke_u1")
+	user2 := encCreateUser(t, db, "revoke_u2")
+	user3 := encCreateUser(t, db, "revoke_u3")
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE connection_id IS NOT NULL)")
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE connection_id IS NOT NULL")
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id IS NOT NULL")
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id IN (SELECT id FROM `groups` WHERE name LIKE 'test_group_%')")
+		_, _ = db.ExecContext(ctx, "DELETE FROM `groups` WHERE name LIKE 'test_group_%'")
+		_, _ = db.ExecContext(ctx, "DELETE FROM connection_members")
+		_, _ = db.ExecContext(ctx, "DELETE FROM connections")
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?, ?)", user1.ID, user2.ID, user3.ID)
+	}()
+
+	connID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, "INSERT INTO connections (id, name) VALUES (?, ?)", connID, "test_connection")
+
+	group1ID := uuid.New().String()
+	group2ID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO `+"`groups`"+` (id, name, status) VALUES (?, ?, 'active')`, group1ID, "test_group_1")
+	_, _ = db.ExecContext(ctx, `INSERT INTO `+"`groups`"+` (id, name, status) VALUES (?, ?, 'active')`, group2ID, "test_group_2")
+
+	_, _ = db.ExecContext(ctx, "INSERT INTO connection_members (id, connection_id, group_id) VALUES (?, ?, ?)", uuid.New().String(), connID, group1ID)
+	_, _ = db.ExecContext(ctx, "INSERT INTO connection_members (id, connection_id, group_id) VALUES (?, ?, ?)", uuid.New().String(), connID, group2ID)
+
+	_, _ = db.ExecContext(ctx, "INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)", uuid.New().String(), group1ID, user1.ID)
+	_, _ = db.ExecContext(ctx, "INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)", uuid.New().String(), group2ID, user2.ID)
+	_, _ = db.ExecContext(ctx, "INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)", uuid.New().String(), group2ID, user3.ID)
+
+	sigGroupID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO signal_groups (id, connection_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, 'test_sig_group', ?, NOW(), TRUE)`, sigGroupID, connID, user1.ID)
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    strPtr(sigGroupID),
+		EncryptedPayload: "revoke_payload",
+		EncryptionIV:     "revoke_iv_123456",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_u1"},
+		{UserID: user2.ID, WrappedDEK: "dek_u2"},
+		{UserID: user3.ID, WrappedDEK: "dek_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	err := db.Transaction(ctx, func(tx *sql.Tx) error {
+		return secretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connID, group2ID)
+	})
+	if err != nil {
+		t.Fatalf("Failed to revoke keys: %v", err)
+	}
+
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_u1" {
+		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
+	}
+
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+	if err == nil {
+		t.Error("user2 (leaving) key should be deleted")
+	}
+
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err == nil {
+		t.Error("user3 (leaving) key should be deleted")
+	}
+
+	var rekeyNeeded bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+	}
+	if !rekeyNeeded {
+		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+}
