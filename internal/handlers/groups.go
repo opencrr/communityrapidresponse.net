@@ -1245,17 +1245,24 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 
 	accessTier := models.AccessTier(req.AccessTier)
 
+	// Validate invite_link: only allowed for open-tier chats
+	if req.InviteLink != nil && accessTier != models.AccessTierOpen {
+		writeError(w, http.StatusBadRequest, "validation_error", "invite_link can only be set for open-tier signal groups")
+		return
+	}
+
 	var description *string
 	if req.Description != "" {
 		description = &req.Description
 	}
 
 	signalGroup := &models.SignalGroup{
-		OwnerGroupID: &groupID,
-		GroupName:    req.GroupName,
-		Description:  description,
-		AccessTier:   accessTier,
-		CreatedBy:    &claims.UserID,
+		OwnerGroupID:        &groupID,
+		GroupName:           req.GroupName,
+		Description:         description,
+		AccessTier:          accessTier,
+		PlaintextInviteLink: req.InviteLink,
+		CreatedBy:           &claims.UserID,
 	}
 
 	if err := h.signalGroupRepo.CreateForOwnerGroup(r.Context(), signalGroup); err != nil {
