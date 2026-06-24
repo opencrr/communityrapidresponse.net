@@ -1024,7 +1024,7 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 		t.Fatalf("LeaveConnection failed: %v", err)
 	}
 
-	// Verify user1 (groupA, survivor) still has key but rekey_needed is true
+	// Verify user1 (groupA, survivor) still has key but group_rotation_pending=true
 	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
 	if err != nil {
 		t.Fatalf("Failed to get user1 DEK: %v", err)
@@ -1033,19 +1033,19 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
 	}
 
-	var rekeyNeeded bool
+	var grpRotPending1 bool
 	err = db.QueryRowContext(ctx, `
-		SELECT rekey_needed FROM encrypted_secret_keys
+		SELECT group_rotation_pending FROM encrypted_secret_keys
 		WHERE secret_id = ? AND user_id = ?
-	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	`, secret.ID, user1.ID).Scan(&grpRotPending1)
 	if err != nil {
-		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+		t.Fatalf("Failed to query group rotation flag for user1: %v", err)
 	}
-	if !rekeyNeeded {
-		t.Error("user1 (survivor) should have rekey_needed=true")
+	if !grpRotPending1 {
+		t.Error("user1 (survivor) should have group_rotation_pending=true")
 	}
 
-	// Verify user3 (groupC, survivor) still has key but rekey_needed is true
+	// Verify user3 (groupC, survivor) still has key but group_rotation_pending=true
 	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
 	if err != nil {
 		t.Fatalf("Failed to get user3 DEK: %v", err)
@@ -1054,16 +1054,16 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
 	}
 
-	var rekey3Needed bool
+	var grpRotPending3 bool
 	err = db.QueryRowContext(ctx, `
-		SELECT rekey_needed FROM encrypted_secret_keys
+		SELECT group_rotation_pending FROM encrypted_secret_keys
 		WHERE secret_id = ? AND user_id = ?
-	`, secret.ID, user3.ID).Scan(&rekey3Needed)
+	`, secret.ID, user3.ID).Scan(&grpRotPending3)
 	if err != nil {
-		t.Fatalf("Failed to query rekey flag for user3: %v", err)
+		t.Fatalf("Failed to query group rotation flag for user3: %v", err)
 	}
-	if !rekey3Needed {
-		t.Error("user3 (survivor) should have rekey_needed=true")
+	if !grpRotPending3 {
+		t.Error("user3 (survivor) should have group_rotation_pending=true")
 	}
 
 	// Verify user2 (groupB, leaving) key is deleted
@@ -1142,7 +1142,7 @@ func TestGroupRepository_BlockGroup_RevokesSecrets(t *testing.T) {
 		t.Error("Group C should have been evicted from connection")
 	}
 
-	// Verify user1 and user2 (surviving groups) still have keys but rekey_needed is true
+	// Verify user1 and user2 (surviving groups) still have keys but group_rotation_pending=true
 	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
 	if err != nil {
 		t.Fatalf("Failed to get user1 DEK: %v", err)
@@ -1159,16 +1159,16 @@ func TestGroupRepository_BlockGroup_RevokesSecrets(t *testing.T) {
 		t.Errorf("user2 (survivor) key should be unchanged, got '%s'", dek2)
 	}
 
-	var rekeyNeeded bool
+	var grpRotPending bool
 	err = db.QueryRowContext(ctx, `
-		SELECT rekey_needed FROM encrypted_secret_keys
+		SELECT group_rotation_pending FROM encrypted_secret_keys
 		WHERE secret_id = ? AND user_id = ?
-	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	`, secret.ID, user1.ID).Scan(&grpRotPending)
 	if err != nil {
-		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+		t.Fatalf("Failed to query group rotation flag for user1: %v", err)
 	}
-	if !rekeyNeeded {
-		t.Error("user1 (survivor) should have rekey_needed=true")
+	if !grpRotPending {
+		t.Error("user1 (survivor) should have group_rotation_pending=true")
 	}
 
 	// Verify user3 (blocked group) key is deleted
