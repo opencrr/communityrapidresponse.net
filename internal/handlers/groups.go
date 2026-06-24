@@ -285,6 +285,44 @@ func (h *GroupHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filter signal groups by access tier and clear plaintext_invite_link for non-open tiers
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "group", "get_group")
+		return
+	}
+
+	memberInfo, err := h.groupRepo.GetMember(r.Context(), groupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get membership info", "group", "get_group")
+		return
+	}
+
+	isVerifiedResident := false
+	for _, region := range groupDetails.Regions {
+		inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, region.ID)
+		if regionErr != nil {
+			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "get_group")
+			return
+		}
+		if inRegion {
+			isVerifiedResident = true
+			break
+		}
+	}
+
+	var filteredSignalGroups []models.SignalGroupPublic
+	for _, sg := range groupDetails.SignalGroups {
+		if isSuperuser || database.UserMeetsAccessTier(models.AccessTier(sg.AccessTier), true, isVerifiedResident, memberInfo) {
+			// Clear plaintext_invite_link for non-open tiers
+			if sg.AccessTier != "open" {
+				sg.PlaintextInviteLink = nil
+			}
+			filteredSignalGroups = append(filteredSignalGroups, sg)
+		}
+	}
+	groupDetails.SignalGroups = filteredSignalGroups
+
 	writeJSON(w, http.StatusOK, groupDetails)
 }
 
@@ -1351,7 +1389,7 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 	var filteredGroups []models.SignalGroupPublic
 	for _, sg := range signalGroups {
 		if isSuperuser || database.UserMeetsAccessTier(sg.AccessTier, true, isVerifiedResident, memberInfo) {
-			filteredGroups = append(filteredGroups, models.SignalGroupPublic{
+			publicGroup := models.SignalGroupPublic{
 				ID:                 sg.ID,
 				OwnerGroupID:      sg.OwnerGroupID,
 				Name:               sg.GroupName,
@@ -1359,7 +1397,12 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 				AccessTier:         string(sg.AccessTier),
 				CreatedAt:          sg.CreatedAt,
 				HasPendingDeletion: sg.HasPendingDeletion,
-			})
+			}
+			// Include plaintext_invite_link for open-tier chats
+			if sg.AccessTier == models.AccessTierOpen {
+				publicGroup.PlaintextInviteLink = sg.PlaintextInviteLink
+			}
+			filteredGroups = append(filteredGroups, publicGroup)
 		}
 	}
 
