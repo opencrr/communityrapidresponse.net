@@ -585,7 +585,7 @@ func TestEncryptedSecretRepository_FlagRekeyAndGetPendingRekeys(t *testing.T) {
 func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *testing.T) {
 	db := testDB(t)
 	secretRepo := NewEncryptedSecretRepository(db)
-	channelRepo := NewMeshtasticChannelRepository(db)
+	groupRepo := NewSignalGroupRepository(db)
 	ekRepo := NewEncryptionKeyRepository(db)
 	ctx := context.Background()
 
@@ -594,23 +594,32 @@ func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *t
 	region := encCreateRegion(t, db, user1.ID, "Rekey Multi Region")
 	group := encCreateSignalGroup(t, db, region.ID, user1.ID)
 
-	channel := &models.MeshtasticChannel{
-		RegionID:    strPtr(region.ID),
-		ChannelName: "Test Multi Rekey Channel",
-		CreatedBy:   strPtr(user1.ID),
+	// Create a connection for the connection-owned signal group
+	connID := uuid.New().String()
+	now := time.Now().UTC()
+	_, err := db.ExecContext(ctx, "INSERT INTO connections (id, name, created_at) VALUES (?, NULL, ?)", connID, now)
+	if err != nil {
+		t.Fatalf("Failed to create connection: %v", err)
 	}
-	if err := channelRepo.Create(ctx, channel); err != nil {
-		t.Fatalf("Failed to create channel: %v", err)
+
+	// Create a signal group owned by the connection
+	connGroup := &models.SignalGroup{
+		ConnectionID: strPtr(connID),
+		GroupName:    "Test Connection Signal Group",
+		CreatedBy:    strPtr(user1.ID),
+	}
+	if err := groupRepo.Create(ctx, connGroup); err != nil {
+		t.Fatalf("Failed to create connection-owned signal group: %v", err)
 	}
 
 	defer func() {
 		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", user1.ID, user2.ID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id = ?)", group.ID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id = ?", group.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE meshtastic_channel_id = ?)", channel.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE meshtastic_channel_id = ?", channel.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE id = ?", channel.ID)
-		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE id = ?", group.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id = ?)", connGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id = ?", connGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE id IN (?, ?)", group.ID, connGroup.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM connections WHERE id = ?", connID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?)", user1.ID, user2.ID)
 	}()
@@ -637,19 +646,19 @@ func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *t
 		t.Fatalf("Failed to create group secret: %v", err)
 	}
 
-	// Create connection-owned (meshtastic channel) secret with keys for both users
-	connectionSecret := &models.EncryptedSecret{
-		SecretType:          models.SecretTypeMeshtasticChannel,
-		MeshtasticChannelID: strPtr(channel.ID),
-		EncryptedPayload:    "conn_payload",
-		EncryptionIV:        "conn_iv_1234567",
-		UpdatedBy:           user1.ID,
+	// Create connection-owned signal group secret with keys for both users
+	connSecret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    strPtr(connGroup.ID),
+		EncryptedPayload: "conn_payload",
+		EncryptionIV:     "conn_iv_1234567",
+		UpdatedBy:        user1.ID,
 	}
 	connWrappedKeys := []models.WrappedKeyEntry{
 		{UserID: user1.ID, WrappedDEK: "conn_dek_user1"},
 		{UserID: user2.ID, WrappedDEK: "conn_dek_user2"},
 	}
-	if err := secretRepo.Create(ctx, connectionSecret, connWrappedKeys); err != nil {
+	if err := secretRepo.Create(ctx, connSecret, connWrappedKeys); err != nil {
 		t.Fatalf("Failed to create connection secret: %v", err)
 	}
 
@@ -681,7 +690,7 @@ func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *t
 		if !secretIDs[groupSecret.ID] {
 			t.Error("Expected group-owned secret ID in pending rekeys")
 		}
-		if !secretIDs[connectionSecret.ID] {
+		if !secretIDs[connSecret.ID] {
 			t.Error("Expected connection-owned secret ID in pending rekeys")
 		}
 	})
