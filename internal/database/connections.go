@@ -873,12 +873,27 @@ func (r *ConnectionRepository) ProposeSignalChat(ctx context.Context, connection
 
 		// Insert the proposal
 		_, insertErr := tx.ExecContext(ctx,
-			`INSERT INTO connection_chat_proposals (id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-			proposalID, connectionID, proposerGroupID, req.GroupName, description, req.AccessLevel, now, expiresAt,
+			`INSERT INTO connection_chat_proposals (id, connection_id, proposer_group_id, group_name, description, access_level, encrypted_payload, encryption_iv, status, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+			proposalID, connectionID, proposerGroupID, req.GroupName, description, req.AccessLevel, req.EncryptedPayload, req.EncryptionIV, now, expiresAt,
 		)
 		if insertErr != nil {
 			return fmt.Errorf("insert chat proposal: %w", insertErr)
+		}
+
+		// Store wrapped keys for admin_only chats
+		if req.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) && len(req.WrappedKeys) > 0 {
+			wrappedKeyQuery := `
+				INSERT INTO connection_chat_wrapped_keys (id, proposal_id, user_id, wrapped_dek, created_at)
+				VALUES (?, ?, ?, ?, ?)
+			`
+			for _, wk := range req.WrappedKeys {
+				keyID := uuid.New().String()
+				_, insertKeyErr := tx.ExecContext(ctx, wrappedKeyQuery, keyID, proposalID, wk.UserID, wk.WrappedDEK, now)
+				if insertKeyErr != nil {
+					return fmt.Errorf("insert wrapped key: %w", insertKeyErr)
+				}
+			}
 		}
 
 		// Get all member groups
@@ -977,12 +992,13 @@ func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalI
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
 		// Load the proposal
 		var proposal models.ConnectionChatProposal
+		var encryptedPayload, encryptionIV *string
 		loadErr := tx.QueryRowContext(ctx,
-			`SELECT id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at
+			`SELECT id, connection_id, proposer_group_id, group_name, description, access_level, encrypted_payload, encryption_iv, status, created_at, expires_at
 			FROM connection_chat_proposals WHERE id = ?`,
 			proposalID,
 		).Scan(&proposal.ID, &proposal.ConnectionID, &proposal.ProposerGroupID, &proposal.GroupName,
-			&proposal.Description, &proposal.AccessLevel, &proposal.Status, &proposal.CreatedAt, &proposal.ExpiresAt)
+			&proposal.Description, &proposal.AccessLevel, &encryptedPayload, &encryptionIV, &proposal.Status, &proposal.CreatedAt, &proposal.ExpiresAt)
 		if loadErr == sql.ErrNoRows {
 			return ErrChatProposalNotFound
 		}
@@ -1061,6 +1077,39 @@ func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalI
 				if proposal.Description != nil {
 					req.Description = *proposal.Description
 				}
+
+				// Load encrypted bundle for admin_only chats
+				if proposal.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) {
+					req.EncryptedPayload = encryptedPayload
+					req.EncryptionIV = encryptionIV
+
+					// Load wrapped keys
+					wrappedKeyRows, queryErr := tx.QueryContext(ctx,
+						`SELECT user_id, wrapped_dek FROM connection_chat_wrapped_keys WHERE proposal_id = ?`,
+						proposalID,
+					)
+					if queryErr != nil {
+						return fmt.Errorf("load wrapped keys: %w", queryErr)
+					}
+					defer func() { _ = wrappedKeyRows.Close() }()
+
+					var wrappedKeys []models.WrappedKeyEntry
+					for wrappedKeyRows.Next() {
+						var userID, wrappedDEK string
+						if scanErr := wrappedKeyRows.Scan(&userID, &wrappedDEK); scanErr != nil {
+							return fmt.Errorf("scan wrapped key: %w", scanErr)
+						}
+						wrappedKeys = append(wrappedKeys, models.WrappedKeyEntry{
+							UserID:     userID,
+							WrappedDEK: wrappedDEK,
+						})
+					}
+					if rowErr := wrappedKeyRows.Err(); rowErr != nil {
+						return fmt.Errorf("iterate wrapped keys: %w", rowErr)
+					}
+					req.WrappedKeys = wrappedKeys
+				}
+
 				createErr := r.createConnectionSignalGroup(ctx, tx, proposal.ConnectionID, proposal.ProposerGroupID, req)
 				if createErr != nil {
 					return createErr
