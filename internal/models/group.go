@@ -306,9 +306,12 @@ type ConnectionChatProposalWithVotes struct {
 
 // ProposeConnectionChatRequest is the request for proposing a connection signal chat.
 type ProposeConnectionChatRequest struct {
-	GroupName   string `json:"group_name" validate:"required,min=1,max=255"`
-	Description string `json:"description" validate:"max=1000"`
-	AccessLevel string `json:"access_level" validate:"required,oneof=admin_only all_members"`
+	GroupName        string            `json:"group_name" validate:"required,min=1,max=255"`
+	Description      string            `json:"description" validate:"max=1000"`
+	AccessLevel      string            `json:"access_level" validate:"required,oneof=admin_only all_members"`
+	EncryptedPayload *string           `json:"encrypted_payload,omitempty"`
+	EncryptionIV     *string           `json:"encryption_iv,omitempty"`
+	WrappedKeys      []WrappedKeyEntry `json:"wrapped_keys,omitempty"`
 }
 
 // ConnectionSharedResource represents a group resource shared into a connection.
