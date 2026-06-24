@@ -1916,7 +1916,7 @@ func TestGroupTierMembershipPredicate(t *testing.T) {
 // correctly includes/excludes members based on their group membership status.
 func TestGroupTierMembershipPredicateInclusionSet(t *testing.T) {
 	db := testDB(t)
-	repo := NewGroupRepository(db)
+	repo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	// Create test users
