@@ -660,7 +660,6 @@ func (r *ConnectionRepository) LeaveConnection(ctx context.Context, connectionID
 	})
 }
 
-
 // CheckUnanimousBlock checks if ALL other member groups in the connection have blocked the given group.
 func (r *ConnectionRepository) CheckUnanimousBlock(ctx context.Context, connectionID, groupID string) (bool, error) {
 	// Get all other members in the connection
@@ -793,10 +792,10 @@ func (r *ConnectionRepository) SetConnectionName(ctx context.Context, connection
 // =============================================================================
 
 var (
-	ErrChatProposalNotFound = errors.New("chat proposal not found")
-	ErrChatProposalNotPending = errors.New("chat proposal is not pending")
-	ErrChatProposalVoteNotFound = errors.New("vote not found for this group")
-	ErrChatProposalAlreadyVoted = errors.New("group has already voted on this proposal")
+	ErrChatProposalNotFound              = errors.New("chat proposal not found")
+	ErrChatProposalNotPending            = errors.New("chat proposal is not pending")
+	ErrChatProposalVoteNotFound          = errors.New("vote not found for this group")
+	ErrChatProposalAlreadyVoted          = errors.New("group has already voted on this proposal")
 	ErrConnectionSignalGroupLimitReached = errors.New("connection signal group limit reached (max 5)")
 )
 
@@ -1220,6 +1219,29 @@ func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sq
 		votes = append(votes, v)
 	}
 	return votes, rows.Err()
+}
+
+// =============================================================================
+// Connection Chat Access Predicates
+// =============================================================================
+
+// ConnectionChatUserAccessPredicate generates a SQL subquery that identifies
+// users eligible to access a connection signal chat based on access level.
+// For admin_only: returns only admins of member groups
+// For all_members: returns all members of member groups
+// The subquery uses IN syntax: WHERE user_id IN (...)
+func ConnectionChatUserAccessPredicate(accessLevel string) string {
+	adminOnlyFilter := ""
+	if accessLevel == string(models.ConnectionAccessLevelAdminOnly) {
+		adminOnlyFilter = "AND gm.is_admin = TRUE"
+	}
+
+	return fmt.Sprintf(`
+		SELECT DISTINCT gm.user_id
+		FROM group_members gm
+		JOIN connection_members cm ON gm.group_id = cm.group_id
+		WHERE cm.connection_id = ? %s
+	`, adminOnlyFilter)
 }
 
 // =============================================================================
