@@ -16,7 +16,8 @@ import {
     leaveConnection,
 } from '../api/connections.js';
 import { listResources, listMyGroups } from '../api/groups.js';
-import { getPrivateKey, decryptSecret } from '../crypto/index.js';
+import { getConnectionPublicKeys } from '../api/encryption.js';
+import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
 import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -307,6 +308,177 @@ async function handleChatVote(proposalId, vote) {
 }
 
 /**
+ * Show modal for proposing a new signal chat
+ * @param {Object} connection - Connection data
+ */
+async function showProposeChatModal(connection) {
+    try {
+        const myGroups = await listMyGroups();
+        const adminGroups = (myGroups.groups || []).filter(g => g.is_admin);
+
+        if (adminGroups.length === 0) {
+            toast.error('You are not an admin of any groups in this connection');
+            return;
+        }
+
+        // Filter to only groups that are members of this connection
+        const memberGroupIds = new Set(connection.member_groups?.map(g => g.id) || []);
+        const adminMemberGroups = adminGroups.filter(g => memberGroupIds.has(g.id));
+
+        if (adminMemberGroups.length === 0) {
+            toast.error('You are not an admin of any groups that are members of this connection');
+            return;
+        }
+
+        const proposerOptions = adminMemberGroups.map(g =>
+            `<option value="${g.id}">${escapeHtml(g.name)}</option>`
+        ).join('');
+
+        const formHtml = `
+            <form id="propose-chat-form">
+                <div class="form-group">
+                    <label for="proposer-group" class="form-label form-label--required">Your Group (Proposer)</label>
+                    <select id="proposer-group" name="proposer_group_id" class="form-input" required>
+                        <option value="">Select your group</option>
+                        ${proposerOptions}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="chat-name" class="form-label form-label--required">Chat Name</label>
+                    <input
+                        type="text"
+                        id="chat-name"
+                        name="name"
+                        class="form-input"
+                        required
+                        placeholder="e.g., Admin Coordination"
+                    >
+                </div>
+                <div class="form-group">
+                    <label for="chat-description" class="form-label">Description (optional)</label>
+                    <textarea
+                        id="chat-description"
+                        name="description"
+                        class="form-input"
+                        rows="3"
+                        placeholder="What is this chat for?"
+                    ></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label form-label--required">Access Level</label>
+                    <div style="display: flex; gap: var(--space-4); margin-top: var(--space-2);">
+                        <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                            <input type="radio" name="access_level" value="admin_only" checked>
+                            <span>Admin Only</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                            <input type="radio" name="access_level" value="all_members">
+                            <span>All Members</span>
+                        </label>
+                    </div>
+                </div>
+                <div id="propose-chat-error" class="form-error hidden"></div>
+            </form>
+        `;
+
+        modal.showModal({
+            title: 'Propose Signal Chat',
+            content: formHtml,
+            actions: [
+                { label: 'Cancel', type: 'secondary' },
+                {
+                    label: 'Propose Chat',
+                    type: 'primary',
+                    closeOnClick: false,
+                    onClick: async () => {
+                        await handleProposeChatSubmit(connection);
+                    },
+                },
+            ],
+        });
+    } catch (error) {
+        console.error('Failed to load groups:', error);
+        toast.error('Failed to load group list');
+    }
+}
+
+/**
+ * Handle propose chat form submission
+ * For admin_only chats, encrypts a placeholder invite link for connection members
+ * @param {Object} connection - Connection data
+ */
+async function handleProposeChatSubmit(connection) {
+    const form = document.getElementById('propose-chat-form');
+    const errorElement = document.getElementById('propose-chat-error');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const proposerGroupId = form.proposer_group_id.value;
+    const chatName = form.name.value.trim();
+    const chatDescription = form.description.value.trim();
+    const accessLevel = form.querySelector('input[name="access_level"]:checked')?.value || 'admin_only';
+
+    errorElement.classList.add('hidden');
+
+    try {
+        const requestData = {
+            group_name: chatName,
+            access_level: accessLevel,
+            proposer_group_id: proposerGroupId,
+        };
+
+        if (chatDescription) {
+            requestData.description = chatDescription;
+        }
+
+        if (accessLevel === 'admin_only') {
+            try {
+                const publicKeysResponse = await getConnectionPublicKeys(connection.id);
+                const memberKeys = publicKeysResponse.public_keys || [];
+
+                if (memberKeys.length === 0) {
+                    errorElement.textContent = 'No members with encryption keys found. Members need to log in to set up encryption.';
+                    errorElement.classList.remove('hidden');
+                    return;
+                }
+
+                const placeholderLink = `https://signal.group/${Math.random().toString(36).substring(7)}`;
+                const encrypted = await encryptForMembers(placeholderLink, memberKeys);
+
+                requestData.encrypted_payload = encrypted.ciphertext;
+                requestData.encryption_iv = encrypted.iv;
+                requestData.wrapped_keys = encrypted.wrappedKeys;
+            } catch (encryptError) {
+                let errorMessage = 'Encryption failed. Please ensure your encryption keys are set up.';
+                if (encryptError.name === 'OperationError') {
+                    errorMessage = 'Encryption operation failed. Check that your keys are available.';
+                } else if (encryptError.message) {
+                    errorMessage = encryptError.message;
+                }
+                errorElement.textContent = errorMessage;
+                errorElement.classList.remove('hidden');
+                return;
+            }
+        }
+
+        await proposeSignalChat(connection.id, requestData);
+        modal.closeModal();
+        toast.success('Signal chat proposed. Other group admins must approve.');
+        await loadChatProposals(connection.id);
+    } catch (error) {
+        let errorMessage = error.data?.message || 'Failed to propose signal chat';
+        if (error.message && error.message.includes('validation')) {
+            errorMessage = 'Invalid request. Check your inputs.';
+        }
+        errorElement.textContent = errorMessage;
+        errorElement.classList.remove('hidden');
+    }
+}
+
+/**
  * Bind action button handlers
  * @param {Object} connection - Connection data
  */
@@ -331,20 +503,7 @@ function bindActions(connection) {
     const proposeChatBtn = document.getElementById('propose-chat-btn');
     if (proposeChatBtn) {
         proposeChatBtn.addEventListener('click', async () => {
-            const chatName = prompt('Signal chat name:');
-            if (!chatName?.trim()) return;
-
-            const chatDescription = prompt('Description (optional):') || '';
-
-            try {
-                await proposeSignalChat(connection.id, {
-                    name: chatName.trim(),
-                    description: chatDescription.trim(),
-                });
-                toast.success('Signal chat proposed. Other group admins must approve.');
-            } catch (error) {
-                toast.error(error.data?.message || 'Failed to propose signal chat');
-            }
+            await showProposeChatModal(connection);
         });
     }
 
