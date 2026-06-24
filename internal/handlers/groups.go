@@ -1280,13 +1280,17 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 		}), "group_signal_group_created")
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":           signalGroup.ID,
 		"group_name":   signalGroup.GroupName,
 		"access_tier":  string(signalGroup.AccessTier),
 		"owner_group_id": groupID,
 		"created_at":   signalGroup.CreatedAt,
-	})
+	}
+	if signalGroup.PlaintextInviteLink != nil {
+		resp["plaintext_invite_link"] = *signalGroup.PlaintextInviteLink
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ListSignalGroups handles GET /api/v1/groups/:id/signal-groups

@@ -27,21 +27,22 @@ type SignalGroup struct {
 
 // SignalGroupPublic represents a signal group without sensitive data
 type SignalGroupPublic struct {
-	ID                  string    `json:"id"`
-	RegionID            *string   `json:"region_id,omitempty"`
-	SchoolID            *string   `json:"school_id,omitempty"`
-	DistrictID          *string   `json:"district_id,omitempty"`
-	OwnerGroupID        *string   `json:"owner_group_id,omitempty"`
-	ConnectionID        *string   `json:"connection_id,omitempty"`
-	RegionName          string    `json:"region_name,omitempty"`
-	SchoolName          string    `json:"school_name,omitempty"`
-	DistrictName        string    `json:"district_name,omitempty"`
-	Name                string    `json:"name"`
-	Description         *string   `json:"description,omitempty"`
-	MemberCountEstimate string    `json:"member_count_estimate,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	AccessTier          string    `json:"access_tier"`
-	HasPendingDeletion  bool      `json:"has_pending_deletion"`
+	ID                   string    `json:"id"`
+	RegionID             *string   `json:"region_id,omitempty"`
+	SchoolID             *string   `json:"school_id,omitempty"`
+	DistrictID           *string   `json:"district_id,omitempty"`
+	OwnerGroupID         *string   `json:"owner_group_id,omitempty"`
+	ConnectionID         *string   `json:"connection_id,omitempty"`
+	RegionName           string    `json:"region_name,omitempty"`
+	SchoolName           string    `json:"school_name,omitempty"`
+	DistrictName         string    `json:"district_name,omitempty"`
+	Name                 string    `json:"name"`
+	Description          *string   `json:"description,omitempty"`
+	MemberCountEstimate  string    `json:"member_count_estimate,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	AccessTier           string    `json:"access_tier"`
+	PlaintextInviteLink  *string   `json:"plaintext_invite_link,omitempty"`
+	HasPendingDeletion   bool      `json:"has_pending_deletion"`
 }
 
 // SignalGroupWithSecret includes encrypted secret for verified users
