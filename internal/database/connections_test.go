@@ -39,7 +39,7 @@ func createConnectionTestRegion(t *testing.T, db *DB, name string) string {
 
 func createConnectionTestGroup(t *testing.T, db *DB, name string, userID, regionID string) string {
 	t.Helper()
-	groupRepo := NewGroupRepository(db)
+	groupRepo := NewGroupRepository(db, nil)
 	group, err := groupRepo.Create(context.Background(), &models.CreateGroupRequest{
 		Name:       name,
 		Visibility: "listed",
@@ -89,7 +89,7 @@ func cleanupConnectionTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs, c
 
 func TestConnectionRepository_ProposeConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "propose1")
@@ -136,7 +136,7 @@ func TestConnectionRepository_ProposeConnection(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Accept(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "respond_accept1")
@@ -179,7 +179,7 @@ func TestConnectionRepository_RespondToProposal_Accept(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Decline(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "respond_decline1")
@@ -217,7 +217,7 @@ func TestConnectionRepository_RespondToProposal_Decline(t *testing.T) {
 
 func TestConnectionRepository_ListConnectionsForGroup(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "list_conn1")
@@ -256,7 +256,7 @@ func TestConnectionRepository_ListConnectionsForGroup(t *testing.T) {
 
 func TestConnectionRepository_InviteToConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "invite_conn1")
@@ -294,7 +294,7 @@ func TestConnectionRepository_InviteToConnection(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Expansion(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "expand1")
@@ -348,7 +348,7 @@ func TestConnectionRepository_RespondToProposal_Expansion(t *testing.T) {
 
 func TestConnectionRepository_LeaveConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "leave1")
@@ -387,7 +387,7 @@ func TestConnectionRepository_LeaveConnection(t *testing.T) {
 
 func TestConnectionRepository_LeaveConnection_Dissolves(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "dissolve1")
@@ -423,8 +423,8 @@ func TestConnectionRepository_LeaveConnection_Dissolves(t *testing.T) {
 
 func TestConnectionRepository_CheckUnanimousBlock(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
-	groupRepo := NewGroupRepository(db)
+	repo := NewConnectionRepository(db, nil)
+	groupRepo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "ublock1")
@@ -476,7 +476,7 @@ func TestConnectionRepository_CheckUnanimousBlock(t *testing.T) {
 
 func TestConnectionRepository_ProposeSignalChat(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "propose_chat1")
@@ -526,7 +526,7 @@ func TestConnectionRepository_ProposeSignalChat(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_approve1")
@@ -581,8 +581,8 @@ func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 // from connections the blocker shares with it, dissolving 2-member connections.
 func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
 	db := testDB(t)
-	connRepo := NewConnectionRepository(db)
-	groupRepo := NewGroupRepository(db)
+	connRepo := NewConnectionRepository(db, nil)
+	groupRepo := NewGroupRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "block_evict_user")
@@ -623,7 +623,7 @@ func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_adminonly1")
@@ -673,7 +673,7 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_allmembers1")
@@ -714,7 +714,7 @@ func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_decline1")
@@ -760,7 +760,7 @@ func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
 
 func TestConnectionRepository_ListChatProposals(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "list_chat1")
@@ -802,7 +802,7 @@ func TestConnectionRepository_ListChatProposals(t *testing.T) {
 
 func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "pending1")
@@ -849,7 +849,7 @@ func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 
 func TestConnectionChatUserAccessPredicate_AllMembers(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "chat_access_allmembers")
@@ -889,7 +889,7 @@ func TestConnectionChatUserAccessPredicate_AllMembers(t *testing.T) {
 
 func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db)
+	repo := NewConnectionRepository(db, nil)
 	ctx := context.Background()
 
 	// Create two users: one admin, one regular member
@@ -956,5 +956,218 @@ func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
 	}
 	if foundUserID != adminUserID {
 		t.Errorf("Expected admin user %s, got %s", adminUserID, foundUserID)
+	}
+}
+
+// TestConnectionRepository_LeaveConnection_RevokesSecrets verifies that leaving a connection
+// revokes secret keys for the leaving group and flags rekey for survivors.
+func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	connRepo := NewConnectionRepository(db, secretRepo)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "leave_secret_u1")
+	user2 := encCreateUser(t, db, "leave_secret_u2")
+	user3 := encCreateUser(t, db, "leave_secret_u3")
+
+	regionID := createConnectionTestRegion(t, db, "Secret Leave Region")
+	groupAID := createConnectionTestGroup(t, db, "Secret Leave GA", user1.ID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Secret Leave GB", user2.ID, regionID)
+	groupCID := createConnectionTestGroup(t, db, "Secret Leave GC", user3.ID, regionID)
+
+	// Form connection with all three groups
+	proposal, _ := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID, groupCID},
+	})
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupCID, true)
+	connectionID := *result.ConnectionID
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connectionID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id IS NOT NULL)")
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id IS NOT NULL")
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID, groupCID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Create a signal group and encrypted secret for this connection
+	sigGroupID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO signal_groups (id, connection_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, 'test_sig_group', ?, NOW(), TRUE)`, sigGroupID, connectionID, user1.ID)
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sigGroupID,
+		EncryptedPayload: "secret_payload",
+		EncryptionIV:     "secret_iv_123456",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_u1"},
+		{UserID: user2.ID, WrappedDEK: "dek_u2"},
+		{UserID: user3.ID, WrappedDEK: "dek_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Group B leaves the connection
+	err := connRepo.LeaveConnection(ctx, connectionID, groupBID)
+	if err != nil {
+		t.Fatalf("LeaveConnection failed: %v", err)
+	}
+
+	// Verify user1 (groupA, survivor) still has key but rekey_needed is true
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_u1" {
+		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
+	}
+
+	var rekeyNeeded bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+	}
+	if !rekeyNeeded {
+		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user3 (groupC, survivor) still has key but rekey_needed is true
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_u3" {
+		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
+	}
+
+	var rekey3Needed bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user3.ID).Scan(&rekey3Needed)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user3: %v", err)
+	}
+	if !rekey3Needed {
+		t.Error("user3 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user2 (groupB, leaving) key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+	if err == nil {
+		t.Error("user2 (leaving) key should be deleted")
+	}
+}
+
+// TestGroupRepository_BlockGroup_RevokesSecrets verifies that blocking a group evicts it from
+// connections and revokes its secret keys.
+func TestGroupRepository_BlockGroup_RevokesSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	groupRepo := NewGroupRepository(db, secretRepo)
+	connRepo := NewConnectionRepository(db, secretRepo)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "block_secret_u1")
+	user2 := encCreateUser(t, db, "block_secret_u2")
+	user3 := encCreateUser(t, db, "block_secret_u3")
+
+	regionID := createConnectionTestRegion(t, db, "Secret Block Region")
+	groupAID := createConnectionTestGroup(t, db, "Secret Block GA", user1.ID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Secret Block GB", user2.ID, regionID)
+	groupCID := createConnectionTestGroup(t, db, "Secret Block GC", user3.ID, regionID)
+
+	// Form connection with all three groups
+	proposal, _ := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID, groupCID},
+	})
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupCID, true)
+	connectionID := *result.ConnectionID
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connectionID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id IS NOT NULL)")
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id IS NOT NULL")
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID, groupCID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Create a signal group and encrypted secret for this connection
+	sigGroupID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO signal_groups (id, connection_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, 'test_sig_group', ?, NOW(), TRUE)`, sigGroupID, connectionID, user1.ID)
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sigGroupID,
+		EncryptedPayload: "block_payload",
+		EncryptionIV:     "block_iv_123456",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_u1"},
+		{UserID: user2.ID, WrappedDEK: "dek_u2"},
+		{UserID: user3.ID, WrappedDEK: "dek_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Group A blocks Group C (evicting C from connection)
+	err := groupRepo.BlockGroup(ctx, groupAID, groupCID)
+	if err != nil {
+		t.Fatalf("BlockGroup failed: %v", err)
+	}
+
+	// Verify group C is no longer a member of the connection
+	isMember, err := connRepo.IsConnectionMember(ctx, connectionID, groupCID)
+	if err != nil {
+		t.Fatalf("Failed to check membership: %v", err)
+	}
+	if isMember {
+		t.Error("Group C should have been evicted from connection")
+	}
+
+	// Verify user1 and user2 (surviving groups) still have keys but rekey_needed is true
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_u1" {
+		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
+	}
+
+	dek2, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user2 DEK: %v", err)
+	}
+	if dek2 != "dek_u2" {
+		t.Errorf("user2 (survivor) key should be unchanged, got '%s'", dek2)
+	}
+
+	var rekeyNeeded bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+	}
+	if !rekeyNeeded {
+		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user3 (blocked group) key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err == nil {
+		t.Error("user3 (blocked) key should be deleted")
 	}
 }

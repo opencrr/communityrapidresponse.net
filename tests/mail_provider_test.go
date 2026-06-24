@@ -63,7 +63,7 @@ func SetupMailProviderTest(t *testing.T, mailProvider config.MailProvider) *Mail
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db, nil)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
