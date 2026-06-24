@@ -5,10 +5,10 @@
 
 import { listMyGroups, listMyInvitations, respondToInvitation } from '../api/groups.js';
 import { listMyConnections, listPendingProposals, respondToProposal } from '../api/connections.js';
-import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
+import { getPendingRekeys, submitRekeys, getPendingGroupRotations, submitGroupRotation } from '../api/encryption.js';
 import { isPostcardVerified } from '../utils/store.js';
 import toast from '../components/toast.js';
-import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey } from '../crypto/index.js';
+import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
 
 /**
  * Render the My Groups page
@@ -42,12 +42,13 @@ async function loadAllData() {
     const loadingEl = document.getElementById('loading');
 
     try {
-        const [groupsResponse, invitationsResponse, connectionsResponse, proposalsResponse, rekeyResponse] = await Promise.all([
+        const [groupsResponse, invitationsResponse, connectionsResponse, proposalsResponse, rekeyResponse, groupRotationResponse] = await Promise.all([
             listMyGroups(),
             listMyInvitations(),
             listMyConnections(),
             listPendingProposals(),
             getPendingRekeys().catch(() => ({ pending_rekeys: [] })),
+            getPendingGroupRotations().catch(() => ({ pending_group_rotations: [] })),
         ]);
 
         const groups = groupsResponse.groups || [];
@@ -55,10 +56,11 @@ async function loadAllData() {
         const connections = connectionsResponse.connections || [];
         const proposals = proposalsResponse.proposals || [];
         const pendingRekeys = rekeyResponse.pending_rekeys || [];
+        const pendingGroupRotations = groupRotationResponse.pending_group_rotations || [];
 
         loadingEl.style.display = 'none';
 
-        renderPendingSection(invitations, proposals, pendingRekeys);
+        renderPendingSection(invitations, proposals, pendingRekeys, pendingGroupRotations);
         renderGroupsSection(groups);
         renderConnectionsSection(connections);
     } catch (error) {
@@ -79,16 +81,17 @@ async function loadAllData() {
 }
 
 /**
- * Render the pending items section (invitations + proposals + rekeys)
+ * Render the pending items section (invitations + proposals + rekeys + group rotations)
  * @param {Object[]} invitations - Group invitations
  * @param {Object[]} proposals - Connection proposals
- * @param {Object[]} pendingRekeys - Pending rekey operations
+ * @param {Object[]} pendingRekeys - Pending user-key rekey operations
+ * @param {Object[]} pendingGroupRotations - Pending group/connection DEK rotations
  */
-function renderPendingSection(invitations, proposals, pendingRekeys) {
+function renderPendingSection(invitations, proposals, pendingRekeys, pendingGroupRotations) {
     const sectionEl = document.getElementById('pending-section');
     if (!sectionEl) return;
 
-    if (invitations.length === 0 && proposals.length === 0 && pendingRekeys.length === 0) return;
+    if (invitations.length === 0 && proposals.length === 0 && pendingRekeys.length === 0 && pendingGroupRotations.length === 0) return;
 
     sectionEl.style.display = '';
     sectionEl.innerHTML = `
@@ -97,10 +100,11 @@ function renderPendingSection(invitations, proposals, pendingRekeys) {
             ${invitations.map(renderInvitationCard).join('')}
             ${proposals.map(renderProposalCard).join('')}
             ${pendingRekeys.map(renderRekeyCard).join('')}
+            ${pendingGroupRotations.map(renderGroupRotationCard).join('')}
         </div>
     `;
 
-    bindPendingActions(sectionEl);
+    bindPendingActions(sectionEl, pendingGroupRotations);
 }
 
 /**
@@ -179,10 +183,33 @@ function renderRekeyCard(rekey) {
 }
 
 /**
+ * Render a single group/connection DEK rotation card
+ * @param {Object} rotation - PendingGroupRotation object
+ * @returns {string} HTML string
+ */
+function renderGroupRotationCard(rotation) {
+    const groupName = rotation.group_name || 'Unknown Group';
+    return `
+        <div class="rekey-card" data-secret-id="${escapeHtml(rotation.secret_id)}">
+            <div>
+                <div style="font-weight: 500;">Secret rotation needed for "${escapeHtml(groupName)}"</div>
+                <div style="font-size: var(--font-size-sm); color: var(--color-gray-500); margin-top: var(--space-1);">
+                    A member was removed — rotate the secret to revoke their access
+                </div>
+            </div>
+            <div class="rekey-card__actions">
+                <button class="btn btn--primary btn--sm group-rotation-perform-btn" data-secret-id="${escapeHtml(rotation.secret_id)}">Rotate Secret</button>
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Bind accept/decline event handlers for pending items
  * @param {HTMLElement} sectionEl - The pending section element
+ * @param {Object[]} pendingGroupRotations - Pending group rotation data for lookups
  */
-function bindPendingActions(sectionEl) {
+function bindPendingActions(sectionEl, pendingGroupRotations) {
     sectionEl.querySelectorAll('.invitation-accept-btn').forEach(btn => {
         btn.addEventListener('click', () => handleInvitationResponse(btn.dataset.invitationId, 'accept'));
     });
@@ -197,6 +224,9 @@ function bindPendingActions(sectionEl) {
     });
     sectionEl.querySelectorAll('.rekey-perform-btn').forEach(btn => {
         btn.addEventListener('click', () => handleRekeyPerform(btn));
+    });
+    sectionEl.querySelectorAll('.group-rotation-perform-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleGroupRotationPerform(btn, pendingGroupRotations));
     });
 }
 
@@ -293,6 +323,60 @@ async function handleRekeyPerform(button) {
     } catch (error) {
         console.error('Failed to perform re-key:', error);
         toast.error(error.message || 'Failed to perform re-key');
+        button.disabled = false;
+    }
+}
+
+/**
+ * Handle performing a group/connection DEK rotation after member removal.
+ * Decrypts the old payload, generates a fresh DEK, re-encrypts, and re-wraps
+ * for all surviving recipients (including the caller themselves).
+ * @param {HTMLElement} button - The button that was clicked
+ * @param {Object[]} pendingGroupRotations - All pending group rotation records
+ */
+async function handleGroupRotationPerform(button, pendingGroupRotations) {
+    const secretId = button.dataset.secretId;
+    const rotation = pendingGroupRotations.find(r => r.secret_id === secretId);
+    if (!rotation) {
+        toast.error('Rotation data not found');
+        return;
+    }
+
+    const cardEl = button.closest('.rekey-card');
+    button.disabled = true;
+
+    try {
+        const privateKey = await getPrivateKey();
+        if (!privateKey) {
+            toast.error('No private key available for rotation');
+            button.disabled = false;
+            return;
+        }
+
+        // Decrypt old payload using caller's wrapped DEK
+        const plaintext = await decryptSecret(
+            rotation.encrypted_payload,
+            rotation.encryption_iv,
+            rotation.caller_wrapped_dek,
+            privateKey,
+        );
+
+        // Re-encrypt with fresh DEK and wrap for all surviving recipients
+        const { ciphertext, iv, wrappedKeys } = await encryptForMembers(plaintext, rotation.recipients);
+
+        await submitGroupRotation({
+            secret_id: rotation.secret_id,
+            encrypted_payload: ciphertext,
+            encryption_iv: iv,
+            wrapped_keys: wrappedKeys,
+        });
+
+        toast.success('Secret rotated successfully');
+        if (cardEl) cardEl.remove();
+        maybeHidePendingSection();
+    } catch (error) {
+        console.error('Failed to perform group rotation:', error);
+        toast.error(error.message || 'Failed to rotate secret');
         button.disabled = false;
     }
 }

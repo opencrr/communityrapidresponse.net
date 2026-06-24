@@ -2011,16 +2011,16 @@ func TestEncryptedSecretRepository_RevokeConnectionSecretKeysForGroup(t *testing
 		t.Error("user3 (leaving) key should be deleted")
 	}
 
-	var rekeyNeeded bool
+	var groupRotationPending bool
 	err = db.QueryRowContext(ctx, `
-		SELECT rekey_needed FROM encrypted_secret_keys
+		SELECT group_rotation_pending FROM encrypted_secret_keys
 		WHERE secret_id = ? AND user_id = ?
-	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	`, secret.ID, user1.ID).Scan(&groupRotationPending)
 	if err != nil {
-		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+		t.Fatalf("Failed to query group_rotation_pending for user1: %v", err)
 	}
-	if !rekeyNeeded {
-		t.Error("user1 (survivor) should have rekey_needed=true")
+	if !groupRotationPending {
+		t.Error("user1 (survivor) should have group_rotation_pending=true")
 	}
 }
 
@@ -2097,19 +2097,172 @@ func TestEncryptedSecretRepository_RevokeGroupSecretKeysForUser(t *testing.T) {
 		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
 	}
 
-	// Survivors must have rekey_needed=TRUE.
+	// Survivors must have group_rotation_pending=TRUE.
 	for _, uid := range []string{user2ID, user3ID} {
-		var rekeyNeeded bool
+		var groupRotationPending bool
 		if err := db.QueryRowContext(ctx, `
-			SELECT rekey_needed FROM encrypted_secret_keys
+			SELECT group_rotation_pending FROM encrypted_secret_keys
 			WHERE secret_id = ? AND user_id = ?
-		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
-			t.Fatalf("Failed to query rekey flag for %s: %v", uid, err)
+		`, secret.ID, uid).Scan(&groupRotationPending); err != nil {
+			t.Fatalf("Failed to query group_rotation_pending for %s: %v", uid, err)
 		}
-		if !rekeyNeeded {
-			t.Errorf("survivor %s should have rekey_needed=true", uid)
+		if !groupRotationPending {
+			t.Errorf("survivor %s should have group_rotation_pending=true", uid)
 		}
 	}
+}
+
+func TestEncryptedSecretRepository_GetPendingGroupRotationsAndSubmit(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	ekRepo := NewEncryptionKeyRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	user1ID := createConnectionTestUser(t, db, "pgr_u1")
+	user2ID := createConnectionTestUser(t, db, "pgr_u2")
+	user3ID := createConnectionTestUser(t, db, "pgr_u3")
+	regionID := createConnectionTestRegion(t, db, "PGR Region")
+	groupID := createConnectionTestGroup(t, db, "PGR Group", user1ID, regionID)
+
+	// Upload encryption keys for all users so GetPendingGroupRotations can join them
+	for _, u := range []struct{ id, pub string }{
+		{user1ID, "pub_pgr_u1"},
+		{user2ID, "pub_pgr_u2"},
+		{user3ID, "pub_pgr_u3"},
+	} {
+		_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+			UserID: u.id, PublicKey: u.pub,
+			WrappedPrivateKey: "priv", KeySalt: "salt_1234567890123", KeyIV: "iv_123456789012",
+		})
+	}
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?, ?)", user1ID, user2ID, user3ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
+		cleanupConnectionTest(t, db, []string{groupID}, []string{user1ID, user2ID, user3ID}, []string{regionID}, nil)
+	})
+
+	sg := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    "PGR Signal Group",
+		AccessTier:   models.AccessTierMember,
+		CreatedBy:    &user1ID,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		t.Fatalf("Failed to create signal group: %v", err)
+	}
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "pgr_old_payload",
+		EncryptionIV:     "pgr_old_iv_12345",
+		UpdatedBy:        user1ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1ID, WrappedDEK: "dek_pgr_u1"},
+		{UserID: user2ID, WrappedDEK: "dek_pgr_u2"},
+		{UserID: user3ID, WrappedDEK: "dek_pgr_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Simulate user3 being removed: delete their key and flag survivors
+	if err := db.Transaction(ctx, func(tx *sql.Tx) error {
+		return secretRepo.RevokeGroupSecretKeysForUser(ctx, tx, groupID, user3ID)
+	}); err != nil {
+		t.Fatalf("RevokeGroupSecretKeysForUser failed: %v", err)
+	}
+
+	t.Run("survivors discover pending rotation", func(t *testing.T) {
+		// user1 (survivor) should see the pending group rotation
+		rotations, err := secretRepo.GetPendingGroupRotations(ctx, user1ID)
+		if err != nil {
+			t.Fatalf("GetPendingGroupRotations failed: %v", err)
+		}
+		if len(rotations) != 1 {
+			t.Fatalf("expected 1 pending group rotation for user1, got %d", len(rotations))
+		}
+		r := rotations[0]
+		if r.SecretID != secret.ID {
+			t.Errorf("expected secret_id %s, got %s", secret.ID, r.SecretID)
+		}
+		if r.CallerWrappedDEK != "dek_pgr_u1" {
+			t.Errorf("expected caller_wrapped_dek 'dek_pgr_u1', got %s", r.CallerWrappedDEK)
+		}
+		if r.EncryptedPayload != "pgr_old_payload" {
+			t.Errorf("expected encrypted_payload 'pgr_old_payload', got %s", r.EncryptedPayload)
+		}
+		// Recipients should be user1 and user2 (user3 was removed)
+		recipientIDs := make(map[string]string)
+		for _, rec := range r.Recipients {
+			recipientIDs[rec.UserID] = rec.PublicKey
+		}
+		if _, ok := recipientIDs[user1ID]; !ok {
+			t.Error("caller (user1) must be in recipients for self-re-wrap")
+		}
+		if _, ok := recipientIDs[user2ID]; !ok {
+			t.Error("user2 (survivor) must be in recipients")
+		}
+		if _, ok := recipientIDs[user3ID]; ok {
+			t.Error("user3 (removed) must NOT be in recipients")
+		}
+	})
+
+	t.Run("submit group rotation clears flag and all survivors can still decrypt", func(t *testing.T) {
+		newKeys := []models.WrappedKeyEntry{
+			{UserID: user1ID, WrappedDEK: "new_dek_pgr_u1"},
+			{UserID: user2ID, WrappedDEK: "new_dek_pgr_u2"},
+		}
+		if err := secretRepo.SubmitGroupRotation(ctx, secret.ID, user1ID, "pgr_new_payload", "pgr_new_iv_1234", newKeys); err != nil {
+			t.Fatalf("SubmitGroupRotation failed: %v", err)
+		}
+
+		// Payload must be updated
+		updated, err := secretRepo.GetByID(ctx, secret.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if updated.EncryptedPayload != "pgr_new_payload" {
+			t.Errorf("expected new payload, got %s", updated.EncryptedPayload)
+		}
+
+		// Survivors retain their keys
+		dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1ID)
+		if err != nil || dek1 != "new_dek_pgr_u1" {
+			t.Errorf("user1 should have new DEK, got %s err %v", dek1, err)
+		}
+		dek2, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2ID)
+		if err != nil || dek2 != "new_dek_pgr_u2" {
+			t.Errorf("user2 should have new DEK, got %s err %v", dek2, err)
+		}
+
+		// group_rotation_pending must be cleared for survivors after UpdatePayloadAndKeys re-inserts
+		var pending bool
+		if err := db.QueryRowContext(ctx, `SELECT group_rotation_pending FROM encrypted_secret_keys WHERE secret_id = ? AND user_id = ?`, secret.ID, user1ID).Scan(&pending); err != nil {
+			t.Fatalf("query group_rotation_pending: %v", err)
+		}
+		if pending {
+			t.Error("group_rotation_pending should be FALSE after rotation")
+		}
+
+		// No pending group rotations remain
+		rotations, err := secretRepo.GetPendingGroupRotations(ctx, user1ID)
+		if err != nil {
+			t.Fatalf("GetPendingGroupRotations after submit: %v", err)
+		}
+		if len(rotations) != 0 {
+			t.Errorf("expected 0 pending group rotations after submit, got %d", len(rotations))
+		}
+
+		// Removed user must have no key
+		_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user3ID)
+		if err == nil {
+			t.Error("user3 (removed) must not have a key after rotation")
+		}
+	})
 }
 
 func TestEncryptionKeyRepository_GetPublicKeysForConnection_AllMembers(t *testing.T) {

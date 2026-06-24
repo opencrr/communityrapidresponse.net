@@ -61,3 +61,20 @@ export async function getPendingRekeys() {
 export async function submitRekeys(data) {
     return post('/encryption/rekey', data);
 }
+
+/**
+ * Get pending group/connection DEK rotations for the current user
+ * GET /api/v1/encryption/pending-group-rotations
+ */
+export async function getPendingGroupRotations() {
+    return get('/encryption/pending-group-rotations');
+}
+
+/**
+ * Submit a group/connection DEK rotation (fresh DEK + re-encrypted payload for all survivors)
+ * POST /api/v1/encryption/group-rekey
+ * @param {Object} data - { secret_id, encrypted_payload, encryption_iv, wrapped_keys: [{user_id, wrapped_dek}] }
+ */
+export async function submitGroupRotation(data) {
+    return post('/encryption/group-rekey', data);
+}

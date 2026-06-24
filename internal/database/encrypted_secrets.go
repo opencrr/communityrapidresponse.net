@@ -281,13 +281,27 @@ func (r *EncryptedSecretRepository) SubmitRekey(ctx context.Context, secretID, t
 
 // PendingRekey represents a pending re-key operation
 type PendingRekey struct {
-	SecretID         string `json:"secret_id"`
-	TargetUserID     string `json:"target_user_id"`
-	TargetPublicKey  string `json:"target_public_key"`
-	CallerWrappedDEK string `json:"caller_wrapped_dek"`
+	SecretID         string  `json:"secret_id"`
+	TargetUserID     string  `json:"target_user_id"`
+	TargetPublicKey  string  `json:"target_public_key"`
+	CallerWrappedDEK string  `json:"caller_wrapped_dek"`
 	GroupID          *string `json:"group_id,omitempty"`
 	GroupName        *string `json:"group_name,omitempty"`
 	ConnectionID     *string `json:"connection_id,omitempty"`
+}
+
+// PendingGroupRotation represents a pending group/connection DEK rotation where a member was removed.
+// Unlike PendingRekey (user key-pair rotation), this requires generating a fresh DEK and
+// re-encrypting the payload for all surviving recipients.
+type PendingGroupRotation struct {
+	SecretID         string                  `json:"secret_id"`
+	EncryptedPayload string                  `json:"encrypted_payload"`
+	EncryptionIV     string                  `json:"encryption_iv"`
+	CallerWrappedDEK string                  `json:"caller_wrapped_dek"`
+	GroupID          *string                 `json:"group_id,omitempty"`
+	GroupName        *string                 `json:"group_name,omitempty"`
+	ConnectionID     *string                 `json:"connection_id,omitempty"`
+	Recipients       []models.PublicKeyEntry `json:"recipients"`
 }
 
 // GetUsersWithSharedSecrets returns distinct user IDs who share at least one secret with the given user
@@ -314,6 +328,95 @@ func (r *EncryptedSecretRepository) GetUsersWithSharedSecrets(ctx context.Contex
 		userIDs = append(userIDs, uid)
 	}
 	return userIDs, rows.Err()
+}
+
+// GetPendingGroupRotations returns secrets where the caller is a surviving recipient of a group/connection
+// member-removal rotation. Each entry includes the caller's wrapped DEK (to decrypt the old payload)
+// and the full list of current recipients to re-wrap the fresh DEK for.
+func (r *EncryptedSecretRepository) GetPendingGroupRotations(ctx context.Context, callerUserID string) ([]PendingGroupRotation, error) {
+	query := `
+		SELECT es.id, es.encrypted_payload, es.encryption_iv,
+			esk_self.wrapped_dek AS caller_wrapped_dek,
+			sg.id AS signal_group_id, sg.group_name, sg.connection_id,
+			esk_all.user_id AS recipient_user_id,
+			uek.public_key AS recipient_public_key
+		FROM encrypted_secret_keys esk_self
+		INNER JOIN encrypted_secrets es ON esk_self.secret_id = es.id
+		INNER JOIN encrypted_secret_keys esk_all ON esk_all.secret_id = es.id
+		INNER JOIN user_encryption_keys uek ON esk_all.user_id = uek.user_id
+		LEFT JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE esk_self.user_id = ?
+		AND esk_self.group_rotation_pending = TRUE
+		ORDER BY es.id, esk_all.user_id
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, callerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	rotationMap := make(map[string]*PendingGroupRotation)
+	var order []string
+
+	for rows.Next() {
+		var secretID, encryptedPayload, encryptionIV, callerWrappedDEK string
+		var groupID, groupName, connectionID *string
+		var recipientUserID, recipientPublicKey string
+
+		if err := rows.Scan(
+			&secretID, &encryptedPayload, &encryptionIV, &callerWrappedDEK,
+			&groupID, &groupName, &connectionID,
+			&recipientUserID, &recipientPublicKey,
+		); err != nil {
+			return nil, err
+		}
+
+		if _, exists := rotationMap[secretID]; !exists {
+			rotationMap[secretID] = &PendingGroupRotation{
+				SecretID:         secretID,
+				EncryptedPayload: encryptedPayload,
+				EncryptionIV:     encryptionIV,
+				CallerWrappedDEK: callerWrappedDEK,
+				GroupID:          groupID,
+				GroupName:        groupName,
+				ConnectionID:     connectionID,
+				Recipients:       []models.PublicKeyEntry{},
+			}
+			order = append(order, secretID)
+		}
+
+		rotationMap[secretID].Recipients = append(rotationMap[secretID].Recipients, models.PublicKeyEntry{
+			UserID:    recipientUserID,
+			PublicKey: recipientPublicKey,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make([]PendingGroupRotation, 0, len(order))
+	for _, id := range order {
+		results = append(results, *rotationMap[id])
+	}
+	return results, nil
+}
+
+// SubmitGroupRotation validates that the caller is a pending group-rotation survivor for the secret,
+// then atomically replaces the encrypted payload and all wrapped keys. The caller must include
+// their own wrapped key entry so they retain decrypt access after the rotation.
+func (r *EncryptedSecretRepository) SubmitGroupRotation(ctx context.Context, secretID, callerUserID, payload, iv string, wrappedKeys []models.WrappedKeyEntry) error {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ? AND group_rotation_pending = TRUE
+	`, secretID, callerUserID).Scan(&count); err != nil {
+		return fmt.Errorf("check pending group rotation: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("no pending group rotation for secret %s caller %s", secretID, callerUserID)
+	}
+	return r.UpdatePayloadAndKeys(ctx, secretID, payload, iv, callerUserID, wrappedKeys)
 }
 
 // RevokeConnectionSecretKeysForGroup deletes encrypted_secret_keys for users in a leaving group
@@ -423,7 +526,7 @@ func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx conte
 		return fmt.Errorf("iterate surviving users: %w", err)
 	}
 
-	// Flag rekey_needed for surviving users
+	// Flag group_rotation_pending for surviving users so they know to generate a fresh DEK
 	if len(survivingUserIDs) > 0 {
 		secretPlaceholders := make([]string, len(secretIDs))
 		userPlaceholders := make([]string, len(survivingUserIDs))
@@ -441,14 +544,14 @@ func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx conte
 		// #nosec G201 -- SQL string is parameterized with ? placeholders; no user input in format
 		updateQuery := fmt.Sprintf(`
 			UPDATE encrypted_secret_keys
-			SET rekey_needed = TRUE
+			SET group_rotation_pending = TRUE
 			WHERE secret_id IN (%s)
 			AND user_id IN (%s)
 		`, strings.Join(secretPlaceholders, ","), strings.Join(userPlaceholders, ","))
 
 		_, err = tx.ExecContext(ctx, updateQuery, args...)
 		if err != nil {
-			return fmt.Errorf("flag rekey for survivors: %w", err)
+			return fmt.Errorf("flag group rotation for survivors: %w", err)
 		}
 	}
 
@@ -472,11 +575,11 @@ func (r *EncryptedSecretRepository) RevokeGroupSecretKeysForUser(ctx context.Con
 		UPDATE encrypted_secret_keys esk
 		JOIN encrypted_secrets es ON esk.secret_id = es.id
 		JOIN signal_groups sg ON es.signal_group_id = sg.id
-		SET esk.rekey_needed = TRUE
+		SET esk.group_rotation_pending = TRUE
 		WHERE sg.owner_group_id = ?
 	`
 	if _, err := tx.ExecContext(ctx, flagQuery, groupID); err != nil {
-		return fmt.Errorf("flag rekey for survivors: %w", err)
+		return fmt.Errorf("flag group rotation for survivors: %w", err)
 	}
 
 	return nil

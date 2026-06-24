@@ -96,6 +96,16 @@ type FinalizeSecretUpdateRequest struct {
 	WrappedKeys      []WrappedKeyEntry `json:"wrapped_keys"`
 }
 
+// SubmitGroupRotationRequest is the request body for submitting a group/connection DEK rotation.
+// The caller re-encrypts the secret with a fresh DEK and re-wraps it for all surviving recipients,
+// including themselves. wrapped_keys must contain an entry for the caller.
+type SubmitGroupRotationRequest struct {
+	SecretID         string            `json:"secret_id"`
+	EncryptedPayload string            `json:"encrypted_payload"`
+	EncryptionIV     string            `json:"encryption_iv"`
+	WrappedKeys      []WrappedKeyEntry `json:"wrapped_keys"`
+}
+
 // --- Response types ---
 
 // EncryptedSecretResponse includes the encrypted payload and the requesting user's wrapped DEK
