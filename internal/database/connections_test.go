@@ -39,7 +39,7 @@ func createConnectionTestRegion(t *testing.T, db *DB, name string) string {
 
 func createConnectionTestGroup(t *testing.T, db *DB, name string, userID, regionID string) string {
 	t.Helper()
-	groupRepo := NewGroupRepository(db, nil)
+	groupRepo := NewGroupRepository(db)
 	group, err := groupRepo.Create(context.Background(), &models.CreateGroupRequest{
 		Name:       name,
 		Visibility: "listed",
@@ -89,7 +89,7 @@ func cleanupConnectionTest(t *testing.T, db *DB, groupIDs, userIDs, regionIDs, c
 
 func TestConnectionRepository_ProposeConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "propose1")
@@ -136,7 +136,7 @@ func TestConnectionRepository_ProposeConnection(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Accept(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "respond_accept1")
@@ -179,7 +179,7 @@ func TestConnectionRepository_RespondToProposal_Accept(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Decline(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "respond_decline1")
@@ -217,7 +217,7 @@ func TestConnectionRepository_RespondToProposal_Decline(t *testing.T) {
 
 func TestConnectionRepository_ListConnectionsForGroup(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "list_conn1")
@@ -256,7 +256,7 @@ func TestConnectionRepository_ListConnectionsForGroup(t *testing.T) {
 
 func TestConnectionRepository_InviteToConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "invite_conn1")
@@ -294,7 +294,7 @@ func TestConnectionRepository_InviteToConnection(t *testing.T) {
 
 func TestConnectionRepository_RespondToProposal_Expansion(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "expand1")
@@ -348,7 +348,7 @@ func TestConnectionRepository_RespondToProposal_Expansion(t *testing.T) {
 
 func TestConnectionRepository_LeaveConnection(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "leave1")
@@ -387,7 +387,7 @@ func TestConnectionRepository_LeaveConnection(t *testing.T) {
 
 func TestConnectionRepository_LeaveConnection_Dissolves(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "dissolve1")
@@ -423,8 +423,8 @@ func TestConnectionRepository_LeaveConnection_Dissolves(t *testing.T) {
 
 func TestConnectionRepository_CheckUnanimousBlock(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
-	groupRepo := NewGroupRepository(db, nil)
+	repo := NewConnectionRepository(db)
+	groupRepo := NewGroupRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "ublock1")
@@ -476,7 +476,7 @@ func TestConnectionRepository_CheckUnanimousBlock(t *testing.T) {
 
 func TestConnectionRepository_ProposeSignalChat(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "propose_chat1")
@@ -526,7 +526,7 @@ func TestConnectionRepository_ProposeSignalChat(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_approve1")
@@ -581,8 +581,8 @@ func TestConnectionRepository_VoteOnChatProposal_Approve(t *testing.T) {
 // from connections the blocker shares with it, dissolving 2-member connections.
 func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
 	db := testDB(t)
-	connRepo := NewConnectionRepository(db, nil)
-	groupRepo := NewGroupRepository(db, nil)
+	connRepo := NewConnectionRepository(db)
+	groupRepo := NewGroupRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "block_evict_user")
@@ -623,7 +623,7 @@ func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_adminonly1")
@@ -676,7 +676,7 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_allmembers1")
@@ -720,7 +720,7 @@ func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 
 func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_decline1")
@@ -766,7 +766,7 @@ func TestConnectionRepository_VoteOnChatProposal_Decline(t *testing.T) {
 
 func TestConnectionRepository_ListChatProposals(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "list_chat1")
@@ -808,7 +808,7 @@ func TestConnectionRepository_ListChatProposals(t *testing.T) {
 
 func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "pending1")
@@ -855,7 +855,7 @@ func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 
 func TestConnectionChatUserAccessPredicate_AllMembers(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "chat_access_allmembers")
@@ -895,7 +895,7 @@ func TestConnectionChatUserAccessPredicate_AllMembers(t *testing.T) {
 
 func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
 	db := testDB(t)
-	repo := NewConnectionRepository(db, nil)
+	repo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	// Create two users: one admin, one regular member
@@ -970,7 +970,7 @@ func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
 func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 	db := testDB(t)
 	secretRepo := NewEncryptedSecretRepository(db)
-	connRepo := NewConnectionRepository(db, secretRepo)
+	connRepo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	user1 := encCreateUser(t, db, "leave_secret_u1")
@@ -1078,8 +1078,8 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 func TestGroupRepository_BlockGroup_RevokesSecrets(t *testing.T) {
 	db := testDB(t)
 	secretRepo := NewEncryptedSecretRepository(db)
-	groupRepo := NewGroupRepository(db, secretRepo)
-	connRepo := NewConnectionRepository(db, secretRepo)
+	groupRepo := NewGroupRepository(db)
+	connRepo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	user1 := encCreateUser(t, db, "block_secret_u1")

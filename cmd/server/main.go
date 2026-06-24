@@ -227,7 +227,7 @@ func main() {
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
 
 	// Initialize group repository and handler
-	groupRepo := database.NewGroupRepository(db, encryptedSecretRepo)
+	groupRepo := database.NewGroupRepository(db)
 	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	groupHandler.SetRateLimiter(rateLimiter)
 
@@ -237,7 +237,7 @@ func main() {
 	)
 
 	// Initialize connection repository and handler
-	connectionRepo := database.NewConnectionRepository(db, encryptedSecretRepo)
+	connectionRepo := database.NewConnectionRepository(db)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
 
 	// Initialize encryption handler

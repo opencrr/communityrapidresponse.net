@@ -61,7 +61,7 @@ func SetupAPIContractTest(t *testing.T) *APIContractTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db, nil)
+	communityGroupRepo := database.NewGroupRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
