@@ -4,7 +4,6 @@
  */
 
 import { listMyGroups, listMyInvitations, respondToInvitation } from '../api/groups.js';
-import { getGroup } from '../api/signalGroups.js';
 import { listMyConnections, listPendingProposals, respondToProposal } from '../api/connections.js';
 import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
 import { isPostcardVerified } from '../utils/store.js';
@@ -339,28 +338,12 @@ async function handleGroupRotation(secretId, secretRekeys) {
         throw new Error('No wrapped DEK available for group rotation');
     }
 
-    // Fetch the full secret to get encrypted_payload and encryption_iv
-    let encryptedPayload, encryptionIv;
-    const groupId = secretRekeys[0].group_id;
-    const connectionId = secretRekeys[0].connection_id;
+    // Get encrypted_payload and encryption_iv from the pending rekeys response
+    const encryptedPayload = secretRekeys[0].encrypted_payload;
+    const encryptionIv = secretRekeys[0].encryption_iv;
 
-    if (groupId) {
-        const group = await getGroup(groupId);
-        // The group response may have encrypted_secret as a nested field or at the top level
-        const secret = group.encrypted_secret || group;
-        encryptedPayload = secret.encrypted_payload;
-        encryptionIv = secret.encryption_iv;
-
-        if (!encryptedPayload || !encryptionIv) {
-            throw new Error('Group secret payload not found');
-        }
-    } else if (connectionId) {
-        // For connections, we'd need to fetch the connection's secret
-        // This would require a getConnection API call
-        // For now, throw an error to indicate this needs to be implemented
-        throw new Error('Connection rotation not yet implemented');
-    } else {
-        throw new Error('No group or connection information available');
+    if (!encryptedPayload || !encryptionIv) {
+        throw new Error('Group secret payload not found in pending rekeys');
     }
 
     // Prepare survivors with their public keys from the pending rekeys
