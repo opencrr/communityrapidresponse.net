@@ -19,6 +19,7 @@ import {
     encryptForMembers,
     decryptSecret,
     generateDEK,
+    aesGcmEncrypt,
     wrapDEK,
     unwrapDEK,
     wrapDEKForRecipients,
@@ -165,4 +166,4 @@ export async function getPublicKey() {
 export { hasLocalKey, clearLocalKeys };
 
 // Re-export envelope encryption functions for direct use
-export { encryptForMembers, decryptSecret, generateDEK, wrapDEK, unwrapDEK, wrapDEKForRecipients, importPublicKey, exportPublicKey };
+export { encryptForMembers, decryptSecret, generateDEK, aesGcmEncrypt, wrapDEK, unwrapDEK, wrapDEKForRecipients, importPublicKey, exportPublicKey };

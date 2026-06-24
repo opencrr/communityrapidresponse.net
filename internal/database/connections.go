@@ -1222,6 +1222,29 @@ func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sq
 }
 
 // =============================================================================
+// Connection Chat Access Predicates
+// =============================================================================
+
+// ConnectionChatUserAccessPredicate generates a SQL subquery that identifies
+// users eligible to access a connection signal chat based on access level.
+// For admin_only: returns only admins of member groups
+// For all_members: returns all members of member groups
+// The subquery uses IN syntax: WHERE user_id IN (...)
+func ConnectionChatUserAccessPredicate(accessLevel string) string {
+	adminOnlyFilter := ""
+	if accessLevel == string(models.ConnectionAccessLevelAdminOnly) {
+		adminOnlyFilter = "AND gm.is_admin = TRUE"
+	}
+
+	return fmt.Sprintf(`
+		SELECT DISTINCT gm.user_id
+		FROM group_members gm
+		JOIN connection_members cm ON gm.group_id = cm.group_id
+		WHERE cm.connection_id = ? %s
+	`, adminOnlyFilter)
+}
+
+// =============================================================================
 // Connection Shared Resources
 // =============================================================================
 
