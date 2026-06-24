@@ -3334,3 +3334,252 @@ func TestGroupRepository_BrowsePostings(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// RemoveMember and BlockAndRemoveMember with Encrypted Keys Tests
+// =============================================================================
+
+func TestGroupRepository_RemoveMemberRevokesKeys(t *testing.T) {
+	db := testDB(t)
+	grpRepo := NewGroupRepository(db)
+	secretRepo := NewEncryptedSecretRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	user1 := createGroupTestUser(t, db, "rmk_u1")
+	user2 := createGroupTestUser(t, db, "rmk_u2")
+	user3 := createGroupTestUser(t, db, "rmk_u3")
+	regionID := createGroupTestRegion(t, db, "RemoveKeys Region")
+
+	var groupID string
+	t.Cleanup(func() {
+		if groupID != "" {
+			_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
+		}
+		cleanupGroupTest(t, db, []string{groupID}, []string{user1, user2, user3}, []string{regionID})
+	})
+
+	// Create a group with all three users
+	req := &models.CreateGroupRequest{
+		Name:      "Remove Keys Test Group",
+		RegionIDs: []string{regionID},
+	}
+	group, err := grpRepo.Create(ctx, req, user1)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	groupID = group.ID
+
+	if err := grpRepo.AddMember(ctx, groupID, user2, false, false); err != nil {
+		t.Fatalf("Add user2 failed: %v", err)
+	}
+	if err := grpRepo.AddMember(ctx, groupID, user3, false, false); err != nil {
+		t.Fatalf("Add user3 failed: %v", err)
+	}
+
+	// Create a signal group for this group
+	sg := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    "Remove Keys Signal Group",
+		AccessTier:   models.AccessTierMember,
+		CreatedBy:    &user1,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		t.Fatalf("Create signal group failed: %v", err)
+	}
+
+	// Create an encrypted secret with wrapped keys for all users
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "rmk_payload",
+		EncryptionIV:     "rmk_iv_12345678",
+		UpdatedBy:        user1,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1, WrappedDEK: "dek_rmk_u1"},
+		{UserID: user2, WrappedDEK: "dek_rmk_u2"},
+		{UserID: user3, WrappedDEK: "dek_rmk_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Create secret failed: %v", err)
+	}
+
+	// Remove user2
+	if err := grpRepo.RemoveMember(ctx, groupID, user2); err != nil {
+		t.Fatalf("RemoveMember failed: %v", err)
+	}
+
+	// Verify user2 is no longer a member
+	isMember, err := grpRepo.IsUserMember(ctx, groupID, user2)
+	if err != nil {
+		t.Fatalf("IsUserMember check failed: %v", err)
+	}
+	if isMember {
+		t.Error("Expected user2 to not be a member after removal")
+	}
+
+	// Verify user2's wrapped key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2)
+	if err == nil {
+		t.Error("Expected user2's wrapped key to be revoked")
+	}
+
+	// Verify survivors' keys still exist
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_rmk_u1" {
+		t.Errorf("Expected user1 key unchanged, got %s", dek1)
+	}
+
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_rmk_u3" {
+		t.Errorf("Expected user3 key unchanged, got %s", dek3)
+	}
+
+	// Verify survivors are flagged for rekey
+	for _, uid := range []string{user1, user3} {
+		var rekeyNeeded bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT rekey_needed FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
+			t.Fatalf("Failed to check rekey flag for %s: %v", uid, err)
+		}
+		if !rekeyNeeded {
+			t.Errorf("Expected user %s to have rekey_needed=true", uid)
+		}
+	}
+}
+
+func TestGroupRepository_BlockAndRemoveMemberRevokesKeys(t *testing.T) {
+	db := testDB(t)
+	grpRepo := NewGroupRepository(db)
+	secretRepo := NewEncryptedSecretRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	user1 := createGroupTestUser(t, db, "bark_u1")
+	user2 := createGroupTestUser(t, db, "bark_u2")
+	user3 := createGroupTestUser(t, db, "bark_u3")
+	regionID := createGroupTestRegion(t, db, "BlockKeys Region")
+
+	var groupID string
+	t.Cleanup(func() {
+		if groupID != "" {
+			_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
+		}
+		cleanupGroupTest(t, db, []string{groupID}, []string{user1, user2, user3}, []string{regionID})
+	})
+
+	// Create a group with all three users
+	req := &models.CreateGroupRequest{
+		Name:      "Block Keys Test Group",
+		RegionIDs: []string{regionID},
+	}
+	group, err := grpRepo.Create(ctx, req, user1)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	groupID = group.ID
+
+	if err := grpRepo.AddMember(ctx, groupID, user2, false, false); err != nil {
+		t.Fatalf("Add user2 failed: %v", err)
+	}
+	if err := grpRepo.AddMember(ctx, groupID, user3, false, false); err != nil {
+		t.Fatalf("Add user3 failed: %v", err)
+	}
+
+	// Create a signal group for this group
+	sg := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    "Block Keys Signal Group",
+		AccessTier:   models.AccessTierMember,
+		CreatedBy:    &user1,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		t.Fatalf("Create signal group failed: %v", err)
+	}
+
+	// Create an encrypted secret with wrapped keys for all users
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "bark_payload",
+		EncryptionIV:     "bark_iv_1234567",
+		UpdatedBy:        user1,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1, WrappedDEK: "dek_bark_u1"},
+		{UserID: user2, WrappedDEK: "dek_bark_u2"},
+		{UserID: user3, WrappedDEK: "dek_bark_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Create secret failed: %v", err)
+	}
+
+	// Block and remove user2
+	if err := grpRepo.BlockAndRemoveMember(ctx, groupID, user2, &user1, nil); err != nil {
+		t.Fatalf("BlockAndRemoveMember failed: %v", err)
+	}
+
+	// Verify user2 is no longer a member
+	isMember, err := grpRepo.IsUserMember(ctx, groupID, user2)
+	if err != nil {
+		t.Fatalf("IsUserMember check failed: %v", err)
+	}
+	if isMember {
+		t.Error("Expected user2 to not be a member after block")
+	}
+
+	// Verify user2 is blocked
+	isBlocked, err := grpRepo.IsUserBlockedFromGroup(ctx, groupID, user2)
+	if err != nil {
+		t.Fatalf("IsUserBlockedFromGroup check failed: %v", err)
+	}
+	if !isBlocked {
+		t.Error("Expected user2 to be blocked")
+	}
+
+	// Verify user2's wrapped key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2)
+	if err == nil {
+		t.Error("Expected user2's wrapped key to be revoked")
+	}
+
+	// Verify survivors' keys still exist
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_bark_u1" {
+		t.Errorf("Expected user1 key unchanged, got %s", dek1)
+	}
+
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_bark_u3" {
+		t.Errorf("Expected user3 key unchanged, got %s", dek3)
+	}
+
+	// Verify survivors are flagged for rekey
+	for _, uid := range []string{user1, user3} {
+		var rekeyNeeded bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT rekey_needed FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
+			t.Fatalf("Failed to check rekey flag for %s: %v", uid, err)
+		}
+		if !rekeyNeeded {
+			t.Errorf("Expected user %s to have rekey_needed=true", uid)
+		}
+	}
+}
