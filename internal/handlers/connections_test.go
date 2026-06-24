@@ -1307,9 +1307,9 @@ func TestConnectionHandler_GetConnectionChatSecret_EntitledMember(t *testing.T) 
 	sg, secret := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierMember)
 
 	ctx := context.Background()
-	// Add wrapped DEK for adminA
+	// Add wrapped DEK for adminB (connected via groupB; adminA already has one as the creator)
 	_, _ = s.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
-		secret.ID, adminA.ID, "test_wrapped_dek_for_adminA", time.Now().UTC())
+		secret.ID, adminB.ID, "test_wrapped_dek_for_adminB", time.Now().UTC())
 
 	defer s.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
@@ -1318,7 +1318,7 @@ func TestConnectionHandler_GetConnectionChatSecret_EntitledMember(t *testing.T) 
 	q.Set("id", connectionID)
 	q.Set("sgid", sg.ID)
 	req.URL.RawQuery = q.Encode()
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminA)))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminB)))
 
 	rr := httptest.NewRecorder()
 	s.handler.GetConnectionChatSecret(rr, req)
@@ -1335,8 +1335,8 @@ func TestConnectionHandler_GetConnectionChatSecret_EntitledMember(t *testing.T) 
 	if result.EncryptedPayload != "test_payload_encrypted" {
 		t.Errorf("Expected encrypted payload, got %s", result.EncryptedPayload)
 	}
-	if result.WrappedDEK != "test_wrapped_dek_for_adminA" {
-		t.Errorf("Expected wrapped DEK for adminA, got %s", result.WrappedDEK)
+	if result.WrappedDEK != "test_wrapped_dek_for_adminB" {
+		t.Errorf("Expected wrapped DEK for adminB, got %s", result.WrappedDEK)
 	}
 }
 
@@ -1345,12 +1345,15 @@ func TestConnectionHandler_GetConnectionChatSecret_UnderTierCaller(t *testing.T)
 
 	adminA := s.createTestUser("conn_chat_secret_adminA2", models.TierVouched, false)
 	adminA.VouchVerified = true
+	// adminC owns groupB so that memberB can be added as a non-admin member of the connection
+	adminC := s.createTestUser("conn_chat_secret_adminC2", models.TierVouched, false)
+	adminC.VouchVerified = true
 	memberB := s.createTestUser("conn_chat_secret_memberB", models.TierVouched, false)
 	memberB.VouchVerified = true
 	region := s.createTestRegion("Conn Chat Secret Region 2", models.RegionTypeState, nil)
 
 	groupA := s.createTestGroup("Group Chat Secret A2", adminA.ID, []string{region.ID})
-	groupB := s.createTestGroup("Group Chat Secret B2", memberB.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B2", adminC.ID, []string{region.ID})
 	_ = s.groupRepo.AddMember(context.Background(), groupB.ID, memberB.ID, false, false)
 
 	connectionID := s.formConnection(groupA.ID, groupB.ID)
@@ -1359,11 +1362,11 @@ func TestConnectionHandler_GetConnectionChatSecret_UnderTierCaller(t *testing.T)
 	sg, secret := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierAdminOnly)
 
 	ctx := context.Background()
-	// Add wrapped DEK for memberB (but they're not an admin)
+	// Add wrapped DEK for memberB (but they're not an admin of any connected group)
 	_, _ = s.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
 		secret.ID, memberB.ID, "test_wrapped_dek_for_memberB", time.Now().UTC())
 
-	defer s.cleanup([]string{adminA.ID, memberB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+	defer s.cleanup([]string{adminA.ID, adminC.ID, memberB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
 	q := req.URL.Query()
