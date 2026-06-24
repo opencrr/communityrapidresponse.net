@@ -639,12 +639,25 @@ func (r *Router) handleGroupByID(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Check for signal-groups sub-route: /api/v1/groups/{id}/signal-groups
+	// Check for signal-groups sub-route: /api/v1/groups/{id}/signal-groups[/{sgid}[/secret]]
 	if len(parts) >= 2 && parts[1] == "signal-groups" {
 		q := req.URL.Query()
 		q.Set("id", groupID)
 		req.URL.RawQuery = q.Encode()
 
+		// Handle /api/v1/groups/{id}/signal-groups/{sgid}/secret
+		if len(parts) >= 4 && parts[3] == "secret" {
+			q.Set("id", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodGet {
+				r.authenticated(r.groups.GetSignalGroupSecret)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// Handle /api/v1/groups/{id}/signal-groups (list/create)
 		switch req.Method {
 		case http.MethodPost:
 			r.authenticated(r.groups.CreateSignalGroup)(w, req)
@@ -936,8 +949,23 @@ func (r *Router) handleConnectionByID(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	// GET /api/v1/connections/{id}/signal-groups
+	// GET /api/v1/connections/{id}/signal-groups[/{sgid}[/secret]]
 	if len(parts) >= 2 && parts[1] == "signal-groups" {
+		// Handle /api/v1/connections/{id}/signal-groups/{sgid}/secret
+		if len(parts) >= 4 && parts[3] == "secret" {
+			q := req.URL.Query()
+			q.Set("id", connectionID)
+			q.Set("sgid", parts[2])
+			req.URL.RawQuery = q.Encode()
+			if req.Method == http.MethodGet {
+				r.authenticated(r.connections.GetConnectionChatSecret)(w, req)
+				return
+			}
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+			return
+		}
+
+		// Handle /api/v1/connections/{id}/signal-groups (list)
 		if req.Method == http.MethodGet {
 			r.authenticated(r.connections.ListConnectionSignalGroups)(w, req)
 			return

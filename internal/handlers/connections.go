@@ -13,9 +13,11 @@ import (
 
 // ConnectionHandler handles connection endpoints.
 type ConnectionHandler struct {
-	connectionRepo *database.ConnectionRepository
-	groupRepo      *database.GroupRepository
-	auditRepo      *database.AuditRepository
+	connectionRepo      *database.ConnectionRepository
+	groupRepo           *database.GroupRepository
+	auditRepo           *database.AuditRepository
+	encryptedSecretRepo *database.EncryptedSecretRepository
+	userRepo            *database.UserRepository
 }
 
 // NewConnectionHandler creates a new connection handler.
@@ -23,11 +25,15 @@ func NewConnectionHandler(
 	connectionRepo *database.ConnectionRepository,
 	groupRepo *database.GroupRepository,
 	auditRepo *database.AuditRepository,
+	encryptedSecretRepo *database.EncryptedSecretRepository,
+	userRepo *database.UserRepository,
 ) *ConnectionHandler {
 	return &ConnectionHandler{
-		connectionRepo: connectionRepo,
-		groupRepo:      groupRepo,
-		auditRepo:      auditRepo,
+		connectionRepo:      connectionRepo,
+		groupRepo:           groupRepo,
+		auditRepo:           auditRepo,
+		encryptedSecretRepo: encryptedSecretRepo,
+		userRepo:            userRepo,
 	}
 }
 
@@ -1044,5 +1050,133 @@ func (h *ConnectionHandler) ListPendingProposals(w http.ResponseWriter, r *http.
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"proposals": allProposals,
+	})
+}
+
+// GetConnectionChatSecret handles GET /api/v1/connections/:id/signal-groups/:sgid/secret
+// Serves encrypted_payload + caller's wrapped_dek for restricted-tier connection chats, tier-gated
+func (h *ConnectionHandler) GetConnectionChatSecret(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	connectionID := getPathParam(r, "id")
+	if connectionID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Connection ID required")
+		return
+	}
+
+	signalGroupID := getPathParam(r, "sgid")
+	if signalGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Signal group ID required")
+		return
+	}
+
+	// Get the connection
+	connection, err := h.connectionRepo.GetConnection(r.Context(), connectionID)
+	if errors.Is(err, database.ErrConnectionNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Connection not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get connection", "connection", "get_chat_secret")
+		return
+	}
+
+	// Check caller is a member of the connection
+	isMember, err := h.connectionRepo.IsUserInConnection(r.Context(), claims.UserID, connectionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check membership", "connection", "get_chat_secret")
+		return
+	}
+
+	// Re-check superuser from DB
+	isSuperuser, err := isSuperuserFromDB(r.Context(), h.userRepo, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify superuser status", "connection", "get_chat_secret")
+		return
+	}
+
+	if !isMember && !isSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this connection")
+		return
+	}
+
+	// Get the signal groups for this connection to verify the given sgid belongs to it
+	signalGroups, err := h.connectionRepo.ListConnectionSignalGroups(r.Context(), connectionID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to list signal groups", "connection", "get_chat_secret")
+		return
+	}
+
+	// Find the signal group
+	var signalGroup *models.SignalGroup
+	for _, sg := range signalGroups {
+		if sg.ID == signalGroupID {
+			signalGroup = sg
+			break
+		}
+	}
+
+	if signalGroup == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Signal group not found in this connection")
+		return
+	}
+
+	// Check access tier - any member of a connected group can access all-members chats,
+	// but only admins can access admin-only chats
+	isAdminOfAny := false
+	for _, member := range connection.MemberGroups {
+		isAdmin, adminErr := h.groupRepo.IsUserAdmin(r.Context(), member.GroupID, claims.UserID)
+		if adminErr != nil {
+			writeServerError(w, r, adminErr, "Failed to check admin status", "connection", "get_chat_secret")
+			return
+		}
+		if isAdmin {
+			isAdminOfAny = true
+			break
+		}
+	}
+
+	// Check access tier
+	if signalGroup.AccessTier == models.AccessTierAdminOnly && !isAdminOfAny && !isSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You do not have access to this chat")
+		return
+	}
+
+	// Get the encrypted secret
+	if h.encryptedSecretRepo == nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Encryption not available")
+		return
+	}
+
+	secret, err := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), signalGroupID)
+	if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Encrypted secret not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get encrypted secret", "connection", "get_chat_secret")
+		return
+	}
+
+	// Get caller's wrapped DEK
+	wrappedDEK, err := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
+	if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+		writeError(w, http.StatusForbidden, "forbidden", "You do not have access to decrypt this chat")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get wrapped DEK", "connection", "get_chat_secret")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.EncryptedSecretResponse{
+		SecretID:         secret.ID,
+		EncryptedPayload: secret.EncryptedPayload,
+		EncryptionIV:     secret.EncryptionIV,
+		WrappedDEK:       wrappedDEK,
 	})
 }

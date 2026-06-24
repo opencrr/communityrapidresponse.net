@@ -33,6 +33,7 @@ type GroupHandler struct {
 	regionRepo           *database.RegionRepository
 	userRepo             *database.UserRepository
 	auditRepo            *database.AuditRepository
+	encryptedSecretRepo  *database.EncryptedSecretRepository
 	rateLimiter          services.RateLimiter
 }
 
@@ -45,6 +46,7 @@ func NewGroupHandler(
 	regionRepo *database.RegionRepository,
 	userRepo *database.UserRepository,
 	auditRepo *database.AuditRepository,
+	encryptedSecretRepo *database.EncryptedSecretRepository,
 ) *GroupHandler {
 	return &GroupHandler{
 		db:                    db,
@@ -54,6 +56,7 @@ func NewGroupHandler(
 		regionRepo:           regionRepo,
 		userRepo:             userRepo,
 		auditRepo:            auditRepo,
+		encryptedSecretRepo:  encryptedSecretRepo,
 	}
 }
 
@@ -1454,6 +1457,123 @@ func (h *GroupHandler) ListSignalGroups(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"signal_groups": filteredGroups,
+	})
+}
+
+// GetSignalGroupSecret handles GET /api/v1/signal-groups/:id/secret
+// Serves encrypted_payload + caller's wrapped_dek for restricted-tier chats, tier-gated
+func (h *GroupHandler) GetSignalGroupSecret(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	signalGroupID := getPathParam(r, "id")
+	if signalGroupID == "" {
+		writeError(w, http.StatusBadRequest, "missing_parameter", "Signal group ID required")
+		return
+	}
+
+	// Get the signal group
+	signalGroup, err := h.signalGroupRepo.GetByID(r.Context(), signalGroupID)
+	if errors.Is(err, database.ErrSignalGroupNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get signal group", "group", "get_signal_group_secret")
+		return
+	}
+
+	// Only owner-group signal groups support encryption; open-tier has plaintext link
+	if signalGroup.OwnerGroupID == nil {
+		writeError(w, http.StatusBadRequest, "invalid_group_type", "Signal group does not have an owner group")
+		return
+	}
+
+	// Check caller is a member of the owner group
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), *signalGroup.OwnerGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to check membership", "group", "get_signal_group_secret")
+		return
+	}
+
+	// Superuser bypass
+	isSuperuser, ok := h.verifySuperuser(w, r, claims.UserID)
+	if !ok {
+		return
+	}
+
+	if !isMember && !isSuperuser {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group")
+		return
+	}
+
+	// Get member info for access tier check
+	memberInfo, err := h.groupRepo.GetMember(r.Context(), *signalGroup.OwnerGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get membership info", "group", "get_signal_group_secret")
+		return
+	}
+
+	// Determine if user is a verified resident
+	isVerifiedResident := false
+	regions, err := h.groupRepo.GetRegions(r.Context(), *signalGroup.OwnerGroupID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get group regions", "group", "get_signal_group_secret")
+		return
+	}
+	for _, region := range regions {
+		inRegion, regionErr := h.regionRepo.IsUserVerifiedInRegion(r.Context(), claims.UserID, region.ID)
+		if regionErr != nil {
+			writeServerError(w, r, regionErr, "Failed to check region membership", "group", "get_signal_group_secret")
+			return
+		}
+		if inRegion {
+			isVerifiedResident = true
+			break
+		}
+	}
+
+	// Check access tier
+	if !isSuperuser && !database.UserMeetsAccessTier(signalGroup.AccessTier, true, isVerifiedResident, memberInfo) {
+		writeError(w, http.StatusForbidden, "forbidden", "You do not have access to this chat")
+		return
+	}
+
+	// Get the encrypted secret
+	if h.encryptedSecretRepo == nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Encryption not available")
+		return
+	}
+
+	secret, err := h.encryptedSecretRepo.GetBySignalGroupID(r.Context(), signalGroupID)
+	if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "Encrypted secret not found")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get encrypted secret", "group", "get_signal_group_secret")
+		return
+	}
+
+	// Get caller's wrapped DEK
+	wrappedDEK, err := h.encryptedSecretRepo.GetWrappedDEK(r.Context(), secret.ID, claims.UserID)
+	if errors.Is(err, database.ErrEncryptedSecretNotFound) {
+		writeError(w, http.StatusForbidden, "forbidden", "You do not have access to decrypt this chat")
+		return
+	}
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get wrapped DEK", "group", "get_signal_group_secret")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.EncryptedSecretResponse{
+		SecretID:         secret.ID,
+		EncryptedPayload: secret.EncryptedPayload,
+		EncryptionIV:     secret.EncryptionIV,
+		WrappedDEK:       wrappedDEK,
 	})
 }
 
