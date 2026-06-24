@@ -2175,6 +2175,153 @@ func TestGroupHandler_CreateSignalGroup_NonOpenWithInviteLinkRejected(t *testing
 	}
 }
 
+func TestGroupHandler_CreateSignalGroup_RestrictedTierWithValidBundle(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_restricted_valid", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRestrictedRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	payload := "encrypted_payload_data"
+	iv := "encryption_iv_data"
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user.ID, WrappedDEK: "key1"},
+	}
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:        "Trusted Chat",
+		AccessTier:       "trusted",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 for valid restricted-tier bundle, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var respBody map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&respBody)
+	if respBody["id"] == "" {
+		t.Error("Expected signal_group id in response")
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_RestrictedTierWithPartialBundle(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_restricted_partial", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRestrictedPartialRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	// Test with only payload and IV (missing wrapped_keys)
+	payload := "encrypted_payload_data"
+	iv := "encryption_iv_data"
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:        "Trusted Chat",
+		AccessTier:       "trusted",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for partial bundle, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var errResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp["error"] != "validation_error" {
+		t.Errorf("Expected error=validation_error, got %v", errResp["error"])
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_OpenTierWithBundleRejected(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_open_bundle", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGOpenBundleRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	payload := "encrypted_payload_data"
+	iv := "encryption_iv_data"
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user.ID, WrappedDEK: "key1"},
+	}
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:        "Open Chat",
+		AccessTier:       "open",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for open-tier with bundle, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var errResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp["error"] != "validation_error" {
+		t.Errorf("Expected error=validation_error, got %v", errResp["error"])
+	}
+}
+
 func TestGroupHandler_ListSignalGroups_FilteredByAccessTier(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
