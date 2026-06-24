@@ -38,11 +38,27 @@ export async function rotateKeys(data) {
 
 /**
  * Get public keys for members of a scope
- * GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id)
+ * GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id, connection_id)
  */
 export async function getPublicKeys(params) {
     const query = new URLSearchParams(params).toString();
     return get(`/encryption/public-keys?${query}`);
+}
+
+/**
+ * Get public keys for members of a group
+ * GET /api/v1/encryption/public-keys?group_id=X
+ */
+export async function getGroupPublicKeys(groupId) {
+    return getPublicKeys({ group_id: groupId });
+}
+
+/**
+ * Get public keys for members of a connection
+ * GET /api/v1/encryption/public-keys?connection_id=X
+ */
+export async function getConnectionPublicKeys(connectionId) {
+    return getPublicKeys({ connection_id: connectionId });
 }
 
 /**
