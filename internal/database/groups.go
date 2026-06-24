@@ -37,16 +37,12 @@ var (
 
 // GroupRepository handles group database operations
 type GroupRepository struct {
-	db                  *DB
-	encryptedSecretRepo *EncryptedSecretRepository
+	db *DB
 }
 
 // NewGroupRepository creates a new group repository
-func NewGroupRepository(db *DB, encryptedSecretRepo *EncryptedSecretRepository) *GroupRepository {
-	return &GroupRepository{
-		db:                  db,
-		encryptedSecretRepo: encryptedSecretRepo,
-	}
+func NewGroupRepository(db *DB) *GroupRepository {
+	return &GroupRepository{db: db}
 }
 
 // Create creates a new group with its creator as founding admin, regions, and topic tags.
@@ -1726,7 +1722,7 @@ func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blocke
 		// connection the blocker also belongs to (a single block is enough — we do
 		// not wait for a unanimous block). Dissolve connections that fall below two
 		// members.
-		if err := evictBlockedFromSharedConnectionsTx(ctx, tx, blockerGroupID, blockedGroupID, r.encryptedSecretRepo); err != nil {
+		if err := evictBlockedFromSharedConnectionsTx(ctx, tx, blockerGroupID, blockedGroupID, r.db); err != nil {
 			return err
 		}
 		return nil
@@ -1735,7 +1731,7 @@ func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blocke
 
 // evictBlockedFromSharedConnectionsTx removes blockedGroupID from every connection
 // that blockerGroupID also belongs to, dissolving any that drop below two members.
-func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blockerGroupID, blockedGroupID string, encryptedSecretRepo *EncryptedSecretRepository) error {
+func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blockerGroupID, blockedGroupID string, db *DB) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT cm_blocker.connection_id
 		FROM connection_members cm_blocker
@@ -1763,10 +1759,9 @@ func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blocke
 
 	for _, connectionID := range connectionIDs {
 		// Revoke secret keys for the evicted blocked group
-		if encryptedSecretRepo != nil {
-			if err := encryptedSecretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connectionID, blockedGroupID); err != nil {
-				return err
-			}
+		secretRepo := NewEncryptedSecretRepository(db)
+		if err := secretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connectionID, blockedGroupID); err != nil {
+			return err
 		}
 
 		if _, err := tx.ExecContext(ctx,

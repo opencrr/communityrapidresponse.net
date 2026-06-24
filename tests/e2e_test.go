@@ -78,7 +78,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
 	encryptionKeyRepo := database.NewEncryptionKeyRepository(db)
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db, nil)
+	communityGroupRepo := database.NewGroupRepository(db)
 
 	// Create JWT auth
 	jwtConfig := &config.JWTConfig{
@@ -125,7 +125,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo)
 	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
-	connectionRepo := database.NewConnectionRepository(db, nil)
+	connectionRepo := database.NewConnectionRepository(db)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)
 
 	// Create router (rate limiting disabled for tests)

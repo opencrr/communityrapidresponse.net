@@ -55,7 +55,7 @@ func setupSchoolTestSuite(t *testing.T) *schoolTestSuite {
 
 	schoolRepo := database.NewSchoolRepository(db)
 	districtRepo := database.NewSchoolDistrictRepository(db)
-	groupRepo := database.NewGroupRepository(db, nil)
+	groupRepo := database.NewGroupRepository(db)
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	handler := NewSchoolHandler(schoolRepo, districtRepo, groupRepo, userRepo, auditRepo, nil)
