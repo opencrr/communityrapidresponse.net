@@ -61,7 +61,7 @@ func SetupRateLimitTest(t *testing.T, limit int, windowSecs int) *RateLimitTestS
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db, nil)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 
