@@ -630,7 +630,7 @@ func TestConnectionHandler_ProposeSignalChat_AdminOnly_OptionalEncryption(t *tes
 	connectionID := *result.ConnectionID
 	defer s.cleanup(nil, nil, nil, []string{connectionID})
 
-	// Test: admin_only without encryption fields should succeed
+	// Test: admin_only without encryption fields should fail
 	body, _ := json.Marshal(models.ProposeConnectionChatRequest{
 		GroupName:   "Admin Chat",
 		Description: "An admin chat",
@@ -646,8 +646,8 @@ func TestConnectionHandler_ProposeSignalChat_AdminOnly_OptionalEncryption(t *tes
 	rr := httptest.NewRecorder()
 	s.handler.ProposeSignalChat(rr, req)
 
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("Expected 201 for admin_only without encryption fields, got %d: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for admin_only without encryption fields, got %d: %s", rr.Code, rr.Body.String())
 	}
 
 	// Test: admin_only with incomplete encryption fields should fail

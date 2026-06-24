@@ -502,16 +502,14 @@ func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Req
 
 	// Validate encrypted bundle for restricted tiers (admin_only)
 	if req.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) {
-		// Check that if any bundle field is provided, all must be provided
+		// Require encrypted bundle for admin_only
 		hasPayload := req.EncryptedPayload != nil && *req.EncryptedPayload != ""
 		hasIV := req.EncryptionIV != nil && *req.EncryptionIV != ""
 		hasKeys := len(req.WrappedKeys) > 0
 
-		if hasPayload || hasIV || hasKeys {
-			if !hasPayload || !hasIV || !hasKeys {
-				writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload, encryption_iv, and wrapped_keys must all be provided together")
-				return
-			}
+		if !hasPayload || !hasIV || !hasKeys {
+			writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload, encryption_iv, and wrapped_keys are required for admin_only access level")
+			return
 		}
 	} else if req.EncryptedPayload != nil || req.EncryptionIV != nil || len(req.WrappedKeys) > 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "encrypted bundle is not allowed for all_members access level")
