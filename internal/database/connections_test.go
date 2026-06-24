@@ -674,6 +674,85 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	}
 }
 
+func TestConnectionRepository_VoteOnChatProposal_AdminOnlyWithBundle(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "vote_chat_bundle1")
+	regionID := createConnectionTestRegion(t, db, "Vote Chat Bundle Region")
+	groupAID := createConnectionTestGroup(t, db, "Vote Chat Bundle A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Vote Chat Bundle B", userID, regionID)
+
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Propose an admin_only chat with a full encrypted bundle.
+	payload := "test-encrypted-payload"
+	iv := "test-iv-24chars-padded!!"
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: userID, WrappedDEK: "wrapped-dek-for-user"},
+	}
+	chatProposal, err := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
+		GroupName:        "Encrypted Admin Chat",
+		AccessLevel:      "admin_only",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
+	})
+	if err != nil {
+		t.Fatalf("ProposeSignalChat failed: %v", err)
+	}
+
+	// Group B approves — this triggers the unanimous path that creates the signal group and secret.
+	result, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, true)
+	if err != nil {
+		t.Fatalf("VoteOnChatProposal failed: %v", err)
+	}
+	if result.Status != "approved" {
+		t.Fatalf("Expected status=approved, got %s", result.Status)
+	}
+
+	// Verify signal group was created.
+	signalGroups, err := repo.ListConnectionSignalGroups(ctx, connectionID)
+	if err != nil {
+		t.Fatalf("ListConnectionSignalGroups failed: %v", err)
+	}
+	if len(signalGroups) != 1 {
+		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
+	}
+	groupID := signalGroups[0].ID
+
+	// Verify encrypted_secrets row was created.
+	secretRepo := NewEncryptedSecretRepository(db)
+	secret, err := secretRepo.GetBySignalGroupID(ctx, groupID)
+	if err != nil {
+		t.Fatalf("GetBySignalGroupID failed: %v", err)
+	}
+	if secret.EncryptedPayload != payload {
+		t.Errorf("Expected encrypted_payload %q, got %q", payload, secret.EncryptedPayload)
+	}
+	if secret.EncryptionIV != iv {
+		t.Errorf("Expected encryption_iv %q, got %q", iv, secret.EncryptionIV)
+	}
+
+	// Verify encrypted_secret_keys row was created.
+	wrappedDEK, err := secretRepo.GetWrappedDEK(ctx, secret.ID, userID)
+	if err != nil {
+		t.Fatalf("GetWrappedDEK failed: %v", err)
+	}
+	if wrappedDEK != wrappedKeys[0].WrappedDEK {
+		t.Errorf("Expected wrapped_dek %q, got %q", wrappedKeys[0].WrappedDEK, wrappedDEK)
+	}
+}
+
 func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 	db := testDB(t)
 	repo := NewConnectionRepository(db)

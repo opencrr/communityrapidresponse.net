@@ -871,14 +871,36 @@ func (r *ConnectionRepository) ProposeSignalChat(ctx context.Context, connection
 			description = &req.Description
 		}
 
-		// Insert the proposal
+		// Look up admin user of the proposer group to track as proposer_user_id.
+		var proposerUserID *string
+		var adminUserID string
+		if scanErr := tx.QueryRowContext(ctx,
+			"SELECT user_id FROM group_members WHERE group_id = ? AND is_admin = TRUE LIMIT 1",
+			proposerGroupID,
+		).Scan(&adminUserID); scanErr == nil {
+			proposerUserID = &adminUserID
+		}
+
+		// Insert the proposal, persisting the encrypted bundle if provided.
 		_, insertErr := tx.ExecContext(ctx,
-			`INSERT INTO connection_chat_proposals (id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-			proposalID, connectionID, proposerGroupID, req.GroupName, description, req.AccessLevel, now, expiresAt,
+			`INSERT INTO connection_chat_proposals (id, connection_id, proposer_group_id, group_name, description, access_level, encrypted_payload, encryption_iv, proposer_user_id, status, created_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+			proposalID, connectionID, proposerGroupID, req.GroupName, description, req.AccessLevel,
+			req.EncryptedPayload, req.EncryptionIV, proposerUserID, now, expiresAt,
 		)
 		if insertErr != nil {
 			return fmt.Errorf("insert chat proposal: %w", insertErr)
+		}
+
+		// Persist wrapped DEKs for later use at approval time.
+		for _, wk := range req.WrappedKeys {
+			_, wkErr := tx.ExecContext(ctx,
+				"INSERT INTO connection_chat_proposal_wrapped_keys (proposal_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+				proposalID, wk.UserID, wk.WrappedDEK, now,
+			)
+			if wkErr != nil {
+				return fmt.Errorf("insert wrapped key: %w", wkErr)
+			}
 		}
 
 		// Get all member groups
@@ -948,7 +970,11 @@ func (r *ConnectionRepository) ProposeSignalChat(ctx context.Context, connection
 
 		// If only 1 member group (edge case), auto-create the signal group
 		if len(memberGroupIDs) == 1 {
-			createErr := r.createConnectionSignalGroup(ctx, tx, connectionID, proposerGroupID, req)
+			pUID := ""
+			if proposerUserID != nil {
+				pUID = *proposerUserID
+			}
+			createErr := r.createConnectionSignalGroup(ctx, tx, connectionID, pUID, req)
 			if createErr != nil {
 				return createErr
 			}
@@ -975,14 +1001,17 @@ func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalI
 	var result *models.ConnectionChatProposalWithVotes
 
 	err := r.db.Transaction(ctx, func(tx *sql.Tx) error {
-		// Load the proposal
+		// Load the proposal including persisted bundle fields.
 		var proposal models.ConnectionChatProposal
+		var bundlePayload, bundleIV, bundleProposerUserID *string
 		loadErr := tx.QueryRowContext(ctx,
-			`SELECT id, connection_id, proposer_group_id, group_name, description, access_level, status, created_at, expires_at
+			`SELECT id, connection_id, proposer_group_id, group_name, description, access_level,
+				encrypted_payload, encryption_iv, proposer_user_id, status, created_at, expires_at
 			FROM connection_chat_proposals WHERE id = ?`,
 			proposalID,
 		).Scan(&proposal.ID, &proposal.ConnectionID, &proposal.ProposerGroupID, &proposal.GroupName,
-			&proposal.Description, &proposal.AccessLevel, &proposal.Status, &proposal.CreatedAt, &proposal.ExpiresAt)
+			&proposal.Description, &proposal.AccessLevel, &bundlePayload, &bundleIV, &bundleProposerUserID,
+			&proposal.Status, &proposal.CreatedAt, &proposal.ExpiresAt)
 		if loadErr == sql.ErrNoRows {
 			return ErrChatProposalNotFound
 		}
@@ -1053,15 +1082,44 @@ func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalI
 			}
 
 			if pendingCount == 0 {
+				// Reload wrapped DEKs stored at propose time.
+				var wrappedKeys []models.WrappedKeyEntry
+				wkRows, wkErr := tx.QueryContext(ctx,
+					"SELECT user_id, wrapped_dek FROM connection_chat_proposal_wrapped_keys WHERE proposal_id = ?",
+					proposalID,
+				)
+				if wkErr != nil {
+					return fmt.Errorf("load wrapped keys: %w", wkErr)
+				}
+				for wkRows.Next() {
+					var wk models.WrappedKeyEntry
+					if scanErr := wkRows.Scan(&wk.UserID, &wk.WrappedDEK); scanErr != nil {
+						_ = wkRows.Close()
+						return fmt.Errorf("scan wrapped key: %w", scanErr)
+					}
+					wrappedKeys = append(wrappedKeys, wk)
+				}
+				_ = wkRows.Close()
+				if rowsErr := wkRows.Err(); rowsErr != nil {
+					return fmt.Errorf("iterate wrapped keys: %w", rowsErr)
+				}
+
 				// All approved — create the signal group
 				req := &models.ProposeConnectionChatRequest{
-					GroupName:   proposal.GroupName,
-					AccessLevel: proposal.AccessLevel,
+					GroupName:        proposal.GroupName,
+					AccessLevel:      proposal.AccessLevel,
+					EncryptedPayload: bundlePayload,
+					EncryptionIV:     bundleIV,
+					WrappedKeys:      wrappedKeys,
 				}
 				if proposal.Description != nil {
 					req.Description = *proposal.Description
 				}
-				createErr := r.createConnectionSignalGroup(ctx, tx, proposal.ConnectionID, proposal.ProposerGroupID, req)
+				pUID := ""
+				if bundleProposerUserID != nil {
+					pUID = *bundleProposerUserID
+				}
+				createErr := r.createConnectionSignalGroup(ctx, tx, proposal.ConnectionID, pUID, req)
 				if createErr != nil {
 					return createErr
 				}
@@ -1192,7 +1250,7 @@ func (r *ConnectionRepository) ListChatProposals(ctx context.Context, connection
 }
 
 // createConnectionSignalGroup creates a signal group owned by a connection.
-func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, tx *sql.Tx, connectionID, _ string, req *models.ProposeConnectionChatRequest) error {
+func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, tx *sql.Tx, connectionID, proposerUserID string, req *models.ProposeConnectionChatRequest) error {
 	signalGroupID := uuid.New().String()
 	now := time.Now().UTC()
 
@@ -1221,6 +1279,27 @@ func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("create connection signal group: %w", err)
 	}
+
+	// For restricted-tier (admin_only) chats, persist the encrypted invite secret
+	// and per-user wrapped DEKs when a bundle was supplied.
+	if accessTier == models.AccessTierAdminOnly &&
+		proposerUserID != "" &&
+		req.EncryptedPayload != nil && *req.EncryptedPayload != "" &&
+		req.EncryptionIV != nil && *req.EncryptionIV != "" &&
+		len(req.WrappedKeys) > 0 {
+		secretRepo := NewEncryptedSecretRepository(r.db)
+		secret := &models.EncryptedSecret{
+			SecretType:       models.SecretTypeSignalInvite,
+			SignalGroupID:    &signalGroupID,
+			EncryptedPayload: *req.EncryptedPayload,
+			EncryptionIV:     *req.EncryptionIV,
+			UpdatedBy:        proposerUserID,
+		}
+		if createErr := secretRepo.CreateTx(ctx, tx, secret, req.WrappedKeys); createErr != nil {
+			return fmt.Errorf("create encrypted secret: %w", createErr)
+		}
+	}
+
 	return nil
 }
 
