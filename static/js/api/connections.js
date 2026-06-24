@@ -16,7 +16,12 @@ export async function listPendingProposals() { return get('/connection-proposals
 export async function respondToProposal(id, data) { return post(`/connection-proposals/${id}/respond`, data); }
 
 // Connection signal chats
-export async function proposeSignalChat(connectionId, data) { return post(`/connections/${connectionId}/signal-group-proposals`, data); }
+export async function proposeSignalChat(connectionId, data) {
+    const proposerGroupId = data.proposer_group_id || data.group_id;
+    if (!proposerGroupId) throw new Error('proposer_group_id is required');
+    const query = new URLSearchParams({ proposer_group_id: proposerGroupId }).toString();
+    return post(`/connections/${connectionId}/signal-group-proposals?${query}`, data);
+}
 export async function listChatProposals(connectionId) { return get(`/connections/${connectionId}/signal-group-proposals`); }
 export async function voteOnChatProposal(proposalId, data) { return post(`/connection-chat-proposals/${proposalId}/vote`, data); }
 export async function listConnectionSignalGroups(connectionId) { return get(`/connections/${connectionId}/signal-groups`); }
