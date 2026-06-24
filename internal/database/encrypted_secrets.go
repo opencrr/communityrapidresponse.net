@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -330,4 +331,143 @@ func (r *EncryptedSecretRepository) RevokeGroupSecretKeysForUser(ctx context.Con
 
 	_, err = tx.ExecContext(ctx, flagQuery, groupID)
 	return err
+}
+
+// RevokeConnectionSecretKeysForGroup deletes encrypted_secret_keys for users in a leaving group
+// and flags rekey_needed on users in surviving groups within the connection.
+func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx context.Context, tx *sql.Tx, connID, groupID string) error {
+	// Get all encrypted secrets for this connection
+	// #nosec G101 -- variable name matches "secret" pattern, not a credential
+	secretIDsQuery := `
+		SELECT DISTINCT es.id
+		FROM encrypted_secrets es
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE sg.connection_id = ?
+	`
+	rows, err := tx.QueryContext(ctx, secretIDsQuery, connID)
+	if err != nil {
+		return fmt.Errorf("get connection secrets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var secretIDs []string
+	for rows.Next() {
+		var secretID string
+		if err := rows.Scan(&secretID); err != nil {
+			return fmt.Errorf("scan secret id: %w", err)
+		}
+		secretIDs = append(secretIDs, secretID)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("iterate secrets: %w", err)
+	}
+
+	if len(secretIDs) == 0 {
+		return nil
+	}
+
+	// Get users in the leaving group
+	leavingUsersQuery := `SELECT user_id FROM group_members WHERE group_id = ?`
+	rows, err = tx.QueryContext(ctx, leavingUsersQuery, groupID)
+	if err != nil {
+		return fmt.Errorf("get leaving group users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var leavingUserIDs []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return fmt.Errorf("scan leaving user id: %w", err)
+		}
+		leavingUserIDs = append(leavingUserIDs, userID)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("iterate leaving users: %w", err)
+	}
+
+	// Delete keys for leaving group members
+	if len(leavingUserIDs) > 0 {
+		secretPlaceholders := make([]string, len(secretIDs))
+		userPlaceholders := make([]string, len(leavingUserIDs))
+		args := make([]interface{}, 0, len(secretIDs)+len(leavingUserIDs))
+
+		for i, sID := range secretIDs {
+			secretPlaceholders[i] = "?"
+			args = append(args, sID)
+		}
+		for i, uID := range leavingUserIDs {
+			userPlaceholders[i] = "?"
+			args = append(args, uID)
+		}
+
+		// #nosec G201 -- SQL string is parameterized with ? placeholders; no user input in format
+		deleteQuery := fmt.Sprintf(`
+			DELETE FROM encrypted_secret_keys
+			WHERE secret_id IN (%s)
+			AND user_id IN (%s)
+		`, strings.Join(secretPlaceholders, ","), strings.Join(userPlaceholders, ","))
+
+		_, err = tx.ExecContext(ctx, deleteQuery, args...)
+		if err != nil {
+			return fmt.Errorf("delete leaving user keys: %w", err)
+		}
+	}
+
+	// Get users in surviving groups (members of other groups in the connection)
+	survivingUsersQuery := `
+		SELECT DISTINCT gm.user_id
+		FROM group_members gm
+		INNER JOIN connection_members cm ON gm.group_id = cm.group_id
+		WHERE cm.connection_id = ?
+		AND gm.group_id != ?
+	`
+	rows, err = tx.QueryContext(ctx, survivingUsersQuery, connID, groupID)
+	if err != nil {
+		return fmt.Errorf("get surviving group users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var survivingUserIDs []string
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return fmt.Errorf("scan surviving user id: %w", err)
+		}
+		survivingUserIDs = append(survivingUserIDs, userID)
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("iterate surviving users: %w", err)
+	}
+
+	// Flag rekey_needed for surviving users
+	if len(survivingUserIDs) > 0 {
+		secretPlaceholders := make([]string, len(secretIDs))
+		userPlaceholders := make([]string, len(survivingUserIDs))
+		args := make([]interface{}, 0, len(secretIDs)+len(survivingUserIDs))
+
+		for i, sID := range secretIDs {
+			secretPlaceholders[i] = "?"
+			args = append(args, sID)
+		}
+		for i, uID := range survivingUserIDs {
+			userPlaceholders[i] = "?"
+			args = append(args, uID)
+		}
+
+		// #nosec G201 -- SQL string is parameterized with ? placeholders; no user input in format
+		updateQuery := fmt.Sprintf(`
+			UPDATE encrypted_secret_keys
+			SET rekey_needed = TRUE
+			WHERE secret_id IN (%s)
+			AND user_id IN (%s)
+		`, strings.Join(secretPlaceholders, ","), strings.Join(userPlaceholders, ","))
+
+		_, err = tx.ExecContext(ctx, updateQuery, args...)
+		if err != nil {
+			return fmt.Errorf("flag rekey for survivors: %w", err)
+		}
+	}
+
+	return nil
 }

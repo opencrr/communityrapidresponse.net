@@ -842,3 +842,119 @@ func TestConnectionRepository_ListPendingProposalsForGroup(t *testing.T) {
 		t.Errorf("Expected 0 pending proposals for proposer, got %d", len(proposalsA))
 	}
 }
+
+// =============================================================================
+// Connection Chat User Access Predicate Tests
+// =============================================================================
+
+func TestConnectionChatUserAccessPredicate_AllMembers(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	userID := createConnectionTestUser(t, db, "chat_access_allmembers")
+	regionID := createConnectionTestRegion(t, db, "Chat Access AllMembers Region")
+	groupAID := createConnectionTestGroup(t, db, "Chat Access AllMembers A", userID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Chat Access AllMembers B", userID, regionID)
+
+	// Form connection
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Get the predicate for all_members access level
+	predicate := ConnectionChatUserAccessPredicate(string(models.ConnectionAccessLevelAllMembers))
+
+	// Query to find users who can access
+	var count int
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM ("+predicate+") AS eligible_users",
+		connectionID,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Both groups have the same user, so expect 1 eligible user
+	if count != 1 {
+		t.Errorf("Expected 1 eligible user for all_members, got %d", count)
+	}
+}
+
+func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
+	db := testDB(t)
+	repo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	// Create two users: one admin, one regular member
+	adminUserID := createConnectionTestUser(t, db, "chat_access_admin")
+	memberUserID := createConnectionTestUser(t, db, "chat_access_member")
+	regionID := createConnectionTestRegion(t, db, "Chat Access AdminOnly Region")
+
+	// Group A with admin user
+	groupAID := createConnectionTestGroup(t, db, "Chat Access AdminOnly A", adminUserID, regionID)
+
+	// Group B with member user
+	groupBID := uuid.New().String()
+	_, _ = db.ExecContext(ctx,
+		"INSERT INTO `groups` (id, name, status, visibility, created_at, updated_at) VALUES (?, ?, 'active', 'listed', NOW(), NOW())",
+		groupBID, "Chat Access AdminOnly B",
+	)
+	_, _ = db.ExecContext(ctx,
+		"INSERT INTO group_regions (id, group_id, region_id) VALUES (?, ?, ?)",
+		uuid.New().String(), groupBID, regionID,
+	)
+	// Add member user as regular member (not admin)
+	_, _ = db.ExecContext(ctx,
+		"INSERT INTO group_members (id, group_id, user_id, is_admin, joined_at) VALUES (?, ?, ?, FALSE, NOW())",
+		uuid.New().String(), groupBID, memberUserID,
+	)
+
+	// Form connection with both groups
+	proposal, _ := repo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID},
+	})
+	formResult, _ := repo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	connectionID := *formResult.ConnectionID
+
+	t.Cleanup(func() {
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{adminUserID, memberUserID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Get the predicate for admin_only access level
+	predicate := ConnectionChatUserAccessPredicate(string(models.ConnectionAccessLevelAdminOnly))
+
+	// Query to find admins who can access
+	var count int
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM ("+predicate+") AS eligible_users",
+		connectionID,
+	).Scan(&count)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Only the admin user should be eligible
+	if count != 1 {
+		t.Errorf("Expected 1 admin eligible user, got %d", count)
+	}
+
+	// Verify it's the admin user
+	var foundUserID string
+	err = db.QueryRowContext(ctx,
+		"SELECT user_id FROM ("+predicate+") AS eligible_users LIMIT 1",
+		connectionID,
+	).Scan(&foundUserID)
+	if err != nil {
+		t.Fatalf("Query to verify user failed: %v", err)
+	}
+	if foundUserID != adminUserID {
+		t.Errorf("Expected admin user %s, got %s", adminUserID, foundUserID)
+	}
+}
