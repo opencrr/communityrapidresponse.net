@@ -662,12 +662,15 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	if len(signalGroups) != 1 {
 		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
 	}
-	// The approved admin_only proposal must NOT become member-visible.
-	if signalGroups[0].AccessTier == models.AccessTierMember {
-		t.Errorf("admin_only proposal created a member-tier signal group; access level was discarded")
+	// The approved admin_only proposal must NOT become open-visible.
+	if signalGroups[0].AccessTier == models.AccessTierOpen {
+		t.Errorf("admin_only proposal created an open-tier signal group; access level was discarded")
 	}
 	if signalGroups[0].AccessTier != models.AccessTierAdminOnly {
 		t.Errorf("Expected access_tier=admin_only, got %s", signalGroups[0].AccessTier)
+	}
+	if signalGroups[0].PlaintextInviteLink != nil {
+		t.Errorf("Expected plaintext_invite_link to be NULL for admin-only chat, got %v", signalGroups[0].PlaintextInviteLink)
 	}
 }
 
@@ -707,8 +710,11 @@ func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 	if len(signalGroups) != 1 {
 		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
 	}
-	if signalGroups[0].AccessTier != models.AccessTierMember {
-		t.Errorf("Expected all_members to map to access_tier=member, got %s", signalGroups[0].AccessTier)
+	if signalGroups[0].AccessTier != models.AccessTierOpen {
+		t.Errorf("Expected all_members to map to access_tier=open, got %s", signalGroups[0].AccessTier)
+	}
+	if signalGroups[0].PlaintextInviteLink == nil || *signalGroups[0].PlaintextInviteLink == "" {
+		t.Errorf("Expected plaintext_invite_link to be set for open-tier chat, got nil or empty")
 	}
 }
 
@@ -956,5 +962,218 @@ func TestConnectionChatUserAccessPredicate_AdminOnly(t *testing.T) {
 	}
 	if foundUserID != adminUserID {
 		t.Errorf("Expected admin user %s, got %s", adminUserID, foundUserID)
+	}
+}
+
+// TestConnectionRepository_LeaveConnection_RevokesSecrets verifies that leaving a connection
+// revokes secret keys for the leaving group and flags rekey for survivors.
+func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	connRepo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "leave_secret_u1")
+	user2 := encCreateUser(t, db, "leave_secret_u2")
+	user3 := encCreateUser(t, db, "leave_secret_u3")
+
+	regionID := createConnectionTestRegion(t, db, "Secret Leave Region")
+	groupAID := createConnectionTestGroup(t, db, "Secret Leave GA", user1.ID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Secret Leave GB", user2.ID, regionID)
+	groupCID := createConnectionTestGroup(t, db, "Secret Leave GC", user3.ID, regionID)
+
+	// Form connection with all three groups
+	proposal, _ := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID, groupCID},
+	})
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupCID, true)
+	connectionID := *result.ConnectionID
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connectionID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id IS NOT NULL)")
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id IS NOT NULL")
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID, groupCID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Create a signal group and encrypted secret for this connection
+	sigGroupID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO signal_groups (id, connection_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, 'test_sig_group', ?, NOW(), TRUE)`, sigGroupID, connectionID, user1.ID)
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sigGroupID,
+		EncryptedPayload: "secret_payload",
+		EncryptionIV:     "secret_iv_123456",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_u1"},
+		{UserID: user2.ID, WrappedDEK: "dek_u2"},
+		{UserID: user3.ID, WrappedDEK: "dek_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Group B leaves the connection
+	err := connRepo.LeaveConnection(ctx, connectionID, groupBID)
+	if err != nil {
+		t.Fatalf("LeaveConnection failed: %v", err)
+	}
+
+	// Verify user1 (groupA, survivor) still has key but rekey_needed is true
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_u1" {
+		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
+	}
+
+	var rekeyNeeded bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+	}
+	if !rekeyNeeded {
+		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user3 (groupC, survivor) still has key but rekey_needed is true
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_u3" {
+		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
+	}
+
+	var rekey3Needed bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user3.ID).Scan(&rekey3Needed)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user3: %v", err)
+	}
+	if !rekey3Needed {
+		t.Error("user3 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user2 (groupB, leaving) key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+	if err == nil {
+		t.Error("user2 (leaving) key should be deleted")
+	}
+}
+
+// TestGroupRepository_BlockGroup_RevokesSecrets verifies that blocking a group evicts it from
+// connections and revokes its secret keys.
+func TestGroupRepository_BlockGroup_RevokesSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	groupRepo := NewGroupRepository(db)
+	connRepo := NewConnectionRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "block_secret_u1")
+	user2 := encCreateUser(t, db, "block_secret_u2")
+	user3 := encCreateUser(t, db, "block_secret_u3")
+
+	regionID := createConnectionTestRegion(t, db, "Secret Block Region")
+	groupAID := createConnectionTestGroup(t, db, "Secret Block GA", user1.ID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Secret Block GB", user2.ID, regionID)
+	groupCID := createConnectionTestGroup(t, db, "Secret Block GC", user3.ID, regionID)
+
+	// Form connection with all three groups
+	proposal, _ := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID, groupCID},
+	})
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupCID, true)
+	connectionID := *result.ConnectionID
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connectionID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id IS NOT NULL)")
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id IS NOT NULL")
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID, groupCID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
+	})
+
+	// Create a signal group and encrypted secret for this connection
+	sigGroupID := uuid.New().String()
+	_, _ = db.ExecContext(ctx, `INSERT INTO signal_groups (id, connection_id, group_name, created_by, created_at, is_active)
+		VALUES (?, ?, 'test_sig_group', ?, NOW(), TRUE)`, sigGroupID, connectionID, user1.ID)
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sigGroupID,
+		EncryptedPayload: "block_payload",
+		EncryptionIV:     "block_iv_123456",
+		UpdatedBy:        user1.ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "dek_u1"},
+		{UserID: user2.ID, WrappedDEK: "dek_u2"},
+		{UserID: user3.ID, WrappedDEK: "dek_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	// Group A blocks Group C (evicting C from connection)
+	err := groupRepo.BlockGroup(ctx, groupAID, groupCID)
+	if err != nil {
+		t.Fatalf("BlockGroup failed: %v", err)
+	}
+
+	// Verify group C is no longer a member of the connection
+	isMember, err := connRepo.IsConnectionMember(ctx, connectionID, groupCID)
+	if err != nil {
+		t.Fatalf("Failed to check membership: %v", err)
+	}
+	if isMember {
+		t.Error("Group C should have been evicted from connection")
+	}
+
+	// Verify user1 and user2 (surviving groups) still have keys but rekey_needed is true
+	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user1 DEK: %v", err)
+	}
+	if dek1 != "dek_u1" {
+		t.Errorf("user1 (survivor) key should be unchanged, got '%s'", dek1)
+	}
+
+	dek2, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user2 DEK: %v", err)
+	}
+	if dek2 != "dek_u2" {
+		t.Errorf("user2 (survivor) key should be unchanged, got '%s'", dek2)
+	}
+
+	var rekeyNeeded bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user1.ID).Scan(&rekeyNeeded)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user1: %v", err)
+	}
+	if !rekeyNeeded {
+		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user3 (blocked group) key is deleted
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err == nil {
+		t.Error("user3 (blocked) key should be deleted")
 	}
 }

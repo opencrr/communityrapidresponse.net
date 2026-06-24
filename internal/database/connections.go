@@ -620,6 +620,12 @@ func (r *ConnectionRepository) LeaveConnection(ctx context.Context, connectionID
 			return ErrNotConnectionMember
 		}
 
+		// Revoke secret keys for the leaving group
+		secretRepo := NewEncryptedSecretRepository(r.db)
+		if err := secretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connectionID, groupID); err != nil {
+			return err
+		}
+
 		// Remove the member
 		_, err = tx.ExecContext(ctx,
 			"DELETE FROM connection_members WHERE connection_id = ? AND group_id = ?",
@@ -1078,7 +1084,7 @@ func (r *ConnectionRepository) VoteOnChatProposal(ctx context.Context, proposalI
 func (r *ConnectionRepository) ListConnectionSignalGroups(ctx context.Context, connectionID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active
+			sg.description, sg.access_tier, sg.plaintext_invite_link, sg.created_by, sg.created_at, sg.is_active
 		FROM signal_groups sg
 		WHERE sg.connection_id = ? AND sg.is_active = TRUE
 		ORDER BY sg.created_at
@@ -1103,6 +1109,7 @@ func (r *ConnectionRepository) ListConnectionSignalGroups(ctx context.Context, c
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
+			&group.PlaintextInviteLink,
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
@@ -1181,17 +1188,21 @@ func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, 
 	}
 
 	// Map the proposal's connection access level onto a signal group access tier.
-	// admin_only stays admin-only; all_members maps to the member tier. Default
-	// to admin_only (most restrictive) if the value is missing/unexpected.
+	// admin_only stays admin-only; all_members maps to the open tier (unrestricted,
+	// unencrypted). Default to admin_only (most restrictive) if the value is
+	// missing/unexpected.
 	accessTier := models.AccessTierAdminOnly
+	var plaintextInviteLink *string
 	if req.AccessLevel == string(models.ConnectionAccessLevelAllMembers) {
-		accessTier = models.AccessTierMember
+		accessTier = models.AccessTierOpen
+		link := uuid.New().String()
+		plaintextInviteLink = &link
 	}
 
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, TRUE)`,
-		signalGroupID, connectionID, req.GroupName, description, string(accessTier), now,
+		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, plaintext_invite_link, created_by, created_at, is_active)
+		VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?, TRUE)`,
+		signalGroupID, connectionID, req.GroupName, description, string(accessTier), plaintextInviteLink, now,
 	)
 	if err != nil {
 		return fmt.Errorf("create connection signal group: %w", err)
@@ -1228,7 +1239,7 @@ func (r *ConnectionRepository) loadChatProposalVotes(ctx context.Context, tx *sq
 // ConnectionChatUserAccessPredicate generates a SQL subquery that identifies
 // users eligible to access a connection signal chat based on access level.
 // For admin_only: returns only admins of member groups
-// For all_members: returns all members of member groups
+// For all_members: returns all members of connection groups (open-tier access)
 // The subquery uses IN syntax: WHERE user_id IN (...)
 func ConnectionChatUserAccessPredicate(accessLevel string) string {
 	adminOnlyFilter := ""

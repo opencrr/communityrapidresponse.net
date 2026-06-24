@@ -591,11 +591,22 @@ func (r *GroupRepository) AddMember(ctx context.Context, groupID, userID string,
 	return err
 }
 
-// RemoveMember removes a user from a group.
+// RemoveMember removes a user from a group and revokes their encrypted secret keys.
 func (r *GroupRepository) RemoveMember(ctx context.Context, groupID, userID string) error {
-	query := "DELETE FROM group_members WHERE group_id = ? AND user_id = ?"
-	_, err := r.db.ExecContext(ctx, query, groupID, userID)
-	return err
+	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
+			groupID, userID,
+		); err != nil {
+			return fmt.Errorf("remove member: %w", err)
+		}
+
+		secretRepo := NewEncryptedSecretRepository(r.db)
+		if err := secretRepo.RevokeGroupSecretKeysForUser(ctx, tx, groupID, userID); err != nil {
+			return fmt.Errorf("revoke group keys: %w", err)
+		}
+		return nil
+	})
 }
 
 // IsUserMember checks if a user is a member of a group.
@@ -1711,7 +1722,7 @@ func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blocke
 		// connection the blocker also belongs to (a single block is enough — we do
 		// not wait for a unanimous block). Dissolve connections that fall below two
 		// members.
-		if err := evictBlockedFromSharedConnectionsTx(ctx, tx, blockerGroupID, blockedGroupID); err != nil {
+		if err := evictBlockedFromSharedConnectionsTx(ctx, tx, blockerGroupID, blockedGroupID, r.db); err != nil {
 			return err
 		}
 		return nil
@@ -1720,7 +1731,7 @@ func (r *GroupRepository) BlockGroup(ctx context.Context, blockerGroupID, blocke
 
 // evictBlockedFromSharedConnectionsTx removes blockedGroupID from every connection
 // that blockerGroupID also belongs to, dissolving any that drop below two members.
-func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blockerGroupID, blockedGroupID string) error {
+func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blockerGroupID, blockedGroupID string, db *DB) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT cm_blocker.connection_id
 		FROM connection_members cm_blocker
@@ -1747,6 +1758,12 @@ func evictBlockedFromSharedConnectionsTx(ctx context.Context, tx *sql.Tx, blocke
 	_ = rows.Close()
 
 	for _, connectionID := range connectionIDs {
+		// Revoke secret keys for the evicted blocked group
+		secretRepo := NewEncryptedSecretRepository(db)
+		if err := secretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connectionID, blockedGroupID); err != nil {
+			return err
+		}
+
 		if _, err := tx.ExecContext(ctx,
 			"DELETE FROM connection_members WHERE connection_id = ? AND group_id = ?",
 			connectionID, blockedGroupID,
@@ -1862,6 +1879,7 @@ func (r *GroupRepository) BlockUser(ctx context.Context, groupID, userID string,
 // BlockAndRemoveMember bans a user and removes any current membership in one
 // transaction, so a ban can never leave the user blocked-but-still-a-member if the
 // removal fails. The block insert is idempotent (duplicate ban → no-op).
+// Also revokes the user's encrypted secret keys and flags survivors for rotation.
 func (r *GroupRepository) BlockAndRemoveMember(ctx context.Context, groupID, userID string, blockedBy *string, reason *string) error {
 	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,
@@ -1876,6 +1894,11 @@ func (r *GroupRepository) BlockAndRemoveMember(ctx context.Context, groupID, use
 			groupID, userID,
 		); err != nil {
 			return fmt.Errorf("remove member: %w", err)
+		}
+
+		secretRepo := NewEncryptedSecretRepository(r.db)
+		if err := secretRepo.RevokeGroupSecretKeysForUser(ctx, tx, groupID, userID); err != nil {
+			return fmt.Errorf("revoke group keys: %w", err)
 		}
 		return nil
 	})
