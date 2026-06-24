@@ -972,27 +972,23 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 	user3 := encCreateUser(t, db, "leave_secret_u3")
 
 	regionID := createConnectionTestRegion(t, db, "Secret Leave Region")
-	group1ID := createConnectionTestGroup(t, db, "Secret Leave G1", user1.ID, regionID)
-	group2ID := createConnectionTestGroup(t, db, "Secret Leave G2", user2.ID, regionID)
+	groupAID := createConnectionTestGroup(t, db, "Secret Leave GA", user1.ID, regionID)
+	groupBID := createConnectionTestGroup(t, db, "Secret Leave GB", user2.ID, regionID)
+	groupCID := createConnectionTestGroup(t, db, "Secret Leave GC", user3.ID, regionID)
 
-	// Add user2 and user3 to group2
-	_, _ = db.ExecContext(ctx,
-		"INSERT INTO group_members (id, group_id, user_id, is_admin, joined_at) VALUES (?, ?, ?, FALSE, NOW())",
-		uuid.New().String(), group2ID, user3.ID,
-	)
-
-	// Form connection with both groups
-	proposal, _ := connRepo.ProposeConnection(ctx, group1ID, &models.ProposeConnectionRequest{
-		GroupIDs: []string{group2ID},
+	// Form connection with all three groups
+	proposal, _ := connRepo.ProposeConnection(ctx, groupAID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupBID, groupCID},
 	})
-	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, group2ID, true)
+	_, _ = connRepo.RespondToProposal(ctx, proposal.ID, groupBID, true)
+	result, _ := connRepo.RespondToProposal(ctx, proposal.ID, groupCID, true)
 	connectionID := *result.ConnectionID
 
 	t.Cleanup(func() {
 		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE connection_id = ?", connectionID)
 		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE signal_group_id IS NOT NULL)")
 		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE signal_group_id IS NOT NULL")
-		cleanupConnectionTest(t, db, []string{group1ID, group2ID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
+		cleanupConnectionTest(t, db, []string{groupAID, groupBID, groupCID}, []string{user1.ID, user2.ID, user3.ID}, []string{regionID}, []string{connectionID})
 	})
 
 	// Create a signal group and encrypted secret for this connection
@@ -1016,13 +1012,13 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 		t.Fatalf("Failed to create secret: %v", err)
 	}
 
-	// Group 2 leaves the connection
-	err := connRepo.LeaveConnection(ctx, connectionID, group2ID)
+	// Group B leaves the connection
+	err := connRepo.LeaveConnection(ctx, connectionID, groupBID)
 	if err != nil {
 		t.Fatalf("LeaveConnection failed: %v", err)
 	}
 
-	// Verify user1 (group1, survivor) still has key but rekey_needed is true
+	// Verify user1 (groupA, survivor) still has key but rekey_needed is true
 	dek1, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user1.ID)
 	if err != nil {
 		t.Fatalf("Failed to get user1 DEK: %v", err)
@@ -1043,15 +1039,31 @@ func TestConnectionRepository_LeaveConnection_RevokesSecrets(t *testing.T) {
 		t.Error("user1 (survivor) should have rekey_needed=true")
 	}
 
-	// Verify user2 and user3 (group2, leaving) keys are deleted
+	// Verify user3 (groupC, survivor) still has key but rekey_needed is true
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_u3" {
+		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
+	}
+
+	var rekey3Needed bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rekey_needed FROM encrypted_secret_keys
+		WHERE secret_id = ? AND user_id = ?
+	`, secret.ID, user3.ID).Scan(&rekey3Needed)
+	if err != nil {
+		t.Fatalf("Failed to query rekey flag for user3: %v", err)
+	}
+	if !rekey3Needed {
+		t.Error("user3 (survivor) should have rekey_needed=true")
+	}
+
+	// Verify user2 (groupB, leaving) key is deleted
 	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user2.ID)
 	if err == nil {
 		t.Error("user2 (leaving) key should be deleted")
-	}
-
-	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user3.ID)
-	if err == nil {
-		t.Error("user3 (leaving) key should be deleted")
 	}
 }
 

@@ -27,8 +27,8 @@ var (
 
 // ConnectionRepository handles connection database operations.
 type ConnectionRepository struct {
-	db                    *DB
-	encryptedSecretRepo   *EncryptedSecretRepository
+	db                  *DB
+	encryptedSecretRepo *EncryptedSecretRepository
 }
 
 // NewConnectionRepository creates a new connection repository.
