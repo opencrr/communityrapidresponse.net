@@ -220,6 +220,7 @@ func (r *EncryptedSecretRepository) FlagRekeyForUser(ctx context.Context, userID
 
 // GetPendingRekeys returns secrets where another user needs re-keying and the calling user has a valid key.
 // Also returns the calling user's wrapped DEK so they can unwrap and re-wrap for the target.
+// Covers both signal-group and meshtastic-channel scoped secrets.
 func (r *EncryptedSecretRepository) GetPendingRekeys(ctx context.Context, memberUserID string) ([]PendingRekey, error) {
 	query := `
 		SELECT DISTINCT esk_need.secret_id, esk_need.user_id AS target_user_id,
@@ -232,7 +233,7 @@ func (r *EncryptedSecretRepository) GetPendingRekeys(ctx context.Context, member
 		INNER JOIN encrypted_secret_keys esk_have ON esk_need.secret_id = esk_have.secret_id
 		INNER JOIN user_encryption_keys uek ON esk_need.user_id = uek.user_id
 		INNER JOIN encrypted_secrets es ON esk_need.secret_id = es.id
-		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		LEFT JOIN signal_groups sg ON es.signal_group_id = sg.id
 		WHERE esk_need.rekey_needed = TRUE
 		AND esk_have.user_id = ?
 		AND esk_have.rekey_needed = FALSE
