@@ -58,4 +58,45 @@ test.describe('Group Detail', () => {
         // Should NOT see admin_only
         await expect(page.getByText('Admin Channel')).not.toBeVisible();
     });
+
+    test('admin sees Create Signal Group button', async ({ page }) => {
+        await apiLogin(page, 'alice@test.com');
+        await page.goto('/groups/group-seattle-ma');
+        await expect(page.getByRole('button', { name: '+ Create Signal Group' })).toBeVisible();
+    });
+
+    test('non-admin member does not see Create Signal Group button', async ({ page }) => {
+        await apiLogin(page, 'dave@test.com');
+        await page.goto('/groups/group-seattle-ma');
+        await expect(page.getByRole('button', { name: '+ Create Signal Group' })).not.toBeVisible();
+    });
+
+    test('admin can open Create Signal Group modal', async ({ page }) => {
+        await apiLogin(page, 'alice@test.com');
+        await page.goto('/groups/group-seattle-ma');
+        await page.getByRole('button', { name: '+ Create Signal Group' }).click();
+        await expect(page.getByText('Create Signal Group')).toBeVisible();
+        await expect(page.getByLabel('Chat Name')).toBeVisible();
+        // invite link field hidden for open tier by default
+        await expect(page.getByLabel('Signal Invite Link')).not.toBeVisible();
+    });
+
+    test('invite link field shown when restricted tier selected', async ({ page }) => {
+        await apiLogin(page, 'alice@test.com');
+        await page.goto('/groups/group-seattle-ma');
+        await page.getByRole('button', { name: '+ Create Signal Group' }).click();
+        await page.getByLabel('Admin Only').check();
+        await expect(page.getByLabel('Signal Invite Link')).toBeVisible();
+    });
+
+    test('admin can create an open signal group', async ({ page }) => {
+        await apiLogin(page, 'alice@test.com');
+        await page.goto('/groups/group-seattle-ma');
+        await page.getByRole('button', { name: '+ Create Signal Group' }).click();
+        await page.getByLabel('Chat Name').fill('New Open Chat');
+        // open tier is default; no invite link required
+        await page.getByRole('button', { name: 'Create' }).click();
+        await expect(page.getByText('Signal group created.')).toBeVisible();
+        await expect(page.getByText('New Open Chat')).toBeVisible();
+    });
 });
