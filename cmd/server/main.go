@@ -228,7 +228,7 @@ func main() {
 
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
-	groupHandler := handlers.NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	groupHandler.SetRateLimiter(rateLimiter)
 
 	// Initialize school handler
