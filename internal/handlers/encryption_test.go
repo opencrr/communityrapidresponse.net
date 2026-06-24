@@ -46,9 +46,11 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 
 	regionRepo := database.NewRegionRepository(&database.DB{DB: keyDB})
 	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
+	groupRepo := database.NewGroupRepository(&database.DB{DB: keyDB})
+	signalGroupRepo := database.NewSignalGroupRepository(&database.DB{DB: keyDB})
 
 	userRepo := database.NewUserRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo)
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -71,7 +73,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,

@@ -18,6 +18,8 @@ type EncryptionHandler struct {
 	regionRepo          *database.RegionRepository
 	schoolRepo          *database.SchoolRepository
 	userRepo            *database.UserRepository
+	groupRepo           *database.GroupRepository
+	signalGroupRepo     *database.SignalGroupRepository
 	notificationService NotificationServiceInterface
 }
 
@@ -28,6 +30,8 @@ func NewEncryptionHandler(
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
 	userRepo *database.UserRepository,
+	groupRepo *database.GroupRepository,
+	signalGroupRepo *database.SignalGroupRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
@@ -35,6 +39,8 @@ func NewEncryptionHandler(
 		regionRepo:          regionRepo,
 		schoolRepo:          schoolRepo,
 		userRepo:            userRepo,
+		groupRepo:           groupRepo,
+		signalGroupRepo:     signalGroupRepo,
 	}
 }
 
@@ -204,7 +210,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id)
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id)
 func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -215,11 +221,12 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	regionID := r.URL.Query().Get("region_id")
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
+	groupID := r.URL.Query().Get("group_id")
 
-	// SCOPE LIMITATION: only region/school/district recipient enumeration exists.
-	// Group- and connection-owned signal chats are intentionally NOT supported here
+	// SCOPE LIMITATION: only region/school/district/group recipient enumeration exists.
+	// Connection-owned signal chats are intentionally NOT supported here
 	// yet (they are metadata-only — see DESIGN/PR "Known limitations"). Do NOT add
-	// group_id/connection_id branches without also landing DEK revocation
+	// connection_id branch without also landing DEK revocation
 	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
 	// connection-leave / tier-downgrade. Enumeration without revocation lets a
 	// removed member who cached the unwrapped DEK keep decrypting.
@@ -236,8 +243,11 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if districtID != "" {
 		scopeCount++
 	}
+	if groupID != "" {
+		scopeCount++
+	}
 	if scopeCount != 1 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, or district_id must be provided")
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, or group_id must be provided")
 		return
 	}
 
@@ -266,7 +276,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
-		} else {
+		} else if districtID != "" {
 			schools, memberErr := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 			if memberErr != nil {
 				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
@@ -284,17 +294,46 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
+		} else if groupID != "" {
+			signalGroup, sgErr := h.signalGroupRepo.GetByID(r.Context(), groupID)
+			if sgErr != nil {
+				if errors.Is(sgErr, database.ErrSignalGroupNotFound) {
+					writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
+				} else {
+					writeServerError(w, r, sgErr, "Failed to get signal group", "encryption", "get_signal_group")
+				}
+				return
+			}
+			if signalGroup.OwnerGroupID == nil {
+				writeError(w, http.StatusBadRequest, "invalid_group_type", "Signal group does not have an owner group")
+				return
+			}
+			isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), *signalGroup.OwnerGroupID, claims.UserID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
 		}
 	}
 
 	var keys []models.PublicKeyEntry
+	var signalGroupForKeys *models.SignalGroup
 
 	if regionID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)
 	} else if schoolID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForSchool(r.Context(), schoolID)
-	} else {
+	} else if districtID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForDistrict(r.Context(), districtID)
+	} else if groupID != "" {
+		signalGroupForKeys, err = h.signalGroupRepo.GetByID(r.Context(), groupID)
+		if err == nil && signalGroupForKeys != nil && signalGroupForKeys.OwnerGroupID != nil {
+			keys, err = h.encryptionKeyRepo.GetPublicKeysForGroup(r.Context(), *signalGroupForKeys.OwnerGroupID, signalGroupForKeys.AccessTier)
+		}
 	}
 
 	if err != nil {
