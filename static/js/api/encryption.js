@@ -46,11 +46,22 @@ export async function getPublicKeys(params) {
 }
 
 /**
- * Get public keys for members of a group
+ * Get public keys for members of a group (via existing signal group id)
  * GET /api/v1/encryption/public-keys?group_id=X
  */
 export async function getGroupPublicKeys(groupId) {
     return getPublicKeys({ group_id: groupId });
+}
+
+/**
+ * Get public keys for members of an owner group at a given access tier.
+ * Use this when creating a new signal group (before a signal group id exists).
+ * GET /api/v1/encryption/public-keys?owner_group_id=X&access_tier=Y
+ * @param {string} ownerGroupId - the community group id
+ * @param {string} accessTier - one of: resident, member, trusted, admin_only
+ */
+export async function getOwnerGroupPublicKeys(ownerGroupId, accessTier) {
+    return getPublicKeys({ owner_group_id: ownerGroupId, access_tier: accessTier });
 }
 
 /**

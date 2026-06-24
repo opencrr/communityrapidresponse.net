@@ -214,7 +214,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id, connection_id)
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id, connection_id, owner_group_id)
 func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -227,6 +227,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	districtID := r.URL.Query().Get("district_id")
 	groupID := r.URL.Query().Get("group_id")
 	connectionID := r.URL.Query().Get("connection_id")
+	ownerGroupID := r.URL.Query().Get("owner_group_id")
 
 	// Exactly one scope must be provided
 	scopeCount := 0
@@ -245,8 +246,11 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if connectionID != "" {
 		scopeCount++
 	}
+	if ownerGroupID != "" {
+		scopeCount++
+	}
 	if scopeCount != 1 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, group_id, or connection_id must be provided")
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, group_id, connection_id, or owner_group_id must be provided")
 		return
 	}
 
@@ -326,6 +330,16 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
+		} else if ownerGroupID != "" {
+			isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), ownerGroupID, claims.UserID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
 		}
 	}
 
@@ -351,6 +365,19 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 			accessLevel = string(models.ConnectionAccessLevelAllMembers)
 		}
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, accessLevel)
+	} else if ownerGroupID != "" {
+		// Fetch keys for a not-yet-created signal group: caller provides the
+		// owner group id and the intended access tier so we can resolve
+		// recipients without an existing signal group.
+		accessTier := models.AccessTier(r.URL.Query().Get("access_tier"))
+		switch accessTier {
+		case models.AccessTierResident, models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly:
+			// valid restricted tier
+		default:
+			writeError(w, http.StatusBadRequest, "validation_error", "access_tier must be one of: resident, member, trusted, admin_only")
+			return
+		}
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForGroup(r.Context(), ownerGroupID, accessTier)
 	}
 
 	if err != nil {

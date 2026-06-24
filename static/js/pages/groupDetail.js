@@ -3,9 +3,10 @@
  * Shows full group info with sections gated by membership/admin status.
  */
 
-import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink } from '../api/groups.js';
+import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink, createSignalGroup } from '../api/groups.js';
 import { isAuthenticated, getUser, isSuperuser } from '../utils/store.js';
-import { getPrivateKey, decryptSecret } from '../crypto/index.js';
+import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
+import { getOwnerGroupPublicKeys } from '../api/encryption.js';
 import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -177,7 +178,7 @@ async function renderGroupDetail(container, group) {
 
     // Load dynamic sections for members
     if (isMember) {
-        loadSignalGroups(group.id);
+        loadSignalGroups(group.id, isAdmin);
         loadMeshtasticChannels(group.id);
         loadResources(group.id);
         loadMembers(group.id);
@@ -246,8 +247,9 @@ function bindEvents(container, group) {
 /**
  * Load and display signal groups for this group
  * @param {string} groupId - Group UUID
+ * @param {boolean} isAdmin - Whether the current user is an admin
  */
-async function loadSignalGroups(groupId) {
+async function loadSignalGroups(groupId, isAdmin) {
     const section = document.getElementById('signal-groups-section');
     if (!section) return;
 
@@ -268,40 +270,189 @@ async function loadSignalGroups(groupId) {
             return { ...sg, _decryptedLink: link };
         }));
 
-        if (decryptedGroups.length === 0) {
-            section.innerHTML = '';
-            return;
-        }
+        const createBtn = isAdmin
+            ? `<button class="btn btn--primary btn--sm" id="create-signal-group-btn" style="margin-bottom: var(--space-3);">+ Create Signal Group</button>`
+            : '';
 
-        section.innerHTML = `
-            <h2 class="group-detail__section-title">Signal Groups</h2>
-            <div class="dashboard-grid">
-                ${decryptedGroups.map(sg => `
-                    <div class="card group-card">
-                        <div class="card__body">
-                            <div class="group-card__name">${escapeHtml(sg.name)}</div>
-                            ${sg.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(sg.description)}</p>` : ''}
-                            ${sg.access_tier ? `<span class="tier-badge tier-badge--${sg.access_tier}">${formatAccessTier(sg.access_tier)}</span>` : ''}
-                            <div class="group-invite" style="margin-top: var(--space-3);">
-                                ${sg._decryptedLink ? `
-                                    <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
-                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
-                                ` : sg.access_tier === 'open' && sg.plaintext_invite_link ? `
-                                    <span class="group-invite__link">${escapeHtml(sg.plaintext_invite_link)}</span>
-                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg.plaintext_invite_link)}">Copy</button>
-                                ` : `
-                                    <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this group's Signal invite link isn't stored encrypted here yet. Ask a group admin to share it.</span>
-                                `}
+        if (decryptedGroups.length === 0) {
+            section.innerHTML = createBtn
+                ? `<h2 class="group-detail__section-title">Signal Groups</h2>${createBtn}`
+                : '';
+        } else {
+            section.innerHTML = `
+                <h2 class="group-detail__section-title">Signal Groups</h2>
+                ${createBtn}
+                <div class="dashboard-grid">
+                    ${decryptedGroups.map(sg => `
+                        <div class="card group-card">
+                            <div class="card__body">
+                                <div class="group-card__name">${escapeHtml(sg.name)}</div>
+                                ${sg.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(sg.description)}</p>` : ''}
+                                ${sg.access_tier ? `<span class="tier-badge tier-badge--${sg.access_tier}">${formatAccessTier(sg.access_tier)}</span>` : ''}
+                                <div class="group-invite" style="margin-top: var(--space-3);">
+                                    ${sg._decryptedLink ? `
+                                        <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
+                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
+                                    ` : sg.access_tier === 'open' && sg.plaintext_invite_link ? `
+                                        <span class="group-invite__link">${escapeHtml(sg.plaintext_invite_link)}</span>
+                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg.plaintext_invite_link)}">Copy</button>
+                                    ` : `
+                                        <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this group's Signal invite link isn't stored encrypted here yet. Ask a group admin to share it.</span>
+                                    `}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
+                    `).join('')}
+                </div>
+            `;
+        }
 
         bindCopyButtons(section);
+
+        if (isAdmin) {
+            const btn = section.querySelector('#create-signal-group-btn');
+            if (btn) {
+                btn.addEventListener('click', () => showCreateSignalGroupModal(groupId));
+            }
+        }
     } catch (error) {
         console.error('Failed to load signal groups:', error);
+    }
+}
+
+/**
+ * Show the modal for creating a new Signal group
+ * @param {string} groupId - Owner group UUID
+ */
+function showCreateSignalGroupModal(groupId) {
+    modal.show({
+        title: 'Create Signal Group',
+        content: `
+            <form id="create-signal-group-form" novalidate>
+                <div class="form-group">
+                    <label class="form-label" for="sg-name">Chat Name <span style="color:var(--color-error)">*</span></label>
+                    <input type="text" class="form-input" id="sg-name" required maxlength="255" placeholder="e.g. General Chat">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="sg-description">Description</label>
+                    <input type="text" class="form-input" id="sg-description" maxlength="1000" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Access Tier <span style="color:var(--color-error)">*</span></label>
+                    <div style="display:flex;flex-direction:column;gap:var(--space-2);margin-top:var(--space-1);">
+                        <label><input type="radio" name="sg-access-tier" value="open" checked> Open &mdash; invite link visible to all members</label>
+                        <label><input type="radio" name="sg-access-tier" value="resident"> Resident</label>
+                        <label><input type="radio" name="sg-access-tier" value="member"> Member</label>
+                        <label><input type="radio" name="sg-access-tier" value="trusted"> Trusted</label>
+                        <label><input type="radio" name="sg-access-tier" value="admin_only"> Admin Only</label>
+                    </div>
+                </div>
+                <div class="form-group" id="sg-invite-link-group" style="display:none;">
+                    <label class="form-label" for="sg-invite-link">Signal Invite Link <span style="color:var(--color-error)">*</span></label>
+                    <input type="url" class="form-input" id="sg-invite-link" placeholder="https://signal.group/...">
+                    <p style="font-size:var(--font-size-sm);color:var(--color-gray-500);margin-top:var(--space-1);">This link will be encrypted and only accessible to entitled members.</p>
+                </div>
+                <div id="create-sg-error" class="alert alert--error hidden" style="margin-top:var(--space-3);"></div>
+            </form>
+        `,
+        buttons: [
+            { label: 'Cancel', type: 'secondary' },
+            {
+                label: 'Create',
+                type: 'primary',
+                closeOnClick: false,
+                onClick: () => handleCreateSignalGroupSubmit(groupId),
+            },
+        ],
+    });
+
+    // Show/hide invite link field based on selected tier
+    const form = document.getElementById('create-signal-group-form');
+    if (form) {
+        form.querySelectorAll('input[name="sg-access-tier"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const inviteLinkGroup = document.getElementById('sg-invite-link-group');
+                const inviteLinkInput = document.getElementById('sg-invite-link');
+                const isRestricted = radio.value !== 'open';
+                if (inviteLinkGroup) inviteLinkGroup.style.display = isRestricted ? '' : 'none';
+                if (inviteLinkInput) inviteLinkInput.required = isRestricted;
+            });
+        });
+    }
+}
+
+/**
+ * Handle create signal group form submission
+ * @param {string} groupId - Owner group UUID
+ */
+async function handleCreateSignalGroupSubmit(groupId) {
+    const form = document.getElementById('create-signal-group-form');
+    const errorEl = document.getElementById('create-sg-error');
+    if (!form) return;
+
+    const name = document.getElementById('sg-name')?.value?.trim();
+    const description = document.getElementById('sg-description')?.value?.trim();
+    const accessTier = form.querySelector('input[name="sg-access-tier"]:checked')?.value || 'open';
+    const inviteLink = document.getElementById('sg-invite-link')?.value?.trim();
+
+    if (errorEl) errorEl.classList.add('hidden');
+
+    if (!name) {
+        showCreateSgError(errorEl, 'Chat name is required.');
+        return;
+    }
+
+    const isRestricted = accessTier !== 'open';
+    if (isRestricted && !inviteLink) {
+        showCreateSgError(errorEl, 'Signal invite link is required for restricted tiers.');
+        return;
+    }
+
+    const requestData = { group_name: name, access_tier: accessTier };
+    if (description) requestData.description = description;
+
+    if (isRestricted) {
+        try {
+            const keysResponse = await getOwnerGroupPublicKeys(groupId, accessTier);
+            const memberKeys = keysResponse.keys || [];
+            if (memberKeys.length === 0) {
+                showCreateSgError(errorEl, 'No group members have encryption keys set up yet. Members must log in to set up encryption first.');
+                return;
+            }
+            const encrypted = await encryptForMembers(inviteLink, memberKeys);
+            requestData.encrypted_payload = encrypted.ciphertext;
+            requestData.encryption_iv = encrypted.iv;
+            requestData.wrapped_keys = encrypted.wrappedKeys;
+        } catch (encryptError) {
+            console.error('Encryption failed:', encryptError);
+            showCreateSgError(errorEl, encryptError.message || 'Encryption failed. Ensure your encryption keys are set up.');
+            return;
+        }
+    } else {
+        if (inviteLink) requestData.invite_link = inviteLink;
+    }
+
+    try {
+        await createSignalGroup(groupId, requestData);
+        modal.closeModal();
+        toast.success('Signal group created.');
+        loadSignalGroups(groupId, true);
+    } catch (error) {
+        showCreateSgError(errorEl, error.data?.message || error.message || 'Failed to create signal group.');
+    }
+}
+
+/**
+ * Show an inline error in the create signal group modal
+ * @param {HTMLElement|null} errorEl
+ * @param {string} message
+ */
+function showCreateSgError(errorEl, message) {
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+    } else {
+        toast.error(message);
     }
 }
 

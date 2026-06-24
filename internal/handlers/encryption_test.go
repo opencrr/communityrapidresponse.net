@@ -1898,6 +1898,201 @@ func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipGroup(t *tes
 }
 
 // =============================================================================
+// owner_group_id tests (fetch keys for a not-yet-created signal group)
+// =============================================================================
+
+func TestEncryptionHandler_GetPublicKeys_ByOwnerGroup(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-create"
+
+	// Superuser check
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check: IsUserMember for owner group
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// GetPublicKeysForGroup with admin_only tier
+	suite.keyMock.ExpectQuery("FROM user_encryption_keys ek").
+		WithArgs(ownerGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "public_key"}).
+				AddRow("user-1", "pub-key-1").
+				AddRow("user-2", "pub-key-2"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?owner_group_id="+ownerGroupID+"&access_tier=admin_only", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 keys, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ByOwnerGroupNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-nope"
+
+	// Superuser check
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check returns false
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?owner_group_id="+ownerGroupID+"&access_tier=member", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ByOwnerGroupInvalidTier(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-1"
+
+	// Superuser check
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check passes
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// access_tier=open is not valid for owner_group_id (open tiers don't encrypt)
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?owner_group_id="+ownerGroupID+"&access_tier=open", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected error 'validation_error', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ByOwnerGroupMissingTier(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-1"
+
+	// Superuser check
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check passes
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// No access_tier provided
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?owner_group_id="+ownerGroupID, nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected error 'validation_error', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipOwnerGroup(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-su"
+
+	superuserClaims := &middleware.Claims{
+		UserID:           "superuser-1",
+		Username:         "superuser",
+		Email:            "super@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      true,
+		TokenType:        middleware.TokenTypeFull,
+	}
+
+	// Superuser check returns true — membership check is skipped
+	expectUserGetByID(suite.keyMock, "superuser-1", true)
+
+	// GetPublicKeysForGroup with trusted tier (no membership query)
+	suite.keyMock.ExpectQuery("FROM user_encryption_keys ek").
+		WithArgs(ownerGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "public_key"}).
+				AddRow("user-1", "pub-key-1"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?owner_group_id="+ownerGroupID+"&access_tier=trusted", nil, superuserClaims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+// =============================================================================
 // Additional edge-case tests
 // =============================================================================
 
