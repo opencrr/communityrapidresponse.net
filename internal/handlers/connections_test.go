@@ -582,7 +582,7 @@ func TestConnectionHandler_ProposeSignalChat_Success(t *testing.T) {
 	body, _ := json.Marshal(models.ProposeConnectionChatRequest{
 		GroupName:   "Test Chat",
 		Description: "A test chat",
-		AccessLevel: "admin_only",
+		AccessLevel: "all_members",
 	})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/connections/"+*result.ConnectionID+"/signal-group-proposals?id="+*result.ConnectionID+"&proposer_group_id="+groupA.ID,
@@ -607,6 +607,75 @@ func TestConnectionHandler_ProposeSignalChat_Success(t *testing.T) {
 	}
 	if len(chatProposal.Votes) != 2 {
 		t.Errorf("Expected 2 votes, got %d", len(chatProposal.Votes))
+	}
+}
+
+func TestConnectionHandler_ProposeSignalChat_AdminOnly_RequiresEncryption(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+	user := s.createTestUser("conn_chat_encrypt_user", 1, false)
+	user.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Encrypt Region", models.RegionTypeState, nil)
+	groupA := s.createTestGroup("Group Encrypt A", user.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Encrypt B", user.ID, []string{region.ID})
+	defer s.cleanup([]string{user.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, nil)
+
+	// Form connection
+	proposal, _ := s.connectionRepo.ProposeConnection(context.Background(), groupA.ID, &models.ProposeConnectionRequest{
+		GroupIDs: []string{groupB.ID},
+	})
+	result, _ := s.connectionRepo.RespondToProposal(context.Background(), proposal.ID, groupB.ID, true)
+	if result.ConnectionID == nil {
+		t.Fatal("Expected connection to be formed")
+	}
+	connectionID := *result.ConnectionID
+	defer s.cleanup(nil, nil, nil, []string{connectionID})
+
+	// Test: admin_only without encryption fields should fail
+	body, _ := json.Marshal(models.ProposeConnectionChatRequest{
+		GroupName:   "Admin Chat",
+		Description: "An admin chat",
+		AccessLevel: "admin_only",
+	})
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/signal-group-proposals?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx := context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	s.handler.ProposeSignalChat(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for missing encryption fields, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Test: admin_only with encryption fields should succeed
+	payload := "encrypted_payload_data"
+	iv := "initialization_vector"
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: "user1", WrappedDEK: "wrapped_dek_1"},
+	}
+	body, _ = json.Marshal(models.ProposeConnectionChatRequest{
+		GroupName:        "Admin Chat",
+		Description:      "An admin chat",
+		AccessLevel:      "admin_only",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
+	})
+	req = httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/signal-group-proposals?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr = httptest.NewRecorder()
+	s.handler.ProposeSignalChat(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("Expected 201 with encryption fields, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
