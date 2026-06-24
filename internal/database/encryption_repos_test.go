@@ -91,7 +91,8 @@ func encCreateSecret(t *testing.T, db *DB, groupID, userID string) *models.Encry
 // encCreateGroup creates a test group and returns it. Caller must cleanup.
 func encCreateGroup(t *testing.T, db *DB, createdBy string) *models.Group {
 	t.Helper()
-	repo := NewGroupRepository(db)
+	encryptedSecretRepo := NewEncryptedSecretRepository(db)
+	repo := NewGroupRepository(db, encryptedSecretRepo)
 	ctx := context.Background()
 
 	req := &models.CreateGroupRequest{
