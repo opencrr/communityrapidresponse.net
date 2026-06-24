@@ -344,7 +344,13 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 			keys, err = h.encryptionKeyRepo.GetPublicKeysForGroup(r.Context(), *signalGroupForKeys.OwnerGroupID, signalGroupForKeys.AccessTier)
 		}
 	} else if connectionID != "" {
-		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, string(models.ConnectionAccessLevelAllMembers))
+		// Restricted (admin_only) connection chats encrypt their secret for
+		// connection admins only; everything else defaults to all members.
+		accessLevel := r.URL.Query().Get("access_level")
+		if accessLevel != string(models.ConnectionAccessLevelAdminOnly) {
+			accessLevel = string(models.ConnectionAccessLevelAllMembers)
+		}
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, accessLevel)
 	}
 
 	if err != nil {
