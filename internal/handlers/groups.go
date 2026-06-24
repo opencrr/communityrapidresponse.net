@@ -312,11 +312,11 @@ func (h *GroupHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var filteredSignalGroups []models.SignalGroupPublic
-	for i, sg := range groupDetails.SignalGroups {
+	for _, sg := range groupDetails.SignalGroups {
 		if isSuperuser || database.UserMeetsAccessTier(models.AccessTier(sg.AccessTier), true, isVerifiedResident, memberInfo) {
 			// Clear plaintext_invite_link for non-open tiers
 			if sg.AccessTier != "open" {
-				groupDetails.SignalGroups[i].PlaintextInviteLink = nil
+				sg.PlaintextInviteLink = nil
 			}
 			filteredSignalGroups = append(filteredSignalGroups, sg)
 		}
