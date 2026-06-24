@@ -1314,6 +1314,10 @@ func TestConnectionHandler_GetConnectionChatSecret_EntitledMember(t *testing.T) 
 	defer s.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminA)))
 
 	rr := httptest.NewRecorder()
@@ -1362,6 +1366,10 @@ func TestConnectionHandler_GetConnectionChatSecret_UnderTierCaller(t *testing.T)
 	defer s.cleanup([]string{adminA.ID, memberB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(memberB)))
 
 	rr := httptest.NewRecorder()
@@ -1392,6 +1400,10 @@ func TestConnectionHandler_GetConnectionChatSecret_NonMember(t *testing.T) {
 	defer s.cleanup([]string{adminA.ID, adminB.ID, outsider.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(outsider)))
 
 	rr := httptest.NewRecorder()
@@ -1425,6 +1437,10 @@ func TestConnectionHandler_GetConnectionChatSecret_SignalGroupNotInConnection(t 
 	defer s.cleanup([]string{adminA.ID, adminB.ID, adminC.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID, groupC.ID}, []string{connectionID, connectionID2})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminA)))
 
 	rr := httptest.NewRecorder()
@@ -1455,6 +1471,10 @@ func TestConnectionHandler_GetConnectionChatSecret_NoWrappedDEK(t *testing.T) {
 	defer s.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminB)))
 
 	rr := httptest.NewRecorder()
@@ -1489,6 +1509,10 @@ func TestConnectionHandler_GetConnectionChatSecret_SuperuserBypass(t *testing.T)
 	defer s.cleanup([]string{superuser.ID, adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(superuser)))
 
 	rr := httptest.NewRecorder()

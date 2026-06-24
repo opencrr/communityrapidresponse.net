@@ -4400,6 +4400,9 @@ func TestGroupHandler_GetSignalGroupSecret_EntitledMember(t *testing.T) {
 
 	claims := suite.claimsForUser(member)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
@@ -4449,6 +4452,9 @@ func TestGroupHandler_GetSignalGroupSecret_UnderTierCaller(t *testing.T) {
 
 	claims := suite.claimsForUser(member)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
@@ -4480,6 +4486,9 @@ func TestGroupHandler_GetSignalGroupSecret_NonMember(t *testing.T) {
 
 	claims := suite.claimsForUser(outsider)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
@@ -4507,6 +4516,9 @@ func TestGroupHandler_GetSignalGroupSecret_UnknownSignalGroupID(t *testing.T) {
 
 	claims := suite.claimsForUser(user)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/unknown-sg-id/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", "unknown-sg-id")
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
@@ -4542,6 +4554,9 @@ func TestGroupHandler_GetSignalGroupSecret_NoWrappedDEK(t *testing.T) {
 
 	claims := suite.claimsForUser(member)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
@@ -4575,6 +4590,9 @@ func TestGroupHandler_GetSignalGroupSecret_SuperuserBypass(t *testing.T) {
 
 	claims := suite.claimsForUser(superuser)
 	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
 	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
 	httpReq = httpReq.WithContext(ctx)
 
