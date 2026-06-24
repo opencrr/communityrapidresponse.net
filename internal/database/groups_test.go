@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -1828,6 +1829,313 @@ func TestUserMeetsAccessTier(t *testing.T) {
 }
 
 // =============================================================================
+// GroupTierMembershipPredicate Tests
+// =============================================================================
+
+func TestGroupTierMembershipPredicate(t *testing.T) {
+	tests := []struct {
+		name          string
+		tier          models.AccessTier
+		expectError   bool
+		expectSuccess bool
+		predicateSub  string // substring to check in predicate
+	}{
+		// Restricted tiers - should return valid predicates
+		{
+			name:           "resident_tier",
+			tier:           models.AccessTierResident,
+			expectSuccess:  true,
+			predicateSub:   "postcard_verified = TRUE",
+		},
+		{
+			name:           "member_tier",
+			tier:           models.AccessTierMember,
+			expectSuccess:  true,
+			predicateSub:   "user_id IS NOT NULL",
+		},
+		{
+			name:           "trusted_tier",
+			tier:           models.AccessTierTrusted,
+			expectSuccess:  true,
+			predicateSub:   "trust_level = 'trusted'",
+		},
+		{
+			name:           "admin_only_tier",
+			tier:           models.AccessTierAdminOnly,
+			expectSuccess:  true,
+			predicateSub:   "is_admin = TRUE",
+		},
+		// Open tier - should error (not encrypted)
+		{
+			name:        "open_tier_error",
+			tier:        models.AccessTierOpen,
+			expectError: true,
+		},
+		// Unknown tier - should error
+		{
+			name:        "unknown_tier_error",
+			tier:        models.AccessTier("invalid"),
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			predicate, err := GroupTierMembershipPredicate(tt.tier)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error for tier %q, got nil", tt.tier)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error for tier %q: %v", tt.tier, err)
+				return
+			}
+
+			if !tt.expectSuccess {
+				t.Errorf("Expected success for tier %q but test marked expectSuccess=false", tt.tier)
+				return
+			}
+
+			if predicate == "" {
+				t.Errorf("Expected non-empty predicate for tier %q", tt.tier)
+				return
+			}
+
+			if tt.predicateSub != "" && !strings.Contains(predicate, tt.predicateSub) {
+				t.Errorf("Expected predicate for tier %q to contain %q, got: %s", tt.tier, tt.predicateSub, predicate)
+			}
+		})
+	}
+}
+
+// TestGroupTierMembershipPredicateInclusionSet verifies each tier's membership predicate
+// correctly includes/excludes members based on their group membership status.
+func TestGroupTierMembershipPredicateInclusionSet(t *testing.T) {
+	db := testDB(t)
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	// Create test users
+	adminUserID := createGroupTestUser(t, db, "tier_admin")
+	trustedUserID := createGroupTestUser(t, db, "tier_trusted")
+	regularUserID := createGroupTestUser(t, db, "tier_regular")
+	verifiedResidentID := createGroupTestUser(t, db, "tier_resident")
+	nonMemberUserID := createGroupTestUser(t, db, "tier_nonmember")
+
+	// Mark one user as postcard-verified (resident)
+	_, err := db.ExecContext(ctx,
+		"UPDATE users SET postcard_verified = TRUE WHERE id = ?",
+		verifiedResidentID,
+	)
+	if err != nil {
+		t.Fatalf("Failed to mark user as verified resident: %v", err)
+	}
+
+	regionID := createGroupTestRegion(t, db, "Tier Test Region")
+	var groupIDs []string
+
+	t.Cleanup(func() {
+		cleanupGroupTest(t, db, groupIDs, []string{adminUserID, trustedUserID, regularUserID, verifiedResidentID, nonMemberUserID}, []string{regionID})
+	})
+
+	// Create a group
+	req := &models.CreateGroupRequest{
+		Name:      "Tier Test Group",
+		RegionIDs: []string{regionID},
+	}
+	group, err := repo.Create(ctx, req, adminUserID)
+	if err != nil {
+		t.Fatalf("Create group failed: %v", err)
+	}
+	groupIDs = append(groupIDs, group.ID)
+
+	// Add group creator as admin (already added by Create)
+	// Add trusted member
+	err = repo.AddMember(ctx, group.ID, trustedUserID, false, false)
+	if err != nil {
+		t.Fatalf("Add trusted member failed: %v", err)
+	}
+
+	// Add regular member
+	err = repo.AddMember(ctx, group.ID, regularUserID, false, false)
+	if err != nil {
+		t.Fatalf("Add regular member failed: %v", err)
+	}
+
+	// Add verified resident member
+	err = repo.AddMember(ctx, group.ID, verifiedResidentID, false, false)
+	if err != nil {
+		t.Fatalf("Add verified resident member failed: %v", err)
+	}
+
+	// Promote trusted member to trusted status
+	_, err = db.ExecContext(ctx,
+		"UPDATE group_members SET trust_level = 'trusted' WHERE group_id = ? AND user_id = ?",
+		group.ID, trustedUserID,
+	)
+	if err != nil {
+		t.Fatalf("Failed to promote member to trusted: %v", err)
+	}
+
+	// Test resident tier - should include verified resident
+	t.Run("resident_tier_inclusion", func(t *testing.T) {
+		predicate, _ := GroupTierMembershipPredicate(models.AccessTierResident)
+		query := `
+			SELECT gm.user_id FROM group_members gm
+			WHERE gm.group_id = ? AND ` + predicate + `
+			ORDER BY gm.user_id
+		`
+		rows, err := db.QueryContext(ctx, query, group.ID)
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		defer rows.Close()
+
+		var resultIDs []string
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			resultIDs = append(resultIDs, userID)
+		}
+
+		if len(resultIDs) != 1 || resultIDs[0] != verifiedResidentID {
+			t.Errorf("Resident tier predicate: expected [%s], got %v", verifiedResidentID, resultIDs)
+		}
+	})
+
+	// Test member tier - should include all members (admin, trusted, regular, verified resident)
+	t.Run("member_tier_inclusion", func(t *testing.T) {
+		predicate, _ := GroupTierMembershipPredicate(models.AccessTierMember)
+		query := `
+			SELECT gm.user_id FROM group_members gm
+			WHERE gm.group_id = ? AND ` + predicate + `
+		`
+		rows, err := db.QueryContext(ctx, query, group.ID)
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		defer rows.Close()
+
+		var resultIDs []string
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			resultIDs = append(resultIDs, userID)
+		}
+
+		expectedCount := 4 // admin, trusted, regular, verified resident
+		if len(resultIDs) != expectedCount {
+			t.Errorf("Member tier predicate: expected %d members, got %d", expectedCount, len(resultIDs))
+		}
+	})
+
+	// Test trusted tier - should include admin and trusted members only
+	t.Run("trusted_tier_inclusion", func(t *testing.T) {
+		predicate, _ := GroupTierMembershipPredicate(models.AccessTierTrusted)
+		query := `
+			SELECT gm.user_id FROM group_members gm
+			WHERE gm.group_id = ? AND ` + predicate + `
+			ORDER BY gm.user_id
+		`
+		rows, err := db.QueryContext(ctx, query, group.ID)
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		defer rows.Close()
+
+		var resultIDs []string
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			resultIDs = append(resultIDs, userID)
+		}
+
+		// Should include admin and trusted member
+		expected := 2
+		if len(resultIDs) != expected {
+			t.Errorf("Trusted tier predicate: expected %d members, got %d: %v", expected, len(resultIDs), resultIDs)
+		}
+
+		// Verify admin and trusted are included
+		foundAdmin := false
+		foundTrusted := false
+		for _, uid := range resultIDs {
+			if uid == adminUserID {
+				foundAdmin = true
+			}
+			if uid == trustedUserID {
+				foundTrusted = true
+			}
+		}
+		if !foundAdmin {
+			t.Error("Trusted tier predicate: admin user not included")
+		}
+		if !foundTrusted {
+			t.Error("Trusted tier predicate: trusted user not included")
+		}
+	})
+
+	// Test admin-only tier - should include admin only
+	t.Run("admin_only_tier_inclusion", func(t *testing.T) {
+		predicate, _ := GroupTierMembershipPredicate(models.AccessTierAdminOnly)
+		query := `
+			SELECT gm.user_id FROM group_members gm
+			WHERE gm.group_id = ? AND ` + predicate + `
+			ORDER BY gm.user_id
+		`
+		rows, err := db.QueryContext(ctx, query, group.ID)
+		if err != nil {
+			t.Fatalf("Query failed: %v", err)
+		}
+		defer rows.Close()
+
+		var resultIDs []string
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				t.Fatalf("Scan failed: %v", err)
+			}
+			resultIDs = append(resultIDs, userID)
+		}
+
+		if len(resultIDs) != 1 || resultIDs[0] != adminUserID {
+			t.Errorf("Admin-only tier predicate: expected [%s], got %v", adminUserID, resultIDs)
+		}
+	})
+
+	// Test that non-member is excluded from all tiers
+	t.Run("non_member_excluded", func(t *testing.T) {
+		for _, tier := range []models.AccessTier{models.AccessTierMember, models.AccessTierTrusted, models.AccessTierAdminOnly} {
+			predicate, _ := GroupTierMembershipPredicate(tier)
+			query := `
+				SELECT EXISTS(
+					SELECT 1 FROM group_members gm
+					WHERE gm.group_id = ? AND gm.user_id = ? AND ` + predicate + `
+				)
+			`
+			var exists bool
+			err := db.QueryRowContext(ctx, query, group.ID, nonMemberUserID).Scan(&exists)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			if exists {
+				t.Errorf("Non-member should not be included in tier %s", tier)
+			}
+		}
+	})
+}
+
+// =============================================================================
 // Signal Group under Group Tests
 // =============================================================================
 
@@ -2220,7 +2528,7 @@ func TestGroupRepository_BrowseByRegion(t *testing.T) {
 	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverable)
 	sgOpen := &models.SignalGroup{
 		OwnerGroupID: &groupDiscoverable,
-		GroupName:     "Open Chat",
+		GroupName:    "Open Chat",
 		AccessTier:   models.AccessTierOpen,
 		CreatedBy:    &userID,
 	}
@@ -2234,7 +2542,7 @@ func TestGroupRepository_BrowseByRegion(t *testing.T) {
 	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverableNoOpen)
 	sgMember := &models.SignalGroup{
 		OwnerGroupID: &groupDiscoverableNoOpen,
-		GroupName:     "Member Chat",
+		GroupName:    "Member Chat",
 		AccessTier:   models.AccessTierMember,
 		CreatedBy:    &userID,
 	}
@@ -2379,7 +2687,7 @@ func TestGroupRepository_BrowseAll(t *testing.T) {
 		_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", discoverableID)
 		sgOpen := &models.SignalGroup{
 			OwnerGroupID: &discoverableID,
-			GroupName:     "Open Chat All",
+			GroupName:    "Open Chat All",
 			AccessTier:   models.AccessTierOpen,
 			CreatedBy:    &userID,
 		}
