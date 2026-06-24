@@ -679,7 +679,6 @@ async function handleCreateSignalGroupSubmit(groupId) {
         modal.closeModal();
         toast.success('Signal group created successfully!');
         // Reload signal groups
-        const currentUser = getUser();
         const group = await getGroup(groupId);
         const isAdmin = group.is_user_admin || false;
         loadSignalGroups(groupId, isAdmin);
