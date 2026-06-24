@@ -5,8 +5,10 @@
 
 import { listMyGroups, listMyInvitations, respondToInvitation } from '../api/groups.js';
 import { listMyConnections, listPendingProposals, respondToProposal } from '../api/connections.js';
+import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
 import { isPostcardVerified } from '../utils/store.js';
 import toast from '../components/toast.js';
+import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey } from '../crypto/index.js';
 
 /**
  * Render the My Groups page
@@ -40,21 +42,23 @@ async function loadAllData() {
     const loadingEl = document.getElementById('loading');
 
     try {
-        const [groupsResponse, invitationsResponse, connectionsResponse, proposalsResponse] = await Promise.all([
+        const [groupsResponse, invitationsResponse, connectionsResponse, proposalsResponse, rekeyResponse] = await Promise.all([
             listMyGroups(),
             listMyInvitations(),
             listMyConnections(),
             listPendingProposals(),
+            getPendingRekeys().catch(() => ({ pending_rekeys: [] })),
         ]);
 
         const groups = groupsResponse.groups || [];
         const invitations = invitationsResponse.invitations || [];
         const connections = connectionsResponse.connections || [];
         const proposals = proposalsResponse.proposals || [];
+        const pendingRekeys = rekeyResponse.pending_rekeys || [];
 
         loadingEl.style.display = 'none';
 
-        renderPendingSection(invitations, proposals);
+        renderPendingSection(invitations, proposals, pendingRekeys);
         renderGroupsSection(groups);
         renderConnectionsSection(connections);
     } catch (error) {
@@ -75,15 +79,16 @@ async function loadAllData() {
 }
 
 /**
- * Render the pending items section (invitations + proposals)
+ * Render the pending items section (invitations + proposals + rekeys)
  * @param {Object[]} invitations - Group invitations
  * @param {Object[]} proposals - Connection proposals
+ * @param {Object[]} pendingRekeys - Pending rekey operations
  */
-function renderPendingSection(invitations, proposals) {
+function renderPendingSection(invitations, proposals, pendingRekeys) {
     const sectionEl = document.getElementById('pending-section');
     if (!sectionEl) return;
 
-    if (invitations.length === 0 && proposals.length === 0) return;
+    if (invitations.length === 0 && proposals.length === 0 && pendingRekeys.length === 0) return;
 
     sectionEl.style.display = '';
     sectionEl.innerHTML = `
@@ -91,6 +96,7 @@ function renderPendingSection(invitations, proposals) {
         <div id="pending-items">
             ${invitations.map(renderInvitationCard).join('')}
             ${proposals.map(renderProposalCard).join('')}
+            ${pendingRekeys.map(renderRekeyCard).join('')}
         </div>
     `;
 
@@ -149,6 +155,30 @@ function renderProposalCard(proposal) {
 }
 
 /**
+ * Render a single rekey card
+ * @param {Object} rekey - Rekey operation object
+ * @returns {string} HTML string
+ */
+function renderRekeyCard(rekey) {
+    const groupName = rekey.group_name || 'Unknown Group';
+    const targetUserDisplay = rekey.target_user_id ? rekey.target_user_id.substring(0, 8) : 'Unknown User';
+
+    return `
+        <div class="rekey-card" data-secret-id="${escapeHtml(rekey.secret_id)}" data-target-user-id="${escapeHtml(rekey.target_user_id)}">
+            <div>
+                <div style="font-weight: 500;">Re-key needed for "${escapeHtml(groupName)}"</div>
+                <div style="font-size: var(--font-size-sm); color: var(--color-gray-500); margin-top: var(--space-1);">
+                    User ${escapeHtml(targetUserDisplay)} needs key rotation
+                </div>
+            </div>
+            <div class="rekey-card__actions">
+                <button class="btn btn--primary btn--sm rekey-perform-btn" data-secret-id="${escapeHtml(rekey.secret_id)}" data-target-user-id="${escapeHtml(rekey.target_user_id)}" data-target-public-key="${escapeHtml(rekey.target_public_key)}" data-wrapped-dek="${escapeHtml(rekey.caller_wrapped_dek)}">Perform Re-key</button>
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Bind accept/decline event handlers for pending items
  * @param {HTMLElement} sectionEl - The pending section element
  */
@@ -164,6 +194,9 @@ function bindPendingActions(sectionEl) {
     });
     sectionEl.querySelectorAll('.proposal-decline-btn').forEach(btn => {
         btn.addEventListener('click', () => handleProposalResponse(btn.dataset.proposalId, 'decline'));
+    });
+    sectionEl.querySelectorAll('.rekey-perform-btn').forEach(btn => {
+        btn.addEventListener('click', () => handleRekeyPerform(btn));
     });
 }
 
@@ -218,6 +251,49 @@ async function handleProposalResponse(proposalId, action) {
     } catch (error) {
         toast.error(error.data?.message || `Failed to ${action} proposal`);
         if (buttons) buttons.forEach(btn => btn.disabled = false);
+    }
+}
+
+/**
+ * Handle performing a re-key operation
+ * @param {HTMLElement} button - The button that was clicked
+ */
+async function handleRekeyPerform(button) {
+    const secretId = button.dataset.secretId;
+    const targetUserId = button.dataset.targetUserId;
+    const targetPublicKey = button.dataset.targetPublicKey;
+    const callerWrappedDEK = button.dataset.wrappedDek;
+
+    const cardEl = button.closest('.rekey-card');
+    button.disabled = true;
+
+    try {
+        const privateKey = await getPrivateKey();
+        if (!privateKey) {
+            toast.error('No private key available for re-keying');
+            button.disabled = false;
+            return;
+        }
+
+        const dek = await unwrapDEK(callerWrappedDEK, privateKey);
+        const pubKey = await importPublicKey(targetPublicKey);
+        const wrappedDEK = await wrapDEK(dek, pubKey);
+
+        await submitRekeys({
+            rekeys: [{
+                secret_id: secretId,
+                target_user_id: targetUserId,
+                wrapped_dek: wrappedDEK,
+            }],
+        });
+
+        toast.success('Re-key performed successfully');
+        if (cardEl) cardEl.remove();
+        maybeHidePendingSection();
+    } catch (error) {
+        console.error('Failed to perform re-key:', error);
+        toast.error(error.message || 'Failed to perform re-key');
+        button.disabled = false;
     }
 }
 
