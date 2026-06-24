@@ -25,6 +25,7 @@ const (
 
 // GroupHandler handles group endpoints.
 type GroupHandler struct {
+	db                    *database.DB
 	groupRepo            *database.GroupRepository
 	signalGroupRepo      *database.SignalGroupRepository
 	meshtasticChannelRepo *database.MeshtasticChannelRepository
@@ -36,6 +37,7 @@ type GroupHandler struct {
 
 // NewGroupHandler creates a new group handler.
 func NewGroupHandler(
+	db *database.DB,
 	groupRepo *database.GroupRepository,
 	signalGroupRepo *database.SignalGroupRepository,
 	meshtasticChannelRepo *database.MeshtasticChannelRepository,
@@ -44,6 +46,7 @@ func NewGroupHandler(
 	auditRepo *database.AuditRepository,
 ) *GroupHandler {
 	return &GroupHandler{
+		db:                    db,
 		groupRepo:            groupRepo,
 		signalGroupRepo:      signalGroupRepo,
 		meshtasticChannelRepo: meshtasticChannelRepo,
@@ -1288,6 +1291,24 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Validate encrypted bundle for restricted tiers
+	if accessTier != models.AccessTierOpen {
+		// Check that if any bundle field is provided, all must be provided
+		hasPayload := req.EncryptedPayload != nil && *req.EncryptedPayload != ""
+		hasIV := req.EncryptionIV != nil && *req.EncryptionIV != ""
+		hasKeys := len(req.WrappedKeys) > 0
+
+		if hasPayload || hasIV || hasKeys {
+			if !hasPayload || !hasIV || !hasKeys {
+				writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload, encryption_iv, and wrapped_keys must all be provided together")
+				return
+			}
+		}
+	} else if req.EncryptedPayload != nil || req.EncryptionIV != nil || len(req.WrappedKeys) > 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "encrypted bundle is not allowed for open-tier signal groups")
+		return
+	}
+
 	var description *string
 	if req.Description != "" {
 		description = &req.Description
@@ -1305,6 +1326,25 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 	if err := h.signalGroupRepo.CreateForOwnerGroup(r.Context(), signalGroup); err != nil {
 		writeServerError(w, r, err, "Failed to create signal group", "group", "create_signal_group")
 		return
+	}
+
+	// Create encrypted secret for restricted-tier groups with a bundle
+	if accessTier != models.AccessTierOpen &&
+		req.EncryptedPayload != nil && *req.EncryptedPayload != "" &&
+		req.EncryptionIV != nil && *req.EncryptionIV != "" &&
+		len(req.WrappedKeys) > 0 {
+		secretRepo := database.NewEncryptedSecretRepository(h.db)
+		secret := &models.EncryptedSecret{
+			SecretType:       models.SecretTypeSignalInvite,
+			SignalGroupID:    &signalGroup.ID,
+			EncryptedPayload: *req.EncryptedPayload,
+			EncryptionIV:     *req.EncryptionIV,
+			UpdatedBy:        claims.UserID,
+		}
+		if createErr := secretRepo.Create(r.Context(), secret, req.WrappedKeys); createErr != nil {
+			writeServerError(w, r, createErr, "Failed to create encrypted secret", "group", "create_signal_group")
+			return
+		}
 	}
 
 	// Audit log

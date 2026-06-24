@@ -171,10 +171,13 @@ type RespondToGroupInvitationRequest struct {
 
 // CreateGroupSignalGroupRequest is the request body for creating a signal group under a group.
 type CreateGroupSignalGroupRequest struct {
-	GroupName   string  `json:"group_name" validate:"required,min=1,max=255"`
-	Description string  `json:"description" validate:"max=1000"`
-	AccessTier  string  `json:"access_tier" validate:"required,oneof=open resident member trusted admin_only"`
-	InviteLink  *string `json:"invite_link"`
+	GroupName        string            `json:"group_name" validate:"required,min=1,max=255"`
+	Description      string            `json:"description" validate:"max=1000"`
+	AccessTier       string            `json:"access_tier" validate:"required,oneof=open resident member trusted admin_only"`
+	InviteLink       *string           `json:"invite_link"`
+	EncryptedPayload *string           `json:"encrypted_payload,omitempty"`
+	EncryptionIV     *string           `json:"encryption_iv,omitempty"`
+	WrappedKeys      []WrappedKeyEntry `json:"wrapped_keys,omitempty"`
 }
 
 // GroupResource represents a resource link attached to a group.

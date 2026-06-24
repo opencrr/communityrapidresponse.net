@@ -72,7 +72,7 @@ func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	handler := NewGroupHandler(groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	handler := NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
