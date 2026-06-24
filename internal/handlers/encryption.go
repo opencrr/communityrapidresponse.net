@@ -18,6 +18,7 @@ type EncryptionHandler struct {
 	regionRepo          *database.RegionRepository
 	schoolRepo          *database.SchoolRepository
 	userRepo            *database.UserRepository
+	connectionRepo      *database.ConnectionRepository
 	notificationService NotificationServiceInterface
 }
 
@@ -28,6 +29,7 @@ func NewEncryptionHandler(
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
 	userRepo *database.UserRepository,
+	connectionRepo *database.ConnectionRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
@@ -35,6 +37,7 @@ func NewEncryptionHandler(
 		regionRepo:          regionRepo,
 		schoolRepo:          schoolRepo,
 		userRepo:            userRepo,
+		connectionRepo:      connectionRepo,
 	}
 }
 
@@ -204,7 +207,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id)
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, connection_id)
 func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -215,15 +218,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	regionID := r.URL.Query().Get("region_id")
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
-
-	// SCOPE LIMITATION: only region/school/district recipient enumeration exists.
-	// Group- and connection-owned signal chats are intentionally NOT supported here
-	// yet (they are metadata-only — see DESIGN/PR "Known limitations"). Do NOT add
-	// group_id/connection_id branches without also landing DEK revocation
-	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
-	// connection-leave / tier-downgrade. Enumeration without revocation lets a
-	// removed member who cached the unwrapped DEK keep decrypting.
-	// Tracked: github.com/opencrr/communityrapidresponse.net/issues/91.
+	connectionID := r.URL.Query().Get("connection_id")
 
 	// Exactly one scope must be provided
 	scopeCount := 0
@@ -236,8 +231,11 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if districtID != "" {
 		scopeCount++
 	}
+	if connectionID != "" {
+		scopeCount++
+	}
 	if scopeCount != 1 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, or district_id must be provided")
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, or connection_id must be provided")
 		return
 	}
 
@@ -266,7 +264,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
-		} else {
+		} else if districtID != "" {
 			schools, memberErr := h.schoolRepo.ListByDistrict(r.Context(), districtID)
 			if memberErr != nil {
 				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
@@ -284,6 +282,16 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
+		} else if connectionID != "" {
+			isMember, memberErr := h.connectionRepo.IsUserInConnection(r.Context(), claims.UserID, connectionID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
 		}
 	}
 
@@ -293,8 +301,10 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)
 	} else if schoolID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForSchool(r.Context(), schoolID)
-	} else {
+	} else if districtID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForDistrict(r.Context(), districtID)
+	} else {
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, string(models.ConnectionAccessLevelAllMembers))
 	}
 
 	if err != nil {
