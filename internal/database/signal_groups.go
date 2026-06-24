@@ -435,3 +435,17 @@ func (r *SignalGroupRepository) CreateForOwnerGroup(ctx context.Context, group *
 
 	return r.Create(ctx, group)
 }
+
+// CreateForOwnerGroupTx creates a signal group owned by a group within a transaction.
+func (r *SignalGroupRepository) CreateForOwnerGroupTx(ctx context.Context, tx *sql.Tx, group *models.SignalGroup) error {
+	if group.OwnerGroupID == nil || *group.OwnerGroupID == "" {
+		return errors.New("owner_group_id is required")
+	}
+	// Ensure the other owner fields are nil for the 5-way XOR constraint
+	group.RegionID = nil
+	group.SchoolID = nil
+	group.DistrictID = nil
+	group.ConnectionID = nil
+
+	return r.CreateGroupTx(ctx, tx, group)
+}
