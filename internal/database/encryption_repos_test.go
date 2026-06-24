@@ -88,6 +88,40 @@ func encCreateSecret(t *testing.T, db *DB, groupID, userID string) *models.Encry
 	return secret
 }
 
+// encCreateGroup creates a test group and returns it. Caller must cleanup.
+func encCreateGroup(t *testing.T, db *DB, createdBy string) *models.Group {
+	t.Helper()
+	repo := NewGroupRepository(db)
+	ctx := context.Background()
+
+	req := &models.CreateGroupRequest{
+		Name: "Test Group " + uuid.New().String()[:8],
+	}
+	group, err := repo.Create(ctx, req, createdBy)
+	if err != nil {
+		t.Fatalf("Failed to create test group: %v", err)
+	}
+	return group
+}
+
+// encAddGroupMember adds a user to a group and returns the membership ID. Caller must cleanup.
+func encAddGroupMember(t *testing.T, db *DB, groupID, userID string, isAdmin bool) string {
+	t.Helper()
+	ctx := context.Background()
+	memberID := uuid.New().String()
+	now := time.Now().UTC()
+
+	query := `
+		INSERT INTO group_members (id, group_id, user_id, is_admin, joined_at)
+		VALUES (?, ?, ?, ?, ?)
+	`
+	_, err := db.ExecContext(ctx, query, memberID, groupID, userID, isAdmin, now)
+	if err != nil {
+		t.Fatalf("Failed to add group member: %v", err)
+	}
+	return memberID
+}
+
 // --- EncryptionKeyRepository tests ---
 
 func TestEncryptionKeyRepository_CreateAndGetByUserID(t *testing.T) {
@@ -349,6 +383,145 @@ func TestEncryptionKeyRepository_GetPublicKeysForRegion_ExcludesSuperuser(t *tes
 	if keys[0].UserID == super.ID {
 		t.Error("superuser must be excluded from wrapped-DEK recipient list")
 	}
+}
+
+func TestEncryptionKeyRepository_GetPublicKeysForGroup(t *testing.T) {
+	db := testDB(t)
+	ekRepo := NewEncryptionKeyRepository(db)
+	ctx := context.Background()
+
+	creator := encCreateUser(t, db, "group_creator")
+	member1 := encCreateUser(t, db, "group_member1")
+	member2 := encCreateUser(t, db, "group_member2")
+	group := encCreateGroup(t, db, creator.ID)
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?, ?)", creator.ID, member1.ID, member2.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", group.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", group.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?, ?)", creator.ID, member1.ID, member2.ID)
+	}()
+
+	// Add members to group
+	encAddGroupMember(t, db, group.ID, creator.ID, true)
+	encAddGroupMember(t, db, group.ID, member1.ID, false)
+	encAddGroupMember(t, db, group.ID, member2.ID, false)
+
+	// Create encryption keys for all members
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: creator.ID, PublicKey: "pub_creator", WrappedPrivateKey: "priv_creator",
+		KeySalt: "salt_creator_12345", KeyIV: "iv_creator_12345",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: member1.ID, PublicKey: "pub_member1", WrappedPrivateKey: "priv_member1",
+		KeySalt: "salt_member1_12345", KeyIV: "iv_member1_12345",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: member2.ID, PublicKey: "pub_member2", WrappedPrivateKey: "priv_member2",
+		KeySalt: "salt_member2_12345", KeyIV: "iv_member2_12345",
+	})
+
+	t.Run("returns keys for all members at tier=member", func(t *testing.T) {
+		keys, err := ekRepo.GetPublicKeysForGroup(ctx, group.ID, models.AccessTierMember)
+		if err != nil {
+			t.Fatalf("GetPublicKeysForGroup failed: %v", err)
+		}
+		if len(keys) != 3 {
+			t.Errorf("expected 3 keys, got %d", len(keys))
+		}
+		keysByID := make(map[string]string)
+		for _, k := range keys {
+			keysByID[k.UserID] = k.PublicKey
+		}
+		if keysByID[creator.ID] != "pub_creator" {
+			t.Error("creator key not found")
+		}
+		if keysByID[member1.ID] != "pub_member1" {
+			t.Error("member1 key not found")
+		}
+		if keysByID[member2.ID] != "pub_member2" {
+			t.Error("member2 key not found")
+		}
+	})
+
+	t.Run("excludes superusers", func(t *testing.T) {
+		// Mark member2 as superuser
+		_, _ = db.ExecContext(ctx, "UPDATE users SET is_superuser = TRUE WHERE id = ?", member2.ID)
+
+		keys, err := ekRepo.GetPublicKeysForGroup(ctx, group.ID, models.AccessTierMember)
+		if err != nil {
+			t.Fatalf("GetPublicKeysForGroup failed: %v", err)
+		}
+		if len(keys) != 2 {
+			t.Errorf("expected 2 keys (superuser excluded), got %d", len(keys))
+		}
+		for _, k := range keys {
+			if k.UserID == member2.ID {
+				t.Error("superuser must be excluded from wrapped-DEK recipient list")
+			}
+		}
+	})
+}
+
+func TestEncryptionKeyRepository_GetPublicKeysForGroup_TrustedTier(t *testing.T) {
+	db := testDB(t)
+	ekRepo := NewEncryptionKeyRepository(db)
+	ctx := context.Background()
+
+	creator := encCreateUser(t, db, "trusted_creator")
+	trusted := encCreateUser(t, db, "trusted_member")
+	regular := encCreateUser(t, db, "regular_member")
+	group := encCreateGroup(t, db, creator.ID)
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?, ?)", creator.ID, trusted.ID, regular.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM group_members WHERE group_id = ?", group.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM `groups` WHERE id = ?", group.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?, ?)", creator.ID, trusted.ID, regular.ID)
+	}()
+
+	// Add members with different trust levels
+	encAddGroupMember(t, db, group.ID, creator.ID, true)  // admin
+	_, _ = db.ExecContext(ctx, "INSERT INTO group_members (id, group_id, user_id, is_admin, trust_level, joined_at) VALUES (?, ?, ?, FALSE, 'trusted', ?)",
+		uuid.New().String(), group.ID, trusted.ID, time.Now().UTC())
+	encAddGroupMember(t, db, group.ID, regular.ID, false) // regular member
+
+	// Create encryption keys
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: creator.ID, PublicKey: "pub_creator", WrappedPrivateKey: "priv",
+		KeySalt: "salt_c", KeyIV: "iv_c",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: trusted.ID, PublicKey: "pub_trusted", WrappedPrivateKey: "priv",
+		KeySalt: "salt_t", KeyIV: "iv_t",
+	})
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: regular.ID, PublicKey: "pub_regular", WrappedPrivateKey: "priv",
+		KeySalt: "salt_r", KeyIV: "iv_r",
+	})
+
+	t.Run("trusted tier includes admins and trusted members", func(t *testing.T) {
+		keys, err := ekRepo.GetPublicKeysForGroup(ctx, group.ID, models.AccessTierTrusted)
+		if err != nil {
+			t.Fatalf("GetPublicKeysForGroup failed: %v", err)
+		}
+		if len(keys) != 2 {
+			t.Errorf("expected 2 keys (creator + trusted), got %d", len(keys))
+		}
+		keysByID := make(map[string]string)
+		for _, k := range keys {
+			keysByID[k.UserID] = k.PublicKey
+		}
+		if keysByID[creator.ID] != "pub_creator" {
+			t.Error("creator (admin) key not found")
+		}
+		if keysByID[trusted.ID] != "pub_trusted" {
+			t.Error("trusted member key not found")
+		}
+		if _, exists := keysByID[regular.ID]; exists {
+			t.Error("regular member should not be included at trusted tier")
+		}
+	})
 }
 
 // --- EncryptedSecretRepository tests ---
