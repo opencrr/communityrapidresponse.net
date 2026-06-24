@@ -482,8 +482,16 @@ func (h *EncryptionHandler) SubmitGroupRotation(w http.ResponseWriter, r *http.R
 	}
 
 	if err := h.encryptedSecretRepo.SubmitGroupRotation(r.Context(), req.SecretID, claims.UserID, req.EncryptedPayload, req.EncryptionIV, req.WrappedKeys); err != nil {
-		if strings.Contains(err.Error(), "no pending group rotation") {
+		msg := err.Error()
+		if strings.Contains(msg, "no pending group rotation") {
 			writeError(w, http.StatusForbidden, "forbidden", "No pending group rotation found for this secret")
+			return
+		}
+		// The submitted wrapped_keys set must exactly match the surviving recipients; mismatches are
+		// client errors, not server faults.
+		if strings.Contains(msg, "wrapped_keys") || strings.Contains(msg, "current recipient") ||
+			strings.Contains(msg, "surviving recipient") || strings.Contains(msg, "duplicate wrapped_key") {
+			writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys must include exactly the current surviving recipients")
 			return
 		}
 		writeServerError(w, r, err, "Failed to submit group rotation", "encryption", "submit_group_rotation")

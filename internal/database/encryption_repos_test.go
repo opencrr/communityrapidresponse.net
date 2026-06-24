@@ -2211,6 +2211,48 @@ func TestEncryptedSecretRepository_GetPendingGroupRotationsAndSubmit(t *testing.
 		}
 	})
 
+	t.Run("submit rejects dropping a surviving recipient", func(t *testing.T) {
+		// user1 submits a rotation that omits user2 (a survivor). Must be rejected so user2 keeps access.
+		badKeys := []models.WrappedKeyEntry{
+			{UserID: user1ID, WrappedDEK: "bad_dek_pgr_u1"},
+		}
+		err := secretRepo.SubmitGroupRotation(ctx, secret.ID, user1ID, "should_not_apply", "should_not_iv", badKeys)
+		if err == nil {
+			t.Fatal("expected error when dropping a surviving recipient, got nil")
+		}
+
+		// State must be unchanged: payload still old, user2 still has original key.
+		s, err := secretRepo.GetByID(ctx, secret.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if s.EncryptedPayload != "pgr_old_payload" {
+			t.Errorf("payload must be unchanged after rejected rotation, got %s", s.EncryptedPayload)
+		}
+		dek2, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2ID)
+		if err != nil || dek2 != "dek_pgr_u2" {
+			t.Errorf("user2 must retain original key after rejected rotation, got %s err %v", dek2, err)
+		}
+	})
+
+	t.Run("submit rejects re-granting a removed/arbitrary user", func(t *testing.T) {
+		// user1 submits a rotation that re-adds user3 (removed). Must be rejected.
+		badKeys := []models.WrappedKeyEntry{
+			{UserID: user1ID, WrappedDEK: "bad_dek_pgr_u1"},
+			{UserID: user2ID, WrappedDEK: "bad_dek_pgr_u2"},
+			{UserID: user3ID, WrappedDEK: "regrant_dek_pgr_u3"},
+		}
+		err := secretRepo.SubmitGroupRotation(ctx, secret.ID, user1ID, "should_not_apply", "should_not_iv", badKeys)
+		if err == nil {
+			t.Fatal("expected error when re-granting a removed user, got nil")
+		}
+
+		// user3 must still have no key.
+		if _, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3ID); err == nil {
+			t.Error("user3 (removed) must not be re-granted a key by a rejected rotation")
+		}
+	})
+
 	t.Run("submit group rotation clears flag and all survivors can still decrypt", func(t *testing.T) {
 		newKeys := []models.WrappedKeyEntry{
 			{UserID: user1ID, WrappedDEK: "new_dek_pgr_u1"},

@@ -403,20 +403,90 @@ func (r *EncryptedSecretRepository) GetPendingGroupRotations(ctx context.Context
 }
 
 // SubmitGroupRotation validates that the caller is a pending group-rotation survivor for the secret,
-// then atomically replaces the encrypted payload and all wrapped keys. The caller must include
-// their own wrapped key entry so they retain decrypt access after the rotation.
+// then atomically replaces the encrypted payload and all wrapped keys. The submitted wrapped_keys set
+// must EXACTLY match the authoritative current-recipient set for the secret (every surviving recipient,
+// including the caller, and no one else). This prevents a survivor from dropping other survivors
+// (locking them out of the re-encrypted payload) or re-granting access to a removed/arbitrary user.
+// All checks and the destructive delete/re-insert run in a single transaction to avoid TOCTOU races.
 func (r *EncryptedSecretRepository) SubmitGroupRotation(ctx context.Context, secretID, callerUserID, payload, iv string, wrappedKeys []models.WrappedKeyEntry) error {
-	var count int
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM encrypted_secret_keys
-		WHERE secret_id = ? AND user_id = ? AND group_rotation_pending = TRUE
-	`, secretID, callerUserID).Scan(&count); err != nil {
-		return fmt.Errorf("check pending group rotation: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("no pending group rotation for secret %s caller %s", secretID, callerUserID)
-	}
-	return r.UpdatePayloadAndKeys(ctx, secretID, payload, iv, callerUserID, wrappedKeys)
+	return r.db.Transaction(ctx, func(tx *sql.Tx) error {
+		// 1. The caller must be a flagged survivor of a pending group rotation for this secret.
+		var count int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ? AND group_rotation_pending = TRUE
+		`, secretID, callerUserID).Scan(&count); err != nil {
+			return fmt.Errorf("check pending group rotation: %w", err)
+		}
+		if count == 0 {
+			return fmt.Errorf("no pending group rotation for secret %s caller %s", secretID, callerUserID)
+		}
+
+		// 2. Load the authoritative current-recipient set (rows survive after removed members were deleted).
+		rows, err := tx.QueryContext(ctx, `SELECT user_id FROM encrypted_secret_keys WHERE secret_id = ?`, secretID)
+		if err != nil {
+			return fmt.Errorf("load current recipients: %w", err)
+		}
+		currentRecipients := make(map[string]bool)
+		for rows.Next() {
+			var uid string
+			if err := rows.Scan(&uid); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan current recipient: %w", err)
+			}
+			currentRecipients[uid] = true
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("iterate current recipients: %w", err)
+		}
+		_ = rows.Close()
+
+		// 3. The submitted wrapped_keys set must exactly match the current recipient set.
+		submitted := make(map[string]bool, len(wrappedKeys))
+		for _, wk := range wrappedKeys {
+			if wk.UserID == "" || wk.WrappedDEK == "" {
+				return fmt.Errorf("wrapped_keys entries must have a user_id and wrapped_dek")
+			}
+			if submitted[wk.UserID] {
+				return fmt.Errorf("duplicate wrapped_key entry for user %s", wk.UserID)
+			}
+			submitted[wk.UserID] = true
+			if !currentRecipients[wk.UserID] {
+				return fmt.Errorf("wrapped_keys includes user %s who is not a current recipient", wk.UserID)
+			}
+		}
+		for uid := range currentRecipients {
+			if !submitted[uid] {
+				return fmt.Errorf("wrapped_keys is missing surviving recipient %s", uid)
+			}
+		}
+
+		// 4. Replace the payload and re-insert exactly the validated wrapped keys (clearing pending flags).
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE encrypted_secrets
+			SET encrypted_payload = ?, encryption_iv = ?, updated_by = ?, updated_at = ?
+			WHERE id = ?
+		`, payload, iv, callerUserID, time.Now().UTC(), secretID); err != nil {
+			return fmt.Errorf("update payload: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM encrypted_secret_keys WHERE secret_id = ?`, secretID); err != nil {
+			return fmt.Errorf("delete old keys: %w", err)
+		}
+
+		now := time.Now().UTC()
+		for _, wk := range wrappedKeys {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at)
+				VALUES (?, ?, ?, ?)
+			`, secretID, wk.UserID, wk.WrappedDEK, now); err != nil {
+				return fmt.Errorf("insert wrapped key for user %s: %w", wk.UserID, err)
+			}
+		}
+
+		return nil
+	})
 }
 
 // RevokeConnectionSecretKeysForGroup deletes encrypted_secret_keys for users in a leaving group
