@@ -1221,6 +1221,26 @@ func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("create connection signal group: %w", err)
 	}
+
+	// For restricted-tier (admin_only) chats, persist encrypted secrets from the bundle
+	if req.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) &&
+		req.EncryptedPayload != nil && *req.EncryptedPayload != "" &&
+		req.EncryptionIV != nil && *req.EncryptionIV != "" &&
+		len(req.WrappedKeys) > 0 {
+		secretRepo := NewEncryptedSecretRepository(r.db)
+		secret := &models.EncryptedSecret{
+			SecretType:       models.SecretTypeSignalInvite,
+			SignalGroupID:    &signalGroupID,
+			EncryptedPayload: *req.EncryptedPayload,
+			EncryptionIV:     *req.EncryptionIV,
+			UpdatedBy:        "", // UpdatedBy will be set during secret creation
+			UpdatedAt:        now,
+		}
+		if createSecretErr := secretRepo.CreateTx(ctx, tx, secret, req.WrappedKeys); createSecretErr != nil {
+			return fmt.Errorf("create encrypted secret: %w", createSecretErr)
+		}
+	}
+
 	return nil
 }
 
