@@ -196,8 +196,8 @@ func (r *EncryptedSecretRepository) UpdatePayloadAndKeys(ctx context.Context, se
 		}
 
 		keyQuery := `
-			INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at)
-			VALUES (?, ?, ?, ?)
+			INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at, rekey_needed)
+			VALUES (?, ?, ?, ?, FALSE)
 		`
 		now := time.Now().UTC()
 		for _, wk := range wrappedKeys {
