@@ -696,6 +696,91 @@ func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *t
 	})
 }
 
+func TestEncryptedSecretRepository_GetPendingRekeys_MeshtasticSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	channelRepo := NewMeshtasticChannelRepository(db)
+	ekRepo := NewEncryptionKeyRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "es_rekey_mesh1")
+	user2 := encCreateUser(t, db, "es_rekey_mesh2")
+	region := encCreateRegion(t, db, user1.ID, "Rekey Meshtastic Region")
+
+	// Create a meshtastic channel
+	channel := &models.MeshtasticChannel{
+		RegionID:    strPtr(region.ID),
+		ChannelName: "Test Mesh Channel",
+		CreatedBy:   strPtr(user1.ID),
+	}
+	if err := channelRepo.Create(ctx, channel); err != nil {
+		t.Fatalf("Failed to create meshtastic channel: %v", err)
+	}
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", user1.ID, user2.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE meshtastic_channel_id = ?)", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE meshtastic_channel_id = ?", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE id = ?", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?)", user1.ID, user2.ID)
+	}()
+
+	// Create encryption keys for user2
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: user2.ID, PublicKey: "user2_pub_key_mesh", WrappedPrivateKey: "priv2",
+		KeySalt: "salt2_12345678901234", KeyIV: "iv2_123456789012",
+	})
+
+	// Create meshtastic secret with keys for both users
+	meshSecret := &models.EncryptedSecret{
+		SecretType:          models.SecretTypeMeshtasticChannel,
+		MeshtasticChannelID: strPtr(channel.ID),
+		EncryptedPayload:    "mesh_payload",
+		EncryptionIV:        "mesh_iv_1234567",
+		UpdatedBy:           user1.ID,
+	}
+	meshWrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "mesh_dek_user1"},
+		{UserID: user2.ID, WrappedDEK: "mesh_dek_user2"},
+	}
+	if err := secretRepo.Create(ctx, meshSecret, meshWrappedKeys); err != nil {
+		t.Fatalf("Failed to create meshtastic secret: %v", err)
+	}
+
+	t.Run("GetPendingRekeys includes meshtastic-scoped secrets", func(t *testing.T) {
+		// Flag user2 as needing rekey for the meshtastic secret
+		_ = secretRepo.FlagRekeyForUser(ctx, user2.ID)
+
+		// user1 should see the pending rekey for the meshtastic secret
+		rekeys, err := secretRepo.GetPendingRekeys(ctx, user1.ID)
+		if err != nil {
+			t.Fatalf("Failed to get pending rekeys: %v", err)
+		}
+		if len(rekeys) != 1 {
+			t.Fatalf("Expected 1 pending rekey (meshtastic), got %d", len(rekeys))
+		}
+
+		rekey := rekeys[0]
+		if rekey.SecretID != meshSecret.ID {
+			t.Errorf("Expected secret ID '%s', got '%s'", meshSecret.ID, rekey.SecretID)
+		}
+		if rekey.TargetUserID != user2.ID {
+			t.Errorf("Expected target user '%s', got '%s'", user2.ID, rekey.TargetUserID)
+		}
+		if rekey.TargetPublicKey != "user2_pub_key_mesh" {
+			t.Errorf("Expected target public key 'user2_pub_key_mesh', got '%s'", rekey.TargetPublicKey)
+		}
+		// For meshtastic secrets, group_id and group_name should be nil
+		if rekey.GroupID != nil {
+			t.Errorf("Expected group_id to be nil for meshtastic secret, got '%v'", rekey.GroupID)
+		}
+		if rekey.GroupName != nil {
+			t.Errorf("Expected group_name to be nil for meshtastic secret, got '%v'", rekey.GroupName)
+		}
+	})
+}
+
 func TestEncryptedSecretRepository_SubmitRekey(t *testing.T) {
 	db := testDB(t)
 	secretRepo := NewEncryptedSecretRepository(db)
