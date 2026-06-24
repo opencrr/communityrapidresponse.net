@@ -1245,17 +1245,23 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 
 	accessTier := models.AccessTier(req.AccessTier)
 
+	if req.InviteLink != nil && accessTier != models.AccessTierOpen {
+		writeError(w, http.StatusBadRequest, "validation_error", "invite_link is only allowed for open-tier signal groups")
+		return
+	}
+
 	var description *string
 	if req.Description != "" {
 		description = &req.Description
 	}
 
 	signalGroup := &models.SignalGroup{
-		OwnerGroupID: &groupID,
-		GroupName:    req.GroupName,
-		Description:  description,
-		AccessTier:   accessTier,
-		CreatedBy:    &claims.UserID,
+		OwnerGroupID:        &groupID,
+		GroupName:           req.GroupName,
+		Description:         description,
+		AccessTier:          accessTier,
+		CreatedBy:           &claims.UserID,
+		PlaintextInviteLink: req.InviteLink,
 	}
 
 	if err := h.signalGroupRepo.CreateForOwnerGroup(r.Context(), signalGroup); err != nil {
@@ -1274,11 +1280,12 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":           signalGroup.ID,
-		"group_name":   signalGroup.GroupName,
-		"access_tier":  string(signalGroup.AccessTier),
-		"owner_group_id": groupID,
-		"created_at":   signalGroup.CreatedAt,
+		"id":                   signalGroup.ID,
+		"group_name":           signalGroup.GroupName,
+		"access_tier":          string(signalGroup.AccessTier),
+		"owner_group_id":       groupID,
+		"plaintext_invite_link": signalGroup.PlaintextInviteLink,
+		"created_at":           signalGroup.CreatedAt,
 	})
 }
 

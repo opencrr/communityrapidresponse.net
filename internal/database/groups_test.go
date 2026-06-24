@@ -2393,6 +2393,50 @@ func TestSignalGroupRepository_CreateForOwnerGroup(t *testing.T) {
 			t.Error("Expected region_id to be nil after CreateForOwnerGroup")
 		}
 	})
+
+	t.Run("open tier with invite link persists plaintext_invite_link", func(t *testing.T) {
+		link := "https://signal.group/#testlink"
+		sg := &models.SignalGroup{
+			OwnerGroupID:        &group.ID,
+			GroupName:           "Open Chat With Link",
+			AccessTier:          models.AccessTierOpen,
+			CreatedBy:           &userID,
+			PlaintextInviteLink: &link,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		fetched, err := sgRepo.GetByID(ctx, sg.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if fetched.PlaintextInviteLink == nil || *fetched.PlaintextInviteLink != link {
+			t.Errorf("Expected plaintext_invite_link=%q, got %v", link, fetched.PlaintextInviteLink)
+		}
+	})
+
+	t.Run("non-open tier stores nil plaintext_invite_link", func(t *testing.T) {
+		sg := &models.SignalGroup{
+			OwnerGroupID: &group.ID,
+			GroupName:    "Member Chat No Link",
+			AccessTier:   models.AccessTierMember,
+			CreatedBy:    &userID,
+		}
+		err := sgRepo.CreateForOwnerGroup(ctx, sg)
+		if err != nil {
+			t.Fatalf("CreateForOwnerGroup failed: %v", err)
+		}
+
+		fetched, err := sgRepo.GetByID(ctx, sg.ID)
+		if err != nil {
+			t.Fatalf("GetByID failed: %v", err)
+		}
+		if fetched.PlaintextInviteLink != nil {
+			t.Errorf("Expected plaintext_invite_link to be nil for member-tier chat, got %v", fetched.PlaintextInviteLink)
+		}
+	})
 }
 
 func TestGroupRepository_GetByIDWithDetails_IncludesSignalGroups(t *testing.T) {

@@ -2079,6 +2079,102 @@ func TestGroupHandler_CreateSignalGroup_LimitReached(t *testing.T) {
 	}
 }
 
+func TestGroupHandler_CreateSignalGroup_OpenTierStoresInviteLink(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_open_link", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGOpenLinkRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	inviteLink := "https://signal.group/#invitelink123"
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Open Chat",
+		AccessTier: "open",
+		InviteLink: &inviteLink,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	sgID, _ := result["id"].(string)
+	if sgID == "" {
+		t.Fatal("Expected signal group ID in response")
+	}
+
+	// Verify the link was persisted by reading back from the DB.
+	fetched, err := suite.signalGroupRepo.GetByID(ctx, sgID)
+	if err != nil {
+		t.Fatalf("GetByID failed: %v", err)
+	}
+	if fetched.PlaintextInviteLink == nil || *fetched.PlaintextInviteLink != inviteLink {
+		t.Errorf("Expected plaintext_invite_link=%q stored in DB, got %v", inviteLink, fetched.PlaintextInviteLink)
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_NonOpenWithInviteLinkRejected(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_nonopen_link", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGNonOpenRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	inviteLink := "https://signal.group/#invitelink456"
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Member Chat",
+		AccessTier: "member",
+		InviteLink: &inviteLink,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for non-open tier with invite_link, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var errResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp["error"] != "validation_error" {
+		t.Errorf("Expected error=validation_error, got %v", errResp["error"])
+	}
+}
+
 func TestGroupHandler_ListSignalGroups_FilteredByAccessTier(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 
