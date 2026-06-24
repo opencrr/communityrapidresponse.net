@@ -10,9 +10,10 @@
  * the fresh DEK for all survivors.
  */
 
-import { getPrivateKey, importPublicKey } from './keyManager.js';
+import { importPublicKey } from './keyManager.js';
 import { unwrapDEK, wrapDEK, generateDEK, decryptPayload, encryptPayload, wrapDEKForRecipients } from './envelope.js';
 import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
+import { getPrivateKey } from './index.js';
 
 /**
  * Check for and perform any pending re-keys.
