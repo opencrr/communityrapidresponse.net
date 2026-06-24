@@ -444,3 +444,30 @@ func (r *EncryptedSecretRepository) RevokeConnectionSecretKeysForGroup(ctx conte
 
 	return nil
 }
+
+// RevokeGroupSecretKeysForUser deletes encrypted_secret_keys for a user leaving a group
+// and flags rekey_needed=TRUE on the remaining recipients' rows for those secrets.
+func (r *EncryptedSecretRepository) RevokeGroupSecretKeysForUser(ctx context.Context, tx *sql.Tx, groupID, userID string) error {
+	deleteQuery := `
+		DELETE esk FROM encrypted_secret_keys esk
+		JOIN encrypted_secrets es ON esk.secret_id = es.id
+		JOIN signal_groups sg ON es.signal_group_id = sg.id
+		WHERE sg.owner_group_id = ? AND esk.user_id = ?
+	`
+	if _, err := tx.ExecContext(ctx, deleteQuery, groupID, userID); err != nil {
+		return fmt.Errorf("delete revoked user keys: %w", err)
+	}
+
+	flagQuery := `
+		UPDATE encrypted_secret_keys esk
+		JOIN encrypted_secrets es ON esk.secret_id = es.id
+		JOIN signal_groups sg ON es.signal_group_id = sg.id
+		SET esk.rekey_needed = TRUE
+		WHERE sg.owner_group_id = ?
+	`
+	if _, err := tx.ExecContext(ctx, flagQuery, groupID); err != nil {
+		return fmt.Errorf("flag rekey for survivors: %w", err)
+	}
+
+	return nil
+}
