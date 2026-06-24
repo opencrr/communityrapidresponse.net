@@ -1184,14 +1184,17 @@ func (r *ConnectionRepository) createConnectionSignalGroup(ctx context.Context, 
 	// admin_only stays admin-only; all_members maps to the member tier. Default
 	// to admin_only (most restrictive) if the value is missing/unexpected.
 	accessTier := models.AccessTierAdminOnly
+	var plaintextInviteLink *string
 	if req.AccessLevel == string(models.ConnectionAccessLevelAllMembers) {
 		accessTier = models.AccessTierMember
+		link := uuid.New().String()
+		plaintextInviteLink = &link
 	}
 
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?, TRUE)`,
-		signalGroupID, connectionID, req.GroupName, description, string(accessTier), now,
+		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, plaintext_invite_link, created_by, created_at, is_active)
+		VALUES (?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?, TRUE)`,
+		signalGroupID, connectionID, req.GroupName, description, string(accessTier), plaintextInviteLink, now,
 	)
 	if err != nil {
 		return fmt.Errorf("create connection signal group: %w", err)
