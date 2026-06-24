@@ -66,7 +66,7 @@ func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
-	groupRepo := database.NewGroupRepository(db)
+	groupRepo := database.NewGroupRepository(db, nil)
 	signalGroupRepo := database.NewSignalGroupRepository(db)
 	regionRepo := database.NewRegionRepository(db)
 	userRepo := database.NewUserRepository(db)

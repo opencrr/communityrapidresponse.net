@@ -117,7 +117,7 @@ func SetupEmailVerificationTest(t *testing.T, emailEnabled bool) *EmailVerificat
 	regionRepo := database.NewRegionRepository(db)
 	verifyRepo := database.NewVerificationRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db, nil)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 

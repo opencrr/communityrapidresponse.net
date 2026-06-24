@@ -65,7 +65,7 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 	verifyRepo := database.NewVerificationRepository(db)
 	groupRepo := database.NewSignalGroupRepository(db)
 	schoolRepo := database.NewSchoolRepository(db)
-	communityGroupRepo := database.NewGroupRepository(db)
+	communityGroupRepo := database.NewGroupRepository(db, nil)
 	districtRepo := database.NewSchoolDistrictRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)

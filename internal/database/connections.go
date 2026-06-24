@@ -27,12 +27,16 @@ var (
 
 // ConnectionRepository handles connection database operations.
 type ConnectionRepository struct {
-	db *DB
+	db                  *DB
+	encryptedSecretRepo *EncryptedSecretRepository
 }
 
 // NewConnectionRepository creates a new connection repository.
-func NewConnectionRepository(db *DB) *ConnectionRepository {
-	return &ConnectionRepository{db: db}
+func NewConnectionRepository(db *DB, encryptedSecretRepo *EncryptedSecretRepository) *ConnectionRepository {
+	return &ConnectionRepository{
+		db:                  db,
+		encryptedSecretRepo: encryptedSecretRepo,
+	}
 }
 
 // ProposeConnection creates a formation proposal for a new connection between groups.
@@ -618,6 +622,13 @@ func (r *ConnectionRepository) LeaveConnection(ctx context.Context, connectionID
 		}
 		if memberCount == 0 {
 			return ErrNotConnectionMember
+		}
+
+		// Revoke secret keys for the leaving group
+		if r.encryptedSecretRepo != nil {
+			if err := r.encryptedSecretRepo.RevokeConnectionSecretKeysForGroup(ctx, tx, connectionID, groupID); err != nil {
+				return err
+			}
 		}
 
 		// Remove the member
