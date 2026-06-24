@@ -3,9 +3,10 @@
  * Shows full group info with sections gated by membership/admin status.
  */
 
-import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink } from '../api/groups.js';
+import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink, createSignalGroup } from '../api/groups.js';
+import { getGroupPublicKeys } from '../api/encryption.js';
 import { isAuthenticated, getUser, isSuperuser } from '../utils/store.js';
-import { getPrivateKey, decryptSecret } from '../crypto/index.js';
+import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
 import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 import modal from '../components/modal.js';
@@ -177,7 +178,7 @@ async function renderGroupDetail(container, group) {
 
     // Load dynamic sections for members
     if (isMember) {
-        loadSignalGroups(group.id);
+        loadSignalGroups(group.id, isAdmin);
         loadMeshtasticChannels(group.id);
         loadResources(group.id);
         loadMembers(group.id);
@@ -246,8 +247,9 @@ function bindEvents(container, group) {
 /**
  * Load and display signal groups for this group
  * @param {string} groupId - Group UUID
+ * @param {boolean} isAdmin - Whether current user is admin
  */
-async function loadSignalGroups(groupId) {
+async function loadSignalGroups(groupId, isAdmin) {
     const section = document.getElementById('signal-groups-section');
     if (!section) return;
 
@@ -268,38 +270,51 @@ async function loadSignalGroups(groupId) {
             return { ...sg, _decryptedLink: link };
         }));
 
-        if (decryptedGroups.length === 0) {
+        if (decryptedGroups.length === 0 && !isAdmin) {
             section.innerHTML = '';
             return;
         }
 
         section.innerHTML = `
-            <h2 class="group-detail__section-title">Signal Groups</h2>
-            <div class="dashboard-grid">
-                ${decryptedGroups.map(sg => `
-                    <div class="card group-card">
-                        <div class="card__body">
-                            <div class="group-card__name">${escapeHtml(sg.name)}</div>
-                            ${sg.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(sg.description)}</p>` : ''}
-                            ${sg.access_tier ? `<span class="tier-badge tier-badge--${sg.access_tier}">${formatAccessTier(sg.access_tier)}</span>` : ''}
-                            <div class="group-invite" style="margin-top: var(--space-3);">
-                                ${sg._decryptedLink ? `
-                                    <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
-                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
-                                ` : sg.access_tier === 'open' && sg.plaintext_invite_link ? `
-                                    <span class="group-invite__link">${escapeHtml(sg.plaintext_invite_link)}</span>
-                                    <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg.plaintext_invite_link)}">Copy</button>
-                                ` : `
-                                    <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this group's Signal invite link isn't stored encrypted here yet. Ask a group admin to share it.</span>
-                                `}
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-3);">
+                <h2 class="group-detail__section-title" style="margin: 0;">Signal Groups</h2>
+                ${isAdmin ? `<button class="btn btn--sm btn--primary" id="create-signal-group-btn">Create Signal Group</button>` : ''}
+            </div>
+            ${decryptedGroups.length > 0 ? `
+                <div class="dashboard-grid">
+                    ${decryptedGroups.map(sg => `
+                        <div class="card group-card">
+                            <div class="card__body">
+                                <div class="group-card__name">${escapeHtml(sg.name)}</div>
+                                ${sg.description ? `<p style="margin-top: var(--space-2); font-size: var(--font-size-sm); color: var(--color-gray-600);">${escapeHtml(sg.description)}</p>` : ''}
+                                ${sg.access_tier ? `<span class="tier-badge tier-badge--${sg.access_tier}">${formatAccessTier(sg.access_tier)}</span>` : ''}
+                                <div class="group-invite" style="margin-top: var(--space-3);">
+                                    ${sg._decryptedLink ? `
+                                        <span class="group-invite__link">${escapeHtml(sg._decryptedLink)}</span>
+                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg._decryptedLink)}">Copy</button>
+                                    ` : sg.access_tier === 'open' && sg.plaintext_invite_link ? `
+                                        <span class="group-invite__link">${escapeHtml(sg.plaintext_invite_link)}</span>
+                                        <button class="btn btn--sm btn--secondary copy-link-btn" data-link="${escapeHtml(sg.plaintext_invite_link)}">Copy</button>
+                                    ` : `
+                                        <span class="group-invite__status" style="font-size: var(--font-size-sm); color: var(--color-gray-500);">Listed chat &mdash; this group's Signal invite link isn't stored encrypted here yet. Ask a group admin to share it.</span>
+                                    `}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `).join('')}
-            </div>
+                    `).join('')}
+                </div>
+            ` : `
+                <p style="color: var(--color-gray-500); font-size: var(--font-size-sm);">No signal groups yet.</p>
+            `}
         `;
 
         bindCopyButtons(section);
+        if (isAdmin) {
+            const createBtn = section.querySelector('#create-signal-group-btn');
+            if (createBtn) {
+                createBtn.addEventListener('click', () => showCreateSignalGroupModal(groupId));
+            }
+        }
     } catch (error) {
         console.error('Failed to load signal groups:', error);
     }
@@ -555,6 +570,136 @@ function safeUrl(rawUrl) {
         if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return rawUrl;
     } catch (e) { /* malformed URL */ }
     return '';
+}
+
+/**
+ * Show the modal for creating a new signal group for this group.
+ * For restricted-tier chats, encrypts the placeholder link with group member keys.
+ * @param {string} groupId - Group ID
+ */
+async function showCreateSignalGroupModal(groupId) {
+    const formHtml = `
+        <form id="create-signal-group-form">
+            <div class="form-group">
+                <label for="chat-name" class="form-label form-label--required">Chat Name</label>
+                <input type="text" id="chat-name" name="chat_name" class="form-input" required
+                    maxlength="255" placeholder="e.g., Announcements">
+            </div>
+            <div class="form-group">
+                <label for="chat-description" class="form-label">Description (optional)</label>
+                <textarea id="chat-description" name="chat_description" class="form-input" rows="3"
+                    maxlength="1000" placeholder="What is this chat for?"></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label form-label--required">Access Level</label>
+                <div style="display: flex; gap: var(--space-4); margin-top: var(--space-2);">
+                    <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                        <input type="radio" name="access_tier" value="open" checked>
+                        <span>Open</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                        <input type="radio" name="access_tier" value="admin_only">
+                        <span>Admin Only</span>
+                    </label>
+                </div>
+            </div>
+            <div id="create-signal-group-error" class="form-error hidden"></div>
+        </form>
+    `;
+
+    modal.showModal({
+        title: 'Create Signal Group',
+        content: formHtml,
+        actions: [
+            { label: 'Cancel', type: 'secondary' },
+            {
+                label: 'Create',
+                type: 'primary',
+                closeOnClick: false,
+                onClick: () => handleCreateSignalGroupSubmit(groupId),
+            },
+        ],
+    });
+}
+
+/**
+ * Handle create signal group form submission.
+ * @param {string} groupId - Group ID
+ */
+async function handleCreateSignalGroupSubmit(groupId) {
+    const form = document.getElementById('create-signal-group-form');
+    const errorElement = document.getElementById('create-signal-group-error');
+    if (!form) return;
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const chatName = document.getElementById('chat-name').value.trim();
+    const chatDescription = document.getElementById('chat-description').value.trim();
+    const accessTier = form.querySelector('input[name="access_tier"]:checked')?.value || 'open';
+
+    if (errorElement) errorElement.classList.add('hidden');
+
+    const requestData = {
+        group_name: chatName,
+        access_tier: accessTier,
+    };
+    if (chatDescription) {
+        requestData.description = chatDescription;
+    }
+
+    // Restricted (admin_only) chats require an encrypted secret wrapped for group members.
+    // Open chats carry no encrypted bundle.
+    if (accessTier === 'admin_only') {
+        try {
+            const publicKeysResponse = await getGroupPublicKeys(groupId);
+            const memberKeys = publicKeysResponse.keys || [];
+
+            if (memberKeys.length === 0) {
+                showCreateSignalGroupError(errorElement, 'No group members have encryption keys set up yet. They must log in to set up encryption first.');
+                return;
+            }
+
+            const placeholderLink = 'https://signal.group/placeholder';
+            const encrypted = await encryptForMembers(placeholderLink, memberKeys);
+            requestData.encrypted_payload = encrypted.ciphertext;
+            requestData.encryption_iv = encrypted.iv;
+            requestData.wrapped_keys = encrypted.wrappedKeys;
+        } catch (encryptError) {
+            console.error('Encryption failed:', encryptError);
+            showCreateSignalGroupError(errorElement, encryptError.message || 'Encryption failed. Ensure your encryption keys are set up.');
+            return;
+        }
+    }
+
+    try {
+        await createSignalGroup(groupId, requestData);
+        modal.closeModal();
+        toast.success('Signal group created successfully!');
+        // Reload signal groups
+        const currentUser = getUser();
+        const group = await getGroup(groupId);
+        const isAdmin = group.is_user_admin || false;
+        loadSignalGroups(groupId, isAdmin);
+    } catch (error) {
+        showCreateSignalGroupError(errorElement, error.data?.message || 'Failed to create signal group');
+    }
+}
+
+/**
+ * Show an inline error in the create signal group modal, falling back to a toast.
+ * @param {HTMLElement|null} errorElement - The error container
+ * @param {string} message - Error message
+ */
+function showCreateSignalGroupError(errorElement, message) {
+    if (errorElement) {
+        errorElement.textContent = message;
+        errorElement.classList.remove('hidden');
+    } else {
+        toast.error(message);
+    }
 }
 
 export function cleanup() {}
