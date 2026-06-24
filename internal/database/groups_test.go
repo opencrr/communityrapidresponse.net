@@ -3486,17 +3486,17 @@ func TestGroupRepository_RemoveMemberRevokesKeys(t *testing.T) {
 		t.Errorf("Expected user3 key unchanged, got %s", dek3)
 	}
 
-	// Verify survivors are flagged for rekey
+	// Verify survivors are flagged for group rotation
 	for _, uid := range []string{user1, user3} {
-		var rekeyNeeded bool
+		var groupRotationPending bool
 		if err := db.QueryRowContext(ctx, `
-			SELECT rekey_needed FROM encrypted_secret_keys
+			SELECT group_rotation_pending FROM encrypted_secret_keys
 			WHERE secret_id = ? AND user_id = ?
-		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
-			t.Fatalf("Failed to check rekey flag for %s: %v", uid, err)
+		`, secret.ID, uid).Scan(&groupRotationPending); err != nil {
+			t.Fatalf("Failed to check group rotation flag for %s: %v", uid, err)
 		}
-		if !rekeyNeeded {
-			t.Errorf("Expected user %s to have rekey_needed=true", uid)
+		if !groupRotationPending {
+			t.Errorf("Expected user %s to have group_rotation_pending=true", uid)
 		}
 	}
 }
@@ -3613,17 +3613,17 @@ func TestGroupRepository_BlockAndRemoveMemberRevokesKeys(t *testing.T) {
 		t.Errorf("Expected user3 key unchanged, got %s", dek3)
 	}
 
-	// Verify survivors are flagged for rekey
+	// Verify survivors are flagged for group rotation
 	for _, uid := range []string{user1, user3} {
-		var rekeyNeeded bool
+		var groupRotationPending bool
 		if err := db.QueryRowContext(ctx, `
-			SELECT rekey_needed FROM encrypted_secret_keys
+			SELECT group_rotation_pending FROM encrypted_secret_keys
 			WHERE secret_id = ? AND user_id = ?
-		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
-			t.Fatalf("Failed to check rekey flag for %s: %v", uid, err)
+		`, secret.ID, uid).Scan(&groupRotationPending); err != nil {
+			t.Fatalf("Failed to check group rotation flag for %s: %v", uid, err)
 		}
-		if !rekeyNeeded {
-			t.Errorf("Expected user %s to have rekey_needed=true", uid)
+		if !groupRotationPending {
+			t.Errorf("Expected user %s to have group_rotation_pending=true", uid)
 		}
 	}
 }

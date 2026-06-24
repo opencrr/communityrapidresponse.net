@@ -1877,3 +1877,350 @@ func TestEncryptionHandler_SubmitRekeys_SkipsEntriesWithMissingFields(t *testing
 		t.Errorf("unmet mock expectations: %v", err)
 	}
 }
+
+// =============================================================================
+// GetPendingGroupRotations Tests
+// =============================================================================
+
+func TestEncryptionHandler_GetPendingGroupRotations_Success(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	groupID := "sg-id-1"
+	groupName := "Test Group"
+	cols := []string{
+		"secret_id", "encrypted_payload", "encryption_iv", "caller_wrapped_dek",
+		"signal_group_id", "group_name", "connection_id",
+		"recipient_user_id", "recipient_public_key",
+	}
+	// Two rows for the same secret (two recipients)
+	suite.secretMock.ExpectQuery("SELECT es.id, es.encrypted_payload").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows(cols).
+			AddRow("secret-1", "enc_payload", "enc_iv", "caller_dek", groupID, groupName, nil, "user-123", "pub-123").
+			AddRow("secret-1", "enc_payload", "enc_iv", "caller_dek", groupID, groupName, nil, "target-user-2", "pub-2"))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/pending-group-rotations", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPendingGroupRotations(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	rotations, ok := body["pending_group_rotations"].([]interface{})
+	if !ok {
+		t.Fatalf("expected pending_group_rotations to be an array, got %T", body["pending_group_rotations"])
+	}
+	if len(rotations) != 1 {
+		t.Fatalf("expected 1 pending group rotation (grouped), got %d", len(rotations))
+	}
+
+	rotation, ok := rotations[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected rotation to be a map, got %T", rotations[0])
+	}
+	if rotation["secret_id"] != "secret-1" {
+		t.Errorf("expected secret_id 'secret-1', got %v", rotation["secret_id"])
+	}
+	if rotation["encrypted_payload"] != "enc_payload" {
+		t.Errorf("expected encrypted_payload 'enc_payload', got %v", rotation["encrypted_payload"])
+	}
+	recipients, ok := rotation["recipients"].([]interface{})
+	if !ok {
+		t.Fatalf("expected recipients to be an array, got %T", rotation["recipients"])
+	}
+	if len(recipients) != 2 {
+		t.Errorf("expected 2 recipients, got %d", len(recipients))
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPendingGroupRotations_Empty(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	cols := []string{
+		"secret_id", "encrypted_payload", "encryption_iv", "caller_wrapped_dek",
+		"signal_group_id", "group_name", "connection_id",
+		"recipient_user_id", "recipient_public_key",
+	}
+	suite.secretMock.ExpectQuery("SELECT es.id, es.encrypted_payload").
+		WithArgs("user-123").
+		WillReturnRows(sqlmock.NewRows(cols))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/pending-group-rotations", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPendingGroupRotations(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	body := parseResponseBody(t, recorder)
+	rotations, ok := body["pending_group_rotations"].([]interface{})
+	if !ok {
+		t.Fatalf("expected pending_group_rotations array, got %T", body["pending_group_rotations"])
+	}
+	if len(rotations) != 0 {
+		t.Errorf("expected 0 rotations, got %d", len(rotations))
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPendingGroupRotations_MissingAuth(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/pending-group-rotations", nil, nil)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPendingGroupRotations(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestEncryptionHandler_GetPendingGroupRotations_NilSecretRepo(t *testing.T) {
+	suite := setupEncryptionTestSuiteNoSecretRepo(t)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/pending-group-rotations", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPendingGroupRotations(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	body := parseResponseBody(t, recorder)
+	rotations, ok := body["pending_group_rotations"].([]interface{})
+	if !ok || len(rotations) != 0 {
+		t.Errorf("expected empty array for nil repo, got %v", body["pending_group_rotations"])
+	}
+}
+
+// =============================================================================
+// SubmitGroupRotation Tests
+// =============================================================================
+
+func TestEncryptionHandler_SubmitGroupRotation_Success(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// SubmitGroupRotation runs everything in one transaction: COUNT (caller pending),
+	// SELECT current recipients (authoritative set), then UPDATE + DELETE + INSERT keys.
+	suite.secretMock.ExpectBegin()
+	suite.secretMock.ExpectQuery("SELECT COUNT").
+		WithArgs("secret-1", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	suite.secretMock.ExpectQuery("SELECT user_id FROM encrypted_secret_keys").
+		WithArgs("secret-1").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("user-123").AddRow("other-user"))
+	suite.secretMock.ExpectExec("UPDATE encrypted_secrets").
+		WithArgs("new-payload", "new-iv", "user-123", sqlmock.AnyArg(), "secret-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	suite.secretMock.ExpectExec("DELETE FROM encrypted_secret_keys").
+		WithArgs("secret-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	suite.secretMock.ExpectExec("INSERT INTO encrypted_secret_keys").
+		WithArgs("secret-1", "user-123", "caller-wrapped", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	suite.secretMock.ExpectExec("INSERT INTO encrypted_secret_keys").
+		WithArgs("secret-1", "other-user", "other-wrapped", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	suite.secretMock.ExpectCommit()
+
+	requestBody, _ := json.Marshal(models.SubmitGroupRotationRequest{
+		SecretID:         "secret-1",
+		EncryptedPayload: "new-payload",
+		EncryptionIV:     "new-iv",
+		WrappedKeys: []models.WrappedKeyEntry{
+			{UserID: "user-123", WrappedDEK: "caller-wrapped"},
+			{UserID: "other-user", WrappedDEK: "other-wrapped"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	body := parseResponseBody(t, recorder)
+	if rotated, _ := body["rotated"].(bool); !rotated {
+		t.Errorf("expected rotated=true, got %v", body["rotated"])
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitGroupRotation_CallerNotInWrappedKeys(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	requestBody, _ := json.Marshal(models.SubmitGroupRotationRequest{
+		SecretID:         "secret-1",
+		EncryptedPayload: "new-payload",
+		EncryptionIV:     "new-iv",
+		WrappedKeys: []models.WrappedKeyEntry{
+			// Caller (user-123) not included — should be rejected
+			{UserID: "other-user", WrappedDEK: "other-wrapped"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected validation_error, got %v", body["error"])
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitGroupRotation_NotPending(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// COUNT returns 0 — caller is not a pending group rotation survivor for this secret
+	suite.secretMock.ExpectBegin()
+	suite.secretMock.ExpectQuery("SELECT COUNT").
+		WithArgs("secret-999", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	suite.secretMock.ExpectRollback()
+
+	requestBody, _ := json.Marshal(models.SubmitGroupRotationRequest{
+		SecretID:         "secret-999",
+		EncryptedPayload: "new-payload",
+		EncryptionIV:     "new-iv",
+		WrappedKeys: []models.WrappedKeyEntry{
+			{UserID: "user-123", WrappedDEK: "caller-wrapped"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitGroupRotation_DropsSurvivor(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Caller is pending, but the authoritative recipient set includes a survivor (other-user)
+	// the caller omitted from wrapped_keys. The rotation must be rejected so survivors keep access.
+	suite.secretMock.ExpectBegin()
+	suite.secretMock.ExpectQuery("SELECT COUNT").
+		WithArgs("secret-1", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	suite.secretMock.ExpectQuery("SELECT user_id FROM encrypted_secret_keys").
+		WithArgs("secret-1").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("user-123").AddRow("other-user"))
+	suite.secretMock.ExpectRollback()
+
+	requestBody, _ := json.Marshal(models.SubmitGroupRotationRequest{
+		SecretID:         "secret-1",
+		EncryptedPayload: "new-payload",
+		EncryptionIV:     "new-iv",
+		WrappedKeys: []models.WrappedKeyEntry{
+			// Only the caller — other-user (a survivor) is dropped.
+			{UserID: "user-123", WrappedDEK: "caller-wrapped"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected validation_error, got %v", body["error"])
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitGroupRotation_ForgedRecipient(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Caller is pending, but wrapped_keys includes a user (removed-user) who is no longer a
+	// current recipient. The rotation must be rejected so removed members cannot be re-granted access.
+	suite.secretMock.ExpectBegin()
+	suite.secretMock.ExpectQuery("SELECT COUNT").
+		WithArgs("secret-1", "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	suite.secretMock.ExpectQuery("SELECT user_id FROM encrypted_secret_keys").
+		WithArgs("secret-1").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("user-123"))
+	suite.secretMock.ExpectRollback()
+
+	requestBody, _ := json.Marshal(models.SubmitGroupRotationRequest{
+		SecretID:         "secret-1",
+		EncryptedPayload: "new-payload",
+		EncryptionIV:     "new-iv",
+		WrappedKeys: []models.WrappedKeyEntry{
+			{UserID: "user-123", WrappedDEK: "caller-wrapped"},
+			// removed-user is not a current recipient.
+			{UserID: "removed-user", WrappedDEK: "forged-wrapped"},
+		},
+	})
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", requestBody, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected validation_error, got %v", body["error"])
+	}
+
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_SubmitGroupRotation_MissingAuth(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	req := authenticatedRequest(http.MethodPost, "/api/v1/encryption/group-rekey", []byte(`{}`), nil)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.SubmitGroupRotation(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -406,5 +407,98 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"rekeyed": successCount,
+	})
+}
+
+// GetPendingGroupRotations handles GET /api/v1/encryption/pending-group-rotations
+// Returns secrets that require a full DEK rotation (member was removed from group/connection).
+// Unlike pending-rekeys (user key-pair rotation), these require the caller to generate a fresh DEK,
+// re-encrypt the payload, and re-wrap for all surviving recipients.
+func (h *EncryptionHandler) GetPendingGroupRotations(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	if h.encryptedSecretRepo == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pending_group_rotations": []interface{}{},
+		})
+		return
+	}
+
+	rotations, err := h.encryptedSecretRepo.GetPendingGroupRotations(r.Context(), claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to get pending group rotations", "encryption", "get_pending_group_rotations")
+		return
+	}
+
+	if rotations == nil {
+		rotations = []database.PendingGroupRotation{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pending_group_rotations": rotations,
+	})
+}
+
+// SubmitGroupRotation handles POST /api/v1/encryption/group-rekey
+// Accepts a fully re-encrypted payload and wrapped keys for all surviving recipients.
+// The caller must be in wrapped_keys to retain their own decrypt access after the rotation.
+func (h *EncryptionHandler) SubmitGroupRotation(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.GetUserFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+		return
+	}
+
+	var req models.SubmitGroupRotationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Invalid request body")
+		return
+	}
+
+	if req.SecretID == "" || req.EncryptedPayload == "" || req.EncryptionIV == "" || len(req.WrappedKeys) == 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "secret_id, encrypted_payload, encryption_iv, and wrapped_keys are required")
+		return
+	}
+
+	callerIncluded := false
+	for _, wk := range req.WrappedKeys {
+		if wk.UserID == claims.UserID {
+			callerIncluded = true
+			break
+		}
+	}
+	if !callerIncluded {
+		writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys must include an entry for the caller")
+		return
+	}
+
+	if h.encryptedSecretRepo == nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "Encryption not available")
+		return
+	}
+
+	if err := h.encryptedSecretRepo.SubmitGroupRotation(r.Context(), req.SecretID, claims.UserID, req.EncryptedPayload, req.EncryptionIV, req.WrappedKeys); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "no pending group rotation") {
+			writeError(w, http.StatusForbidden, "forbidden", "No pending group rotation found for this secret")
+			return
+		}
+		// The submitted wrapped_keys set must exactly match the surviving recipients; mismatches are
+		// client errors, not server faults.
+		if strings.Contains(msg, "wrapped_keys") || strings.Contains(msg, "current recipient") ||
+			strings.Contains(msg, "surviving recipient") || strings.Contains(msg, "duplicate wrapped_key") {
+			writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys must include exactly the current surviving recipients")
+			return
+		}
+		writeServerError(w, r, err, "Failed to submit group rotation", "encryption", "submit_group_rotation")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rotated": true,
 	})
 }

@@ -152,6 +152,8 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/encryption/public-keys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPublicKeys)))
 	r.mux.HandleFunc("/api/v1/encryption/pending-rekeys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingRekeys)))
 	r.mux.HandleFunc("/api/v1/encryption/rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionRekey)))
+	r.mux.HandleFunc("/api/v1/encryption/pending-group-rotations", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingGroupRotations)))
+	r.mux.HandleFunc("/api/v1/encryption/group-rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionGroupRekey)))
 
 	// Admin routes (superuser only)
 	r.mux.HandleFunc("/api/v1/admin/users", r.authenticated(r.methodHandler(http.MethodGet, r.admin.ListUsers)))
@@ -509,6 +511,23 @@ func (r *Router) handleEncryptionRekey(w http.ResponseWriter, req *http.Request)
 	r.encryption.SubmitRekeys(w, req)
 }
 
+// handleEncryptionPendingGroupRotations handles GET /api/v1/encryption/pending-group-rotations
+func (r *Router) handleEncryptionPendingGroupRotations(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.GetPendingGroupRotations(w, req)
+}
+
+// handleEncryptionGroupRekey handles POST /api/v1/encryption/group-rekey
+func (r *Router) handleEncryptionGroupRekey(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.SubmitGroupRotation(w, req)
+}
 
 // handleGroups handles /api/v1/groups
 func (r *Router) handleGroups(w http.ResponseWriter, req *http.Request) {
