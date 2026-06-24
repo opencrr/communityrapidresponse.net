@@ -661,7 +661,7 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		return
 	}
 
-	// Non-admins only see all_members (member-tier) chats; admin_only chats are
+	// Non-admins only see all_members (open-tier) chats; admin_only chats are
 	// withheld unless the caller is an admin of a connected group.
 	filtered := make([]*models.SignalGroup, 0, len(groups))
 	for _, g := range groups {
