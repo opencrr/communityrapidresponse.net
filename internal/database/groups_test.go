@@ -2528,7 +2528,7 @@ func TestGroupRepository_BrowseByRegion(t *testing.T) {
 	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverable)
 	sgOpen := &models.SignalGroup{
 		OwnerGroupID: &groupDiscoverable,
-		GroupName:     "Open Chat",
+		GroupName:    "Open Chat",
 		AccessTier:   models.AccessTierOpen,
 		CreatedBy:    &userID,
 	}
@@ -2542,7 +2542,7 @@ func TestGroupRepository_BrowseByRegion(t *testing.T) {
 	_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", groupDiscoverableNoOpen)
 	sgMember := &models.SignalGroup{
 		OwnerGroupID: &groupDiscoverableNoOpen,
-		GroupName:     "Member Chat",
+		GroupName:    "Member Chat",
 		AccessTier:   models.AccessTierMember,
 		CreatedBy:    &userID,
 	}
@@ -2687,7 +2687,7 @@ func TestGroupRepository_BrowseAll(t *testing.T) {
 		_, _ = db.ExecContext(ctx, "UPDATE `groups` SET discoverable_by_unverified = TRUE WHERE id = ?", discoverableID)
 		sgOpen := &models.SignalGroup{
 			OwnerGroupID: &discoverableID,
-			GroupName:     "Open Chat All",
+			GroupName:    "Open Chat All",
 			AccessTier:   models.AccessTierOpen,
 			CreatedBy:    &userID,
 		}
