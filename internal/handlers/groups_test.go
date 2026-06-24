@@ -1911,7 +1911,7 @@ func TestGroupHandler_CreateSignalGroup_Success(t *testing.T) {
 	claims := suite.claimsForUser(user)
 	body := models.CreateGroupSignalGroupRequest{
 		GroupName:  "Test Signal Chat",
-		AccessTier: "member",
+		AccessTier: "open",
 	}
 	bodyBytes, _ := json.Marshal(body)
 
@@ -1938,8 +1938,8 @@ func TestGroupHandler_CreateSignalGroup_Success(t *testing.T) {
 	if result["group_name"] != "Test Signal Chat" {
 		t.Errorf("Expected group_name 'Test Signal Chat', got '%v'", result["group_name"])
 	}
-	if result["access_tier"] != "member" {
-		t.Errorf("Expected access_tier 'member', got '%v'", result["access_tier"])
+	if result["access_tier"] != "open" {
+		t.Errorf("Expected access_tier 'open', got '%v'", result["access_tier"])
 	}
 }
 
@@ -2313,6 +2313,47 @@ func TestGroupHandler_CreateSignalGroup_OpenTierWithBundleRejected(t *testing.T)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Expected 400 for open-tier with bundle, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var errResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&errResp)
+	if errResp["error"] != "validation_error" {
+		t.Errorf("Expected error=validation_error, got %v", errResp["error"])
+	}
+}
+
+func TestGroupHandler_CreateSignalGroup_RestrictedTierWithoutBundleRejected(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_restricted_no_bundle", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGRestrictedNoBundleRegion", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(user)
+	body := models.CreateGroupSignalGroupRequest{
+		GroupName:  "Restricted Chat",
+		AccessTier: "member",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/groups/"+groupID+"/signal-groups", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	q := req.URL.Query()
+	q.Set("id", groupID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(middleware.ContextWithUser(req.Context(), claims))
+
+	rec := httptest.NewRecorder()
+	suite.handler.CreateSignalGroup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for restricted-tier without bundle, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var errResp map[string]interface{}

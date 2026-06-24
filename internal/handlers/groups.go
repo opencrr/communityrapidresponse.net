@@ -1293,16 +1293,18 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 
 	// Validate encrypted bundle for restricted tiers
 	if accessTier != models.AccessTierOpen {
-		// Check that if any bundle field is provided, all must be provided
-		hasPayload := req.EncryptedPayload != nil && *req.EncryptedPayload != ""
-		hasIV := req.EncryptionIV != nil && *req.EncryptionIV != ""
-		hasKeys := len(req.WrappedKeys) > 0
-
-		if hasPayload || hasIV || hasKeys {
-			if !hasPayload || !hasIV || !hasKeys {
-				writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload, encryption_iv, and wrapped_keys must all be provided together")
-				return
-			}
+		// For restricted tiers, encryption fields are required
+		if req.EncryptedPayload == nil || *req.EncryptedPayload == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload is required for restricted-tier signal groups")
+			return
+		}
+		if req.EncryptionIV == nil || *req.EncryptionIV == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "encryption_iv is required for restricted-tier signal groups")
+			return
+		}
+		if len(req.WrappedKeys) == 0 {
+			writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys is required for restricted-tier signal groups")
+			return
 		}
 	} else if req.EncryptedPayload != nil || req.EncryptionIV != nil || len(req.WrappedKeys) > 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "encrypted bundle is not allowed for open-tier signal groups")
