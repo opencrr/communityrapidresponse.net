@@ -19,6 +19,8 @@ type EncryptionHandler struct {
 	regionRepo          *database.RegionRepository
 	schoolRepo          *database.SchoolRepository
 	userRepo            *database.UserRepository
+	groupRepo           *database.GroupRepository
+	signalGroupRepo     *database.SignalGroupRepository
 	connectionRepo      *database.ConnectionRepository
 	notificationService NotificationServiceInterface
 }
@@ -30,6 +32,8 @@ func NewEncryptionHandler(
 	regionRepo *database.RegionRepository,
 	schoolRepo *database.SchoolRepository,
 	userRepo *database.UserRepository,
+	groupRepo *database.GroupRepository,
+	signalGroupRepo *database.SignalGroupRepository,
 	connectionRepo *database.ConnectionRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
@@ -38,6 +42,8 @@ func NewEncryptionHandler(
 		regionRepo:          regionRepo,
 		schoolRepo:          schoolRepo,
 		userRepo:            userRepo,
+		groupRepo:           groupRepo,
+		signalGroupRepo:     signalGroupRepo,
 		connectionRepo:      connectionRepo,
 	}
 }
@@ -208,7 +214,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, connection_id)
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id, connection_id)
 func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -219,6 +225,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	regionID := r.URL.Query().Get("region_id")
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
+	groupID := r.URL.Query().Get("group_id")
 	connectionID := r.URL.Query().Get("connection_id")
 
 	// Exactly one scope must be provided
@@ -232,11 +239,14 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if districtID != "" {
 		scopeCount++
 	}
+	if groupID != "" {
+		scopeCount++
+	}
 	if connectionID != "" {
 		scopeCount++
 	}
 	if scopeCount != 1 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, or connection_id must be provided")
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, group_id, or connection_id must be provided")
 		return
 	}
 
@@ -283,6 +293,29 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
+		} else if groupID != "" {
+			signalGroup, sgErr := h.signalGroupRepo.GetByID(r.Context(), groupID)
+			if sgErr != nil {
+				if errors.Is(sgErr, database.ErrSignalGroupNotFound) {
+					writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
+				} else {
+					writeServerError(w, r, sgErr, "Failed to get signal group", "encryption", "get_signal_group")
+				}
+				return
+			}
+			if signalGroup.OwnerGroupID == nil {
+				writeError(w, http.StatusBadRequest, "invalid_group_type", "Signal group does not have an owner group")
+				return
+			}
+			isMember, memberErr := h.groupRepo.IsUserMember(r.Context(), *signalGroup.OwnerGroupID, claims.UserID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
 		} else if connectionID != "" {
 			isMember, memberErr := h.connectionRepo.IsUserInConnection(r.Context(), claims.UserID, connectionID)
 			if memberErr != nil {
@@ -297,6 +330,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	}
 
 	var keys []models.PublicKeyEntry
+	var signalGroupForKeys *models.SignalGroup
 
 	if regionID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForRegion(r.Context(), regionID)
@@ -304,7 +338,12 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForSchool(r.Context(), schoolID)
 	} else if districtID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForDistrict(r.Context(), districtID)
-	} else {
+	} else if groupID != "" {
+		signalGroupForKeys, err = h.signalGroupRepo.GetByID(r.Context(), groupID)
+		if err == nil && signalGroupForKeys != nil && signalGroupForKeys.OwnerGroupID != nil {
+			keys, err = h.encryptionKeyRepo.GetPublicKeysForGroup(r.Context(), *signalGroupForKeys.OwnerGroupID, signalGroupForKeys.AccessTier)
+		}
+	} else if connectionID != "" {
 		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, string(models.ConnectionAccessLevelAllMembers))
 	}
 

@@ -241,7 +241,7 @@ func main() {
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
 
 	// Initialize encryption handler
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, connectionRepo)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo, connectionRepo)
 
 	// Wire status cache to handlers for immediate cache eviction on privilege changes
 	adminHandler.SetStatusCache(statusCache)

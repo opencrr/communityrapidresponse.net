@@ -46,10 +46,12 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 
 	regionRepo := database.NewRegionRepository(&database.DB{DB: keyDB})
 	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
+	groupRepo := database.NewGroupRepository(&database.DB{DB: keyDB})
+	signalGroupRepo := database.NewSignalGroupRepository(&database.DB{DB: keyDB})
 	connectionRepo := database.NewConnectionRepository(&database.DB{DB: keyDB})
 
 	userRepo := database.NewUserRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo, connectionRepo)
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo, connectionRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -72,7 +74,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,
@@ -1570,6 +1572,219 @@ func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipConnection(t
 		)
 
 	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-any", nil, superuserClaims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+// signalGroupColumns is the column list returned by SignalGroupRepository.GetByID.
+var signalGroupColumns = []string{
+	"id", "region_id", "school_id", "district_id", "owner_group_id", "connection_id",
+	"group_name", "description", "access_tier", "plaintext_invite_link", "created_by", "created_at", "is_active",
+}
+
+// expectSignalGroupGetByID sets up a sqlmock expectation for SignalGroupRepository.GetByID.
+// ownerGroupID may be nil to simulate a non-group-chat signal group.
+func expectSignalGroupGetByID(mock sqlmock.Sqlmock, signalGroupID string, ownerGroupID *string, accessTier string) {
+	rows := sqlmock.NewRows(signalGroupColumns).AddRow(
+		signalGroupID, nil, nil, nil, ownerGroupID, nil,
+		"Test Group Chat", nil, accessTier, nil, "user-123", time.Now(), true,
+	)
+	mock.ExpectQuery("SELECT id, region_id, school_id, district_id, owner_group_id").
+		WithArgs(signalGroupID).
+		WillReturnRows(rows)
+}
+
+func TestEncryptionHandler_GetPublicKeys_ByGroup(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-1"
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership auth: GetByID for signal group
+	expectSignalGroupGetByID(suite.keyMock, "sg-group-1", &ownerGroupID, "member")
+
+	// Membership check: IsUserMember
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// Key retrieval: GetByID again to get AccessTier
+	expectSignalGroupGetByID(suite.keyMock, "sg-group-1", &ownerGroupID, "member")
+
+	// GetPublicKeysForGroup: tier = member → predicate "gm.user_id IS NOT NULL"
+	suite.keyMock.ExpectQuery("FROM user_encryption_keys ek").
+		WithArgs(ownerGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "public_key"}).
+				AddRow("user-1", "pub-key-1").
+				AddRow("user-2", "pub-key-2"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?group_id=sg-group-1", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 keys, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_GroupNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-1"
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership auth: GetByID for signal group
+	expectSignalGroupGetByID(suite.keyMock, "sg-group-nope", &ownerGroupID, "member")
+
+	// Membership check: IsUserMember returns false
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-123").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?group_id=sg-group-nope", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_GroupNotFound(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// GetByID returns no rows → ErrSignalGroupNotFound → 404
+	suite.keyMock.ExpectQuery("SELECT id, region_id, school_id, district_id, owner_group_id").
+		WithArgs("sg-missing").
+		WillReturnRows(sqlmock.NewRows(signalGroupColumns))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?group_id=sg-missing", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "not_found" {
+		t.Errorf("expected error 'not_found', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_GroupNoOwnerGroupID(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// GetByID returns signal group with nil OwnerGroupID → 400 invalid_group_type
+	expectSignalGroupGetByID(suite.keyMock, "sg-region-chat", nil, "member")
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?group_id=sg-region-chat", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "invalid_group_type" {
+		t.Errorf("expected error 'invalid_group_type', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipGroup(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	ownerGroupID := "group-owner-su"
+
+	superuserClaims := &middleware.Claims{
+		UserID:           "superuser-1",
+		Username:         "superuser",
+		Email:            "super@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      true,
+		TokenType:        middleware.TokenTypeFull,
+	}
+
+	// Superuser check via isSuperuserFromDB — returns true, membership check is skipped
+	expectUserGetByID(suite.keyMock, "superuser-1", true)
+
+	// Key retrieval: GetByID to get AccessTier (no membership check)
+	expectSignalGroupGetByID(suite.keyMock, "sg-any", &ownerGroupID, "trusted")
+
+	// GetPublicKeysForGroup with trusted tier
+	suite.keyMock.ExpectQuery("FROM user_encryption_keys ek").
+		WithArgs(ownerGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "public_key"}).
+				AddRow("user-1", "pub-key-1"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?group_id=sg-any", nil, superuserClaims)
 	recorder := httptest.NewRecorder()
 
 	suite.handler.GetPublicKeys(recorder, req)
