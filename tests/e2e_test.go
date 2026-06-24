@@ -125,7 +125,7 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 
 	connectionRepo := database.NewConnectionRepository(db)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, communityGroupRepo, groupRepo, connectionRepo)
-	groupHandler := handlers.NewGroupHandler(communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(db, communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
 	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)
 
 	// Create router (rate limiting disabled for tests)
@@ -3192,9 +3192,14 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 
 		// Admin creates signal group
 		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
-			"group_name":  "General Chat",
-			"description": "Main chat channel",
-			"access_tier": "member",
+			"group_name":        "General Chat",
+			"description":       "Main chat channel",
+			"access_tier":       "member",
+			"encrypted_payload": "dGVzdHBheWxvYWQ=",
+			"encryption_iv":     "dGVzdGl2",
+			"wrapped_keys": []map[string]interface{}{
+				{"user_id": userID, "wrapped_dek": "dGVzdHdyYXBwZWRkZWs="},
+			},
 		}, token)
 		defer func() { _ = sgResp.Body.Close() }()
 
@@ -3335,10 +3340,18 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 			{"Members Only", "member"},
 			{"Admin Only", "admin_only"},
 		} {
-			resp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			body := map[string]interface{}{
 				"group_name":  sg.name,
 				"access_tier": sg.tier,
-			}, adminToken)
+			}
+			if sg.tier != "open" {
+				body["encrypted_payload"] = "dGVzdHBheWxvYWQ="
+				body["encryption_iv"] = "dGVzdGl2"
+				body["wrapped_keys"] = []map[string]interface{}{
+					{"user_id": adminID, "wrapped_dek": "dGVzdHdyYXBwZWRkZWs="},
+				}
+			}
+			resp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", body, adminToken)
 			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusCreated {
 				var errBody map[string]interface{}
@@ -3450,7 +3463,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			resp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
 				"group_name":  fmt.Sprintf("Chat %d", i+1),
-				"access_tier": "member",
+				"access_tier": "open",
 			}, token)
 			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusCreated {
@@ -3463,7 +3476,7 @@ func TestE2E_GroupSignalGroups(t *testing.T) {
 		// 6th should fail
 		sixthResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
 			"group_name":  "Chat 6",
-			"access_tier": "member",
+			"access_tier": "open",
 		}, token)
 		defer func() { _ = sixthResp.Body.Close() }()
 
