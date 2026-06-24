@@ -696,6 +696,91 @@ func TestEncryptedSecretRepository_GetPendingRekeys_GroupAndConnectionOwned(t *t
 	})
 }
 
+func TestEncryptedSecretRepository_GetPendingRekeys_MeshtasticSecrets(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	channelRepo := NewMeshtasticChannelRepository(db)
+	ekRepo := NewEncryptionKeyRepository(db)
+	ctx := context.Background()
+
+	user1 := encCreateUser(t, db, "es_rekey_mesh1")
+	user2 := encCreateUser(t, db, "es_rekey_mesh2")
+	region := encCreateRegion(t, db, user1.ID, "Rekey Meshtastic Region")
+
+	// Create a meshtastic channel
+	channel := &models.MeshtasticChannel{
+		RegionID:    strPtr(region.ID),
+		ChannelName: "Test Mesh Channel",
+		CreatedBy:   strPtr(user1.ID),
+	}
+	if err := channelRepo.Create(ctx, channel); err != nil {
+		t.Fatalf("Failed to create meshtastic channel: %v", err)
+	}
+
+	defer func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM user_encryption_keys WHERE user_id IN (?, ?)", user1.ID, user2.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secret_keys WHERE secret_id IN (SELECT id FROM encrypted_secrets WHERE meshtastic_channel_id = ?)", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM encrypted_secrets WHERE meshtastic_channel_id = ?", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM meshtastic_channels WHERE id = ?", channel.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM geographic_regions WHERE id = ?", region.ID)
+		_, _ = db.ExecContext(ctx, "DELETE FROM users WHERE id IN (?, ?)", user1.ID, user2.ID)
+	}()
+
+	// Create encryption keys for user2
+	_ = ekRepo.Create(ctx, &models.UserEncryptionKey{
+		UserID: user2.ID, PublicKey: "user2_pub_key_mesh", WrappedPrivateKey: "priv2",
+		KeySalt: "salt2_12345678901234", KeyIV: "iv2_123456789012",
+	})
+
+	// Create meshtastic secret with keys for both users
+	meshSecret := &models.EncryptedSecret{
+		SecretType:          models.SecretTypeMeshtasticChannel,
+		MeshtasticChannelID: strPtr(channel.ID),
+		EncryptedPayload:    "mesh_payload",
+		EncryptionIV:        "mesh_iv_1234567",
+		UpdatedBy:           user1.ID,
+	}
+	meshWrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1.ID, WrappedDEK: "mesh_dek_user1"},
+		{UserID: user2.ID, WrappedDEK: "mesh_dek_user2"},
+	}
+	if err := secretRepo.Create(ctx, meshSecret, meshWrappedKeys); err != nil {
+		t.Fatalf("Failed to create meshtastic secret: %v", err)
+	}
+
+	t.Run("GetPendingRekeys includes meshtastic-scoped secrets", func(t *testing.T) {
+		// Flag user2 as needing rekey for the meshtastic secret
+		_ = secretRepo.FlagRekeyForUser(ctx, user2.ID)
+
+		// user1 should see the pending rekey for the meshtastic secret
+		rekeys, err := secretRepo.GetPendingRekeys(ctx, user1.ID)
+		if err != nil {
+			t.Fatalf("Failed to get pending rekeys: %v", err)
+		}
+		if len(rekeys) != 1 {
+			t.Fatalf("Expected 1 pending rekey (meshtastic), got %d", len(rekeys))
+		}
+
+		rekey := rekeys[0]
+		if rekey.SecretID != meshSecret.ID {
+			t.Errorf("Expected secret ID '%s', got '%s'", meshSecret.ID, rekey.SecretID)
+		}
+		if rekey.TargetUserID != user2.ID {
+			t.Errorf("Expected target user '%s', got '%s'", user2.ID, rekey.TargetUserID)
+		}
+		if rekey.TargetPublicKey != "user2_pub_key_mesh" {
+			t.Errorf("Expected target public key 'user2_pub_key_mesh', got '%s'", rekey.TargetPublicKey)
+		}
+		// For meshtastic secrets, group_id and group_name should be nil
+		if rekey.GroupID != nil {
+			t.Errorf("Expected group_id to be nil for meshtastic secret, got '%v'", rekey.GroupID)
+		}
+		if rekey.GroupName != nil {
+			t.Errorf("Expected group_name to be nil for meshtastic secret, got '%v'", rekey.GroupName)
+		}
+	})
+}
+
 func TestEncryptedSecretRepository_SubmitRekey(t *testing.T) {
 	db := testDB(t)
 	secretRepo := NewEncryptedSecretRepository(db)
@@ -1765,5 +1850,93 @@ func TestEncryptedSecretRepository_RevokeConnectionSecretKeysForGroup(t *testing
 	}
 	if !rekeyNeeded {
 		t.Error("user1 (survivor) should have rekey_needed=true")
+	}
+}
+
+func TestEncryptedSecretRepository_RevokeGroupSecretKeysForUser(t *testing.T) {
+	db := testDB(t)
+	secretRepo := NewEncryptedSecretRepository(db)
+	sgRepo := NewSignalGroupRepository(db)
+	ctx := context.Background()
+
+	user1ID := createConnectionTestUser(t, db, "rg_u1")
+	user2ID := createConnectionTestUser(t, db, "rg_u2")
+	user3ID := createConnectionTestUser(t, db, "rg_u3")
+
+	regionID := createConnectionTestRegion(t, db, "RevokeGroupKeys Region")
+	groupID := createConnectionTestGroup(t, db, "RevokeGroupKeys Group", user1ID, regionID)
+
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, "DELETE FROM signal_groups WHERE owner_group_id = ?", groupID)
+		cleanupConnectionTest(t, db, []string{groupID}, []string{user1ID, user2ID, user3ID}, []string{regionID}, nil)
+	})
+
+	sg := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    "Revoke Group Keys Signal Group",
+		AccessTier:   models.AccessTierMember,
+		CreatedBy:    &user1ID,
+	}
+	if err := sgRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		t.Fatalf("Failed to create signal group: %v", err)
+	}
+
+	secret := &models.EncryptedSecret{
+		SecretType:       models.SecretTypeSignalInvite,
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "rg_revoke_payload",
+		EncryptionIV:     "rg_revoke_iv_1234",
+		UpdatedBy:        user1ID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: user1ID, WrappedDEK: "dek_rg_u1"},
+		{UserID: user2ID, WrappedDEK: "dek_rg_u2"},
+		{UserID: user3ID, WrappedDEK: "dek_rg_u3"},
+	}
+	if err := secretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		t.Fatalf("Failed to create secret: %v", err)
+	}
+
+	err := db.Transaction(ctx, func(tx *sql.Tx) error {
+		return secretRepo.RevokeGroupSecretKeysForUser(ctx, tx, groupID, user1ID)
+	})
+	if err != nil {
+		t.Fatalf("RevokeGroupSecretKeysForUser failed: %v", err)
+	}
+
+	// Revoked user's row must be gone.
+	_, err = secretRepo.GetWrappedDEK(ctx, secret.ID, user1ID)
+	if err == nil {
+		t.Error("user1 (revoked) key should be deleted")
+	}
+
+	// Survivors must still have their keys.
+	dek2, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user2ID)
+	if err != nil {
+		t.Fatalf("Failed to get user2 DEK: %v", err)
+	}
+	if dek2 != "dek_rg_u2" {
+		t.Errorf("user2 (survivor) key should be unchanged, got '%s'", dek2)
+	}
+	dek3, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user3ID)
+	if err != nil {
+		t.Fatalf("Failed to get user3 DEK: %v", err)
+	}
+	if dek3 != "dek_rg_u3" {
+		t.Errorf("user3 (survivor) key should be unchanged, got '%s'", dek3)
+	}
+
+	// Survivors must have rekey_needed=TRUE.
+	for _, uid := range []string{user2ID, user3ID} {
+		var rekeyNeeded bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT rekey_needed FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secret.ID, uid).Scan(&rekeyNeeded); err != nil {
+			t.Fatalf("Failed to query rekey flag for %s: %v", uid, err)
+		}
+		if !rekeyNeeded {
+			t.Errorf("survivor %s should have rekey_needed=true", uid)
+		}
 	}
 }
