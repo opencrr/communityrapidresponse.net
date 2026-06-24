@@ -1944,7 +1944,7 @@ func TestEncryptedSecretRepository_RevokeGroupSecretKeysForUser(t *testing.T) {
 func TestEncryptionKeyRepository_GetPublicKeysForConnection_AllMembers(t *testing.T) {
 	db := testDB(t)
 	ekRepo := NewEncryptionKeyRepository(db)
-	connRepo := NewConnectionRepository(db, nil)
+	connRepo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	user1ID := createConnectionTestUser(t, db, "pk_conn_all1")
@@ -1995,7 +1995,7 @@ func TestEncryptionKeyRepository_GetPublicKeysForConnection_AllMembers(t *testin
 func TestEncryptionKeyRepository_GetPublicKeysForConnection_AdminOnly(t *testing.T) {
 	db := testDB(t)
 	ekRepo := NewEncryptionKeyRepository(db)
-	connRepo := NewConnectionRepository(db, nil)
+	connRepo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	adminUserID := createConnectionTestUser(t, db, "pk_conn_adm_admin")
@@ -2063,7 +2063,7 @@ func TestEncryptionKeyRepository_GetPublicKeysForConnection_AdminOnly(t *testing
 func TestEncryptionKeyRepository_GetPublicKeysForConnection_ExcludesSuperuser(t *testing.T) {
 	db := testDB(t)
 	ekRepo := NewEncryptionKeyRepository(db)
-	connRepo := NewConnectionRepository(db, nil)
+	connRepo := NewConnectionRepository(db)
 	ctx := context.Background()
 
 	regularUserID := createConnectionTestUser(t, db, "pk_conn_su_regular")
