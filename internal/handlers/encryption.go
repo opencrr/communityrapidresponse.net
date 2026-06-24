@@ -340,6 +340,9 @@ func (h *EncryptionHandler) GetPendingRekeys(w http.ResponseWriter, r *http.Requ
 
 // SubmitRekeys handles POST /api/v1/encryption/rekey
 // Accepts a batch of re-keyed wrapped DEKs
+// If encrypted_payload and encryption_iv are provided, performs a group/connection rotation
+// (generates fresh DEK, re-encrypts payload, wraps for survivors)
+// Otherwise, performs user key rotation (re-wraps existing DEK for new public key)
 func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -378,20 +381,70 @@ func (h *EncryptionHandler) SubmitRekeys(w http.ResponseWriter, r *http.Request)
 		allowed[p.SecretID+"\x00"+p.TargetUserID] = true
 	}
 
+	// Check if this is a group rotation (payload update)
+	isGroupRotation := req.EncryptedPayload != "" && req.EncryptionIV != ""
+
 	successCount := 0
-	for _, entry := range req.Rekeys {
-		if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
-			continue
+	if isGroupRotation {
+		// Group rotation: update payload and all wrapped keys in one batch
+		if len(req.Rekeys) == 0 {
+			writeError(w, http.StatusBadRequest, "validation_error", "At least one survivor required for group rotation")
+			return
 		}
-		if !allowed[entry.SecretID+"\x00"+entry.TargetUserID] {
-			slog.WarnContext(r.Context(), "rejecting re-key: pair not in caller's pending set", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "caller_id", claims.UserID)
-			continue
+
+		// Verify all rekeys are for the same secret
+		secretID := req.Rekeys[0].SecretID
+		for _, entry := range req.Rekeys {
+			if entry.SecretID != secretID {
+				writeError(w, http.StatusBadRequest, "validation_error", "All rekeys in a group rotation must be for the same secret")
+				return
+			}
 		}
-		if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {
-			slog.ErrorContext(r.Context(), "failed to submit re-key", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "error", err)
-			continue
+
+		// Prepare wrapped keys for update
+		wrappedKeys := make([]models.WrappedKeyEntry, 0, len(req.Rekeys))
+		for _, entry := range req.Rekeys {
+			if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
+				continue
+			}
+			if !allowed[entry.SecretID+"\x00"+entry.TargetUserID] {
+				slog.WarnContext(r.Context(), "rejecting re-key: pair not in caller's pending set", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "caller_id", claims.UserID)
+				continue
+			}
+			wrappedKeys = append(wrappedKeys, models.WrappedKeyEntry{
+				UserID:     entry.TargetUserID,
+				WrappedDEK: entry.WrappedDEK,
+			})
 		}
-		successCount++
+
+		if len(wrappedKeys) == 0 {
+			writeError(w, http.StatusBadRequest, "validation_error", "No valid wrapped keys for group rotation")
+			return
+		}
+
+		// Update the secret with new payload and wrapped keys
+		if err := h.encryptedSecretRepo.UpdatePayloadAndKeys(r.Context(), secretID, req.EncryptedPayload, req.EncryptionIV, claims.UserID, wrappedKeys); err != nil {
+			writeServerError(w, r, err, "Failed to update secret during group rotation", "encryption", "group_rotation")
+			return
+		}
+
+		successCount = len(wrappedKeys)
+	} else {
+		// User key rotation: re-wrap existing DEK for new public key
+		for _, entry := range req.Rekeys {
+			if entry.SecretID == "" || entry.TargetUserID == "" || entry.WrappedDEK == "" {
+				continue
+			}
+			if !allowed[entry.SecretID+"\x00"+entry.TargetUserID] {
+				slog.WarnContext(r.Context(), "rejecting re-key: pair not in caller's pending set", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "caller_id", claims.UserID)
+				continue
+			}
+			if err := h.encryptedSecretRepo.SubmitRekey(r.Context(), entry.SecretID, entry.TargetUserID, entry.WrappedDEK); err != nil {
+				slog.ErrorContext(r.Context(), "failed to submit re-key", "secret_id", entry.SecretID, "target_user_id", entry.TargetUserID, "error", err)
+				continue
+			}
+			successCount++
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

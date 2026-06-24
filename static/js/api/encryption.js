@@ -56,7 +56,9 @@ export async function getPendingRekeys() {
 /**
  * Submit re-keyed wrapped DEKs
  * POST /api/v1/encryption/rekey
- * @param {Object} data - { rekeys: [{ secret_id, target_user_id, wrapped_dek }] }
+ * @param {Object} data - { rekeys: [{ secret_id, target_user_id, wrapped_dek }], encrypted_payload?, encryption_iv? }
+ * For user key rotation: only rekeys (re-wrap existing DEK for new public key)
+ * For group rotation: rekeys + encrypted_payload + encryption_iv (new encrypted secret + wrapped fresh DEK)
  */
 export async function submitRekeys(data) {
     return post('/encryption/rekey', data);

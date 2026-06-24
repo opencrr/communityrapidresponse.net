@@ -4,9 +4,14 @@
  * After a user rotates their keys (e.g. password reset), their wrapped DEKs
  * are flagged for re-keying. Other members who share secrets with that user
  * unwrap their own copy of the DEK and re-wrap it for the user's new public key.
+ *
+ * Also handles group/connection secret rotation when a member leaves:
+ * Surviving members generate a fresh DEK, re-encrypt the payload, and wrap
+ * the fresh DEK for all survivors.
  */
 
-import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey } from './index.js';
+import { getPrivateKey, importPublicKey } from './keyManager.js';
+import { unwrapDEK, wrapDEK, generateDEK, decryptPayload, encryptPayload, wrapDEKForRecipients } from './envelope.js';
 import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
 
 /**
@@ -79,5 +84,75 @@ async function performRekeys(pendingList) {
     } catch (err) {
         console.error('Failed to submit re-keys:', err);
         return { performed: 0, failed: failedCount + rekeyEntries.length };
+    }
+}
+
+/**
+ * Rotate the DEK for a group/connection secret.
+ * When a group is removed from a connection, surviving members need to:
+ * 1. Generate a fresh DEK
+ * 2. Decrypt the current payload with their wrapped DEK
+ * 3. Re-encrypt the payload with the fresh DEK
+ * 4. Wrap the fresh DEK for all surviving members
+ * 5. Submit the new payload + wrapped keys
+ *
+ * @param {Object} params
+ * @param {string} params.secretId - Secret UUID
+ * @param {string} params.encryptedPayload - Current encrypted payload (base64)
+ * @param {string} params.encryptionIv - Current encryption IV (base64)
+ * @param {string} params.callerWrappedDek - Caller's wrapped DEK
+ * @param {Array<{user_id: string, public_key: string}>} params.survivors - Surviving members with public keys
+ * @returns {Promise<{success: boolean, message?: string}>}
+ */
+export async function performGroupRotation(params) {
+    try {
+        const { secretId, encryptedPayload, encryptionIv, callerWrappedDek, survivors } = params;
+
+        if (!secretId || !encryptedPayload || !encryptionIv || !callerWrappedDek || !survivors || survivors.length === 0) {
+            throw new Error('Missing required parameters for group rotation');
+        }
+
+        const privateKey = await getPrivateKey();
+        if (!privateKey) {
+            throw new Error('No private key available for rotation');
+        }
+
+        // Step 1: Unwrap the caller's DEK
+        const currentDek = await unwrapDEK(callerWrappedDek, privateKey);
+
+        // Step 2: Decrypt the current payload
+        const plaintext = await decryptPayload(encryptedPayload, encryptionIv, currentDek);
+
+        // Step 3: Generate a fresh DEK
+        const freshDek = await generateDEK();
+
+        // Step 4: Re-encrypt the payload with the fresh DEK
+        const { ciphertext: newPayload, iv: newIv } = await encryptPayload(plaintext, freshDek);
+
+        // Step 5: Wrap the fresh DEK for all survivors
+        const wrappedKeys = await wrapDEKForRecipients(freshDek, survivors);
+
+        // Step 6: Build the rekey entries
+        const rekeyEntries = wrappedKeys.map(wk => ({
+            secret_id: secretId,
+            target_user_id: wk.user_id,
+            wrapped_dek: wk.wrapped_dek,
+        }));
+
+        // Step 7: Submit the rotation
+        const result = await submitRekeys({
+            rekeys: rekeyEntries,
+            encrypted_payload: newPayload,
+            encryption_iv: newIv,
+        });
+
+        if (!result || result.rekeyed === 0) {
+            return { success: false, message: 'No survivors updated' };
+        }
+
+        return { success: true, message: `Rotated DEK for ${result.rekeyed} survivor(s)` };
+    } catch (err) {
+        console.error('Failed to perform group rotation:', err);
+        throw err;
     }
 }

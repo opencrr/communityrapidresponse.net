@@ -60,6 +60,10 @@ type RekeyEntry struct {
 }
 
 // SubmitRekeysRequest is the request body for submitting re-keyed DEKs
+// For user key rotation: only Rekeys (re-wrap existing DEK for new public key)
+// For group/connection rotation: Rekeys + EncryptedPayload + EncryptionIV (new encrypted secret + wrapped fresh DEK)
 type SubmitRekeysRequest struct {
-	Rekeys []RekeyEntry `json:"rekeys"`
+	Rekeys             []RekeyEntry `json:"rekeys"`
+	EncryptedPayload   string       `json:"encrypted_payload,omitempty"`
+	EncryptionIV       string       `json:"encryption_iv,omitempty"`
 }

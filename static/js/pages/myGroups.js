@@ -4,11 +4,12 @@
  */
 
 import { listMyGroups, listMyInvitations, respondToInvitation } from '../api/groups.js';
+import { getGroup } from '../api/signalGroups.js';
 import { listMyConnections, listPendingProposals, respondToProposal } from '../api/connections.js';
 import { getPendingRekeys, submitRekeys } from '../api/encryption.js';
 import { isPostcardVerified } from '../utils/store.js';
 import toast from '../components/toast.js';
-import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey } from '../crypto/index.js';
+import { getPrivateKey, unwrapDEK, wrapDEK, importPublicKey, performGroupRotation } from '../crypto/index.js';
 
 /**
  * Render the My Groups page
@@ -256,36 +257,38 @@ async function handleProposalResponse(proposalId, action) {
 
 /**
  * Handle performing a re-key operation
+ * Detects whether this is a user key rotation or group/connection rotation,
+ * and performs the appropriate operation.
  * @param {HTMLElement} button - The button that was clicked
  */
 async function handleRekeyPerform(button) {
     const secretId = button.dataset.secretId;
-    const targetUserId = button.dataset.targetUserId;
-    const targetPublicKey = button.dataset.targetPublicKey;
-    const callerWrappedDEK = button.dataset.wrappedDek;
 
     const cardEl = button.closest('.rekey-card');
     button.disabled = true;
 
     try {
-        const privateKey = await getPrivateKey();
-        if (!privateKey) {
-            toast.error('No private key available for re-keying');
+        // Fetch pending rekeys to get all rekeys for this secret
+        const rekeyResponse = await getPendingRekeys();
+        const allPendingRekeys = rekeyResponse.pending_rekeys || [];
+
+        // Find all rekeys for this secret
+        const secretRekeys = allPendingRekeys.filter(r => r.secret_id === secretId);
+        if (secretRekeys.length === 0) {
+            toast.error('Secret not found in pending rekeys');
             button.disabled = false;
             return;
         }
 
-        const dek = await unwrapDEK(callerWrappedDEK, privateKey);
-        const pubKey = await importPublicKey(targetPublicKey);
-        const wrappedDEK = await wrapDEK(dek, pubKey);
+        // Check if this is a group/connection rotation (has group_id or connection_id)
+        const isGroupRotation = secretRekeys.some(r => r.group_id || r.connection_id);
 
-        await submitRekeys({
-            rekeys: [{
-                secret_id: secretId,
-                target_user_id: targetUserId,
-                wrapped_dek: wrappedDEK,
-            }],
-        });
+        if (isGroupRotation) {
+            await handleGroupRotation(secretId, secretRekeys);
+        } else {
+            // User key rotation: single target user
+            await handleUserKeyRotation(secretRekeys[0]);
+        }
 
         toast.success('Re-key performed successfully');
         if (cardEl) cardEl.remove();
@@ -295,6 +298,85 @@ async function handleRekeyPerform(button) {
         toast.error(error.message || 'Failed to perform re-key');
         button.disabled = false;
     }
+}
+
+/**
+ * Handle user key rotation: re-wrap existing DEK for target user's new public key
+ * @param {Object} rekey - Single rekey entry
+ */
+async function handleUserKeyRotation(rekey) {
+    const privateKey = await getPrivateKey();
+    if (!privateKey) {
+        throw new Error('No private key available for re-keying');
+    }
+
+    const dek = await unwrapDEK(rekey.caller_wrapped_dek, privateKey);
+    const pubKey = await importPublicKey(rekey.target_public_key);
+    const wrappedDEK = await wrapDEK(dek, pubKey);
+
+    await submitRekeys({
+        rekeys: [{
+            secret_id: rekey.secret_id,
+            target_user_id: rekey.target_user_id,
+            wrapped_dek: wrappedDEK,
+        }],
+    });
+}
+
+/**
+ * Handle group/connection rotation: generate fresh DEK, re-encrypt payload, wrap for survivors
+ * @param {string} secretId - Secret UUID
+ * @param {Array} secretRekeys - All pending rekeys for this secret
+ */
+async function handleGroupRotation(secretId, secretRekeys) {
+    // Verify we have a caller wrapped DEK and at least one valid rekey
+    if (secretRekeys.length === 0) {
+        throw new Error('No survivors for group rotation');
+    }
+
+    const callerWrappedDEK = secretRekeys[0].caller_wrapped_dek;
+    if (!callerWrappedDEK) {
+        throw new Error('No wrapped DEK available for group rotation');
+    }
+
+    // Fetch the full secret to get encrypted_payload and encryption_iv
+    let encryptedPayload, encryptionIv;
+    const groupId = secretRekeys[0].group_id;
+    const connectionId = secretRekeys[0].connection_id;
+
+    if (groupId) {
+        const group = await getGroup(groupId);
+        // The group response may have encrypted_secret as a nested field or at the top level
+        const secret = group.encrypted_secret || group;
+        encryptedPayload = secret.encrypted_payload;
+        encryptionIv = secret.encryption_iv;
+
+        if (!encryptedPayload || !encryptionIv) {
+            throw new Error('Group secret payload not found');
+        }
+    } else if (connectionId) {
+        // For connections, we'd need to fetch the connection's secret
+        // This would require a getConnection API call
+        // For now, throw an error to indicate this needs to be implemented
+        throw new Error('Connection rotation not yet implemented');
+    } else {
+        throw new Error('No group or connection information available');
+    }
+
+    // Prepare survivors with their public keys from the pending rekeys
+    const survivors = secretRekeys.map(r => ({
+        user_id: r.target_user_id,
+        public_key: r.target_public_key,
+    }));
+
+    // Perform the group rotation
+    await performGroupRotation({
+        secretId: secretId,
+        encryptedPayload: encryptedPayload,
+        encryptionIv: encryptionIv,
+        callerWrappedDek: callerWrappedDEK,
+        survivors: survivors,
+    });
 }
 
 /**

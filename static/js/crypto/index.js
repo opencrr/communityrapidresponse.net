@@ -167,3 +167,6 @@ export { hasLocalKey, clearLocalKeys };
 
 // Re-export envelope encryption functions for direct use
 export { encryptForMembers, decryptSecret, generateDEK, aesGcmEncrypt, wrapDEK, unwrapDEK, wrapDEKForRecipients, importPublicKey, exportPublicKey };
+
+// Re-export rekey functions
+export { checkAndPerformRekeys, performGroupRotation } from './rekey.js';
