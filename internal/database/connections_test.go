@@ -662,12 +662,15 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	if len(signalGroups) != 1 {
 		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
 	}
-	// The approved admin_only proposal must NOT become member-visible.
-	if signalGroups[0].AccessTier == models.AccessTierMember {
-		t.Errorf("admin_only proposal created a member-tier signal group; access level was discarded")
+	// The approved admin_only proposal must NOT become open-visible.
+	if signalGroups[0].AccessTier == models.AccessTierOpen {
+		t.Errorf("admin_only proposal created an open-tier signal group; access level was discarded")
 	}
 	if signalGroups[0].AccessTier != models.AccessTierAdminOnly {
 		t.Errorf("Expected access_tier=admin_only, got %s", signalGroups[0].AccessTier)
+	}
+	if signalGroups[0].PlaintextInviteLink != nil {
+		t.Errorf("Expected plaintext_invite_link to be NULL for admin-only chat, got %v", signalGroups[0].PlaintextInviteLink)
 	}
 }
 
@@ -707,8 +710,11 @@ func TestConnectionRepository_VoteOnChatProposal_AllMembersTier(t *testing.T) {
 	if len(signalGroups) != 1 {
 		t.Fatalf("Expected 1 signal group, got %d", len(signalGroups))
 	}
-	if signalGroups[0].AccessTier != models.AccessTierMember {
-		t.Errorf("Expected all_members to map to access_tier=member, got %s", signalGroups[0].AccessTier)
+	if signalGroups[0].AccessTier != models.AccessTierOpen {
+		t.Errorf("Expected all_members to map to access_tier=open, got %s", signalGroups[0].AccessTier)
+	}
+	if signalGroups[0].PlaintextInviteLink == nil || *signalGroups[0].PlaintextInviteLink == "" {
+		t.Errorf("Expected plaintext_invite_link to be set for open-tier chat, got nil or empty")
 	}
 }
 
