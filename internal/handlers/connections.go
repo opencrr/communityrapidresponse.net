@@ -499,6 +499,22 @@ func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// For admin_only access level (restricted tier), encryption fields are required
+	if req.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) {
+		if req.EncryptedPayload == nil || *req.EncryptedPayload == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload is required for admin_only access level")
+			return
+		}
+		if req.EncryptionIV == nil || *req.EncryptionIV == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "encryption_iv is required for admin_only access level")
+			return
+		}
+		if len(req.WrappedKeys) == 0 {
+			writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys is required for admin_only access level")
+			return
+		}
+	}
+
 	proposal, err := h.connectionRepo.ProposeSignalChat(r.Context(), connectionID, proposerGroupID, &req)
 	if err != nil {
 		if errors.Is(err, database.ErrConnectionNotFound) {
