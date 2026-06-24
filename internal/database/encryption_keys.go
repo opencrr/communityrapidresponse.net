@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/models"
@@ -176,6 +177,19 @@ func (r *EncryptionKeyRepository) GetPublicKeysForDistrict(ctx context.Context, 
 		WHERE s.district_id = ? AND us.verification_status = 'verified' AND u.is_superuser = FALSE
 	`
 	return r.queryPublicKeys(ctx, query, districtID)
+}
+
+// GetPublicKeysForConnection retrieves public keys for users eligible to access a connection chat.
+// level must be a models.ConnectionAccessLevel value (all_members or admin_only).
+func (r *EncryptionKeyRepository) GetPublicKeysForConnection(ctx context.Context, connID string, level string) ([]models.PublicKeyEntry, error) {
+	predicate := ConnectionChatUserAccessPredicate(level)
+	query := fmt.Sprintf(`
+		SELECT DISTINCT ek.user_id, ek.public_key
+		FROM user_encryption_keys ek
+		INNER JOIN users u ON ek.user_id = u.id
+		WHERE ek.user_id IN (%s) AND u.is_superuser = FALSE
+	`, predicate)
+	return r.queryPublicKeys(ctx, query, connID)
 }
 
 func (r *EncryptionKeyRepository) queryPublicKeys(ctx context.Context, query string, scopeID string) ([]models.PublicKeyEntry, error) {
