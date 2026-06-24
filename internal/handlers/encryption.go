@@ -20,6 +20,7 @@ type EncryptionHandler struct {
 	userRepo            *database.UserRepository
 	groupRepo           *database.GroupRepository
 	signalGroupRepo     *database.SignalGroupRepository
+	connectionRepo      *database.ConnectionRepository
 	notificationService NotificationServiceInterface
 }
 
@@ -32,6 +33,7 @@ func NewEncryptionHandler(
 	userRepo *database.UserRepository,
 	groupRepo *database.GroupRepository,
 	signalGroupRepo *database.SignalGroupRepository,
+	connectionRepo *database.ConnectionRepository,
 ) *EncryptionHandler {
 	return &EncryptionHandler{
 		encryptionKeyRepo:   encryptionKeyRepo,
@@ -41,6 +43,7 @@ func NewEncryptionHandler(
 		userRepo:            userRepo,
 		groupRepo:           groupRepo,
 		signalGroupRepo:     signalGroupRepo,
+		connectionRepo:      connectionRepo,
 	}
 }
 
@@ -210,7 +213,7 @@ func (h *EncryptionHandler) RotateKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id)
+// GetPublicKeys handles GET /api/v1/encryption/public-keys?region_id=X (or school_id, district_id, group_id, connection_id)
 func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.GetUserFromContext(r.Context())
 	if claims == nil {
@@ -222,15 +225,7 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	schoolID := r.URL.Query().Get("school_id")
 	districtID := r.URL.Query().Get("district_id")
 	groupID := r.URL.Query().Get("group_id")
-
-	// SCOPE LIMITATION: only region/school/district/group recipient enumeration exists.
-	// Connection-owned signal chats are intentionally NOT supported here
-	// yet (they are metadata-only — see DESIGN/PR "Known limitations"). Do NOT add
-	// connection_id branch without also landing DEK revocation
-	// (delete encrypted_secret_keys + rotate the DEK) on member removal / ban /
-	// connection-leave / tier-downgrade. Enumeration without revocation lets a
-	// removed member who cached the unwrapped DEK keep decrypting.
-	// Tracked: github.com/opencrr/communityrapidresponse.net/issues/91.
+	connectionID := r.URL.Query().Get("connection_id")
 
 	// Exactly one scope must be provided
 	scopeCount := 0
@@ -246,8 +241,11 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 	if groupID != "" {
 		scopeCount++
 	}
+	if connectionID != "" {
+		scopeCount++
+	}
 	if scopeCount != 1 {
-		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, or group_id must be provided")
+		writeError(w, http.StatusBadRequest, "validation_error", "Exactly one of region_id, school_id, district_id, group_id, or connection_id must be provided")
 		return
 	}
 
@@ -317,6 +315,16 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
 				return
 			}
+		} else if connectionID != "" {
+			isMember, memberErr := h.connectionRepo.IsUserInConnection(r.Context(), claims.UserID, connectionID)
+			if memberErr != nil {
+				writeServerError(w, r, memberErr, "Failed to verify membership", "encryption", "check_membership")
+				return
+			}
+			if !isMember {
+				writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this scope to view public keys")
+				return
+			}
 		}
 	}
 
@@ -334,6 +342,8 @@ func (h *EncryptionHandler) GetPublicKeys(w http.ResponseWriter, r *http.Request
 		if err == nil && signalGroupForKeys != nil && signalGroupForKeys.OwnerGroupID != nil {
 			keys, err = h.encryptionKeyRepo.GetPublicKeysForGroup(r.Context(), *signalGroupForKeys.OwnerGroupID, signalGroupForKeys.AccessTier)
 		}
+	} else if connectionID != "" {
+		keys, err = h.encryptionKeyRepo.GetPublicKeysForConnection(r.Context(), connectionID, string(models.ConnectionAccessLevelAllMembers))
 	}
 
 	if err != nil {

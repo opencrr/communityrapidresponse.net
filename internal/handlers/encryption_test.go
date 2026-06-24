@@ -48,9 +48,10 @@ func setupEncryptionTestSuite(t *testing.T) *encryptionTestSuite {
 	schoolRepo := database.NewSchoolRepository(&database.DB{DB: keyDB})
 	groupRepo := database.NewGroupRepository(&database.DB{DB: keyDB})
 	signalGroupRepo := database.NewSignalGroupRepository(&database.DB{DB: keyDB})
+	connectionRepo := database.NewConnectionRepository(&database.DB{DB: keyDB})
 
 	userRepo := database.NewUserRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo)
+	handler := NewEncryptionHandler(keyRepo, secretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo, connectionRepo)
 
 	return &encryptionTestSuite{
 		handler:    handler,
@@ -73,7 +74,7 @@ func setupEncryptionTestSuiteNoSecretRepo(t *testing.T) *encryptionTestSuite {
 	t.Cleanup(func() { _ = keyDB.Close() })
 
 	keyRepo := database.NewEncryptionKeyRepository(&database.DB{DB: keyDB})
-	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil, nil, nil)
+	handler := NewEncryptionHandler(keyRepo, nil, nil, nil, nil, nil, nil, nil)
 
 	return &encryptionTestSuite{
 		handler: handler,
@@ -1433,6 +1434,144 @@ func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembership(t *testing.
 		)
 
 	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?region_id=region-abc", nil, superuserClaims)
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 1 {
+		t.Errorf("expected 1 key, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ByConnection(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check: IsUserInConnection
+	suite.keyMock.ExpectQuery("SELECT EXISTS").
+		WithArgs("user-123", "conn-abc").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	columns := []string{"user_id", "public_key"}
+	suite.keyMock.ExpectQuery("SELECT DISTINCT ek.user_id, ek.public_key FROM user_encryption_keys").
+		WithArgs("conn-abc").
+		WillReturnRows(
+			sqlmock.NewRows(columns).
+				AddRow("user-1", "pub-key-1").
+				AddRow("user-2", "pub-key-2").
+				AddRow("user-3", "pub-key-3"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-abc", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 3 {
+		t.Errorf("expected 3 keys, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ConnectionNotMember(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// IsUserInConnection returns false
+	suite.keyMock.ExpectQuery("SELECT EXISTS").
+		WithArgs("user-123", "conn-nope").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-nope", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d", http.StatusForbidden, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "forbidden" {
+		t.Errorf("expected error 'forbidden', got %v", body["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ConnectionAndRegion(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-1&region_id=region-1", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	if body["error"] != "validation_error" {
+		t.Errorf("expected error 'validation_error', got %v", body["error"])
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipConnection(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	superuserClaims := &middleware.Claims{
+		UserID:           "superuser-1",
+		Username:         "superuser",
+		Email:            "super@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      true,
+		TokenType:        middleware.TokenTypeFull,
+	}
+
+	// Superuser check via isSuperuserFromDB — returns true, so membership check is skipped
+	expectUserGetByID(suite.keyMock, "superuser-1", true)
+
+	columns := []string{"user_id", "public_key"}
+	suite.keyMock.ExpectQuery("SELECT DISTINCT ek.user_id, ek.public_key FROM user_encryption_keys").
+		WithArgs("conn-any").
+		WillReturnRows(
+			sqlmock.NewRows(columns).
+				AddRow("user-1", "pub-key-1"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-any", nil, superuserClaims)
 	recorder := httptest.NewRecorder()
 
 	suite.handler.GetPublicKeys(recorder, req)

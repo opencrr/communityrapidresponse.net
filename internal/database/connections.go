@@ -784,6 +784,20 @@ func (r *ConnectionRepository) isConnectionMember(ctx context.Context, connectio
 	return exists, err
 }
 
+// IsUserInConnection checks if a user is a member of any group in the given connection.
+func (r *ConnectionRepository) IsUserInConnection(ctx context.Context, userID, connectionID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM group_members gm
+			JOIN connection_members cm ON gm.group_id = cm.group_id
+			WHERE gm.user_id = ? AND cm.connection_id = ?
+		)`,
+		userID, connectionID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // SetConnectionName updates the name of a connection.
 func (r *ConnectionRepository) SetConnectionName(ctx context.Context, connectionID, name string) error {
 	_, err := r.db.ExecContext(ctx,

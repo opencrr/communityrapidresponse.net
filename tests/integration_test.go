@@ -103,7 +103,8 @@ func SetupIntegrationTest(t *testing.T) *IntegrationTestSuite {
 		schoolRepo, districtRepo, communityGroupRepo, userRepo, auditRepo, nil,
 	)
 
-	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, communityGroupRepo, groupRepo)
+	connectionRepo := database.NewConnectionRepository(db)
+	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, communityGroupRepo, groupRepo, connectionRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(

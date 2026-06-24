@@ -36,8 +36,8 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, plaintext_invite_link, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -50,6 +50,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 		group.GroupName,
 		group.Description,
 		group.AccessTier,
+		group.PlaintextInviteLink,
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,
@@ -62,7 +63,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models.SignalGroup, error) {
 	query := `
 		SELECT id, region_id, school_id, district_id, owner_group_id, connection_id, group_name,
-			description, access_tier, created_by, created_at, is_active
+			description, access_tier, plaintext_invite_link, created_by, created_at, is_active
 		FROM signal_groups
 		WHERE id = ?
 	`
@@ -78,6 +79,7 @@ func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models
 		&group.GroupName,
 		&group.Description,
 		&group.AccessTier,
+		&group.PlaintextInviteLink,
 		&group.CreatedBy,
 		&group.CreatedAt,
 		&group.IsActive,
@@ -293,7 +295,7 @@ func (r *SignalGroupRepository) CountByDistrictForUpdate(ctx context.Context, tx
 func (r *SignalGroupRepository) ListByOwnerGroup(ctx context.Context, ownerGroupID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			sg.description, sg.access_tier, sg.plaintext_invite_link, sg.created_by, sg.created_at, sg.is_active,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.owner_group_id = ? AND sg.is_active = TRUE
@@ -319,6 +321,7 @@ func (r *SignalGroupRepository) ListByOwnerGroup(ctx context.Context, ownerGroup
 			&group.GroupName,
 			&group.Description,
 			&group.AccessTier,
+			&group.PlaintextInviteLink,
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
