@@ -224,10 +224,15 @@ func (r *EncryptedSecretRepository) GetPendingRekeys(ctx context.Context, member
 	query := `
 		SELECT DISTINCT esk_need.secret_id, esk_need.user_id AS target_user_id,
 			uek.public_key AS target_public_key,
-			esk_have.wrapped_dek AS caller_wrapped_dek
+			esk_have.wrapped_dek AS caller_wrapped_dek,
+			sg.id AS group_id,
+			sg.group_name,
+			sg.connection_id
 		FROM encrypted_secret_keys esk_need
 		INNER JOIN encrypted_secret_keys esk_have ON esk_need.secret_id = esk_have.secret_id
 		INNER JOIN user_encryption_keys uek ON esk_need.user_id = uek.user_id
+		INNER JOIN encrypted_secrets es ON esk_need.secret_id = es.id
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
 		WHERE esk_need.rekey_needed = TRUE
 		AND esk_have.user_id = ?
 		AND esk_have.rekey_needed = FALSE
@@ -242,7 +247,8 @@ func (r *EncryptedSecretRepository) GetPendingRekeys(ctx context.Context, member
 	var results []PendingRekey
 	for rows.Next() {
 		var pr PendingRekey
-		if err := rows.Scan(&pr.SecretID, &pr.TargetUserID, &pr.TargetPublicKey, &pr.CallerWrappedDEK); err != nil {
+		if err := rows.Scan(&pr.SecretID, &pr.TargetUserID, &pr.TargetPublicKey, &pr.CallerWrappedDEK,
+			&pr.GroupID, &pr.GroupName, &pr.ConnectionID); err != nil {
 			return nil, err
 		}
 		results = append(results, pr)
@@ -278,6 +284,9 @@ type PendingRekey struct {
 	TargetUserID     string `json:"target_user_id"`
 	TargetPublicKey  string `json:"target_public_key"`
 	CallerWrappedDEK string `json:"caller_wrapped_dek"`
+	GroupID          *string `json:"group_id,omitempty"`
+	GroupName        *string `json:"group_name,omitempty"`
+	ConnectionID     *string `json:"connection_id,omitempty"`
 }
 
 // GetUsersWithSharedSecrets returns distinct user IDs who share at least one secret with the given user
