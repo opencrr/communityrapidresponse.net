@@ -36,8 +36,8 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active, plaintext_invite_link)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
@@ -53,6 +53,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,
+		group.PlaintextInviteLink,
 	)
 
 	return err
@@ -62,7 +63,7 @@ func (r *SignalGroupRepository) Create(ctx context.Context, group *models.Signal
 func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models.SignalGroup, error) {
 	query := `
 		SELECT id, region_id, school_id, district_id, owner_group_id, connection_id, group_name,
-			description, access_tier, created_by, created_at, is_active
+			description, access_tier, created_by, created_at, is_active, plaintext_invite_link
 		FROM signal_groups
 		WHERE id = ?
 	`
@@ -81,6 +82,7 @@ func (r *SignalGroupRepository) GetByID(ctx context.Context, id string) (*models
 		&group.CreatedBy,
 		&group.CreatedAt,
 		&group.IsActive,
+		&group.PlaintextInviteLink,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -143,8 +145,8 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active, plaintext_invite_link)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := tx.ExecContext(ctx, query,
@@ -160,6 +162,7 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,
+		group.PlaintextInviteLink,
 	)
 
 	return err
@@ -169,7 +172,7 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active, sg.plaintext_invite_link,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.school_id = ? AND sg.is_active = TRUE
@@ -198,6 +201,7 @@ func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID strin
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
+			&group.PlaintextInviteLink,
 			&group.HasPendingDeletion,
 		); err != nil {
 			return nil, err
@@ -215,7 +219,7 @@ func (r *SignalGroupRepository) ListBySchool(ctx context.Context, schoolID strin
 func (r *SignalGroupRepository) ListByDistrict(ctx context.Context, districtID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active, sg.plaintext_invite_link,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.district_id = ? AND sg.is_active = TRUE
@@ -244,6 +248,7 @@ func (r *SignalGroupRepository) ListByDistrict(ctx context.Context, districtID s
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
+			&group.PlaintextInviteLink,
 			&group.HasPendingDeletion,
 		); err != nil {
 			return nil, err
@@ -293,7 +298,7 @@ func (r *SignalGroupRepository) CountByDistrictForUpdate(ctx context.Context, tx
 func (r *SignalGroupRepository) ListByOwnerGroup(ctx context.Context, ownerGroupID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active, sg.plaintext_invite_link,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.owner_group_id = ? AND sg.is_active = TRUE
@@ -322,6 +327,7 @@ func (r *SignalGroupRepository) ListByOwnerGroup(ctx context.Context, ownerGroup
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
+			&group.PlaintextInviteLink,
 			&group.HasPendingDeletion,
 		); err != nil {
 			return nil, err
@@ -371,7 +377,7 @@ func (r *SignalGroupRepository) CountByConnectionForUpdate(ctx context.Context, 
 func (r *SignalGroupRepository) ListByConnection(ctx context.Context, connectionID string) ([]*models.SignalGroup, error) {
 	query := `
 		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
-			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active,
+			sg.description, sg.access_tier, sg.created_by, sg.created_at, sg.is_active, sg.plaintext_invite_link,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.connection_id = ? AND sg.is_active = TRUE
@@ -400,6 +406,7 @@ func (r *SignalGroupRepository) ListByConnection(ctx context.Context, connection
 			&group.CreatedBy,
 			&group.CreatedAt,
 			&group.IsActive,
+			&group.PlaintextInviteLink,
 			&group.HasPendingDeletion,
 		); err != nil {
 			return nil, err
