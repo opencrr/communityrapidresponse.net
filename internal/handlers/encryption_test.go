@@ -1594,6 +1594,96 @@ func TestEncryptionHandler_GetPublicKeys_SuperuserBypassesMembershipConnection(t
 	}
 }
 
+func TestEncryptionHandler_GetPublicKeys_ByConnectionAdminOnly(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check: IsUserInConnection
+	suite.keyMock.ExpectQuery("SELECT EXISTS").
+		WithArgs("user-123", "conn-abc").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// For admin_only access level, only admin members should be returned
+	columns := []string{"user_id", "public_key"}
+	suite.keyMock.ExpectQuery("SELECT DISTINCT ek.user_id, ek.public_key FROM user_encryption_keys").
+		WithArgs("conn-abc").
+		WillReturnRows(
+			sqlmock.NewRows(columns).
+				AddRow("admin-user-1", "pub-key-1").
+				AddRow("admin-user-2", "pub-key-2"),
+		)
+
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-abc&access_level=admin_only", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 admin keys, got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestEncryptionHandler_GetPublicKeys_ConnectionAllMembers(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Superuser check via isSuperuserFromDB
+	expectUserGetByID(suite.keyMock, "user-123", false)
+
+	// Membership check: IsUserInConnection
+	suite.keyMock.ExpectQuery("SELECT EXISTS").
+		WithArgs("user-123", "conn-abc").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// For all_members (the default), all members should be returned including non-admins
+	columns := []string{"user_id", "public_key"}
+	suite.keyMock.ExpectQuery("SELECT DISTINCT ek.user_id, ek.public_key FROM user_encryption_keys").
+		WithArgs("conn-abc").
+		WillReturnRows(
+			sqlmock.NewRows(columns).
+				AddRow("admin-user-1", "pub-key-1").
+				AddRow("member-user-2", "pub-key-2").
+				AddRow("member-user-3", "pub-key-3"),
+		)
+
+	// Test without access_level parameter (should default to all_members)
+	req := authenticatedRequest(http.MethodGet, "/api/v1/encryption/public-keys?connection_id=conn-abc", nil, testClaims())
+	recorder := httptest.NewRecorder()
+
+	suite.handler.GetPublicKeys(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	body := parseResponseBody(t, recorder)
+	keys, ok := body["keys"].([]interface{})
+	if !ok {
+		t.Fatalf("expected keys to be an array, got %T", body["keys"])
+	}
+	if len(keys) != 3 {
+		t.Errorf("expected 3 keys (all members), got %d", len(keys))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet mock expectations: %v", err)
+	}
+}
+
 // signalGroupColumns is the column list returned by SignalGroupRepository.GetByID.
 var signalGroupColumns = []string{
 	"id", "region_id", "school_id", "district_id", "owner_group_id", "connection_id",

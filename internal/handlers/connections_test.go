@@ -647,17 +647,38 @@ func TestConnectionHandler_ProposeSignalChat_AdminOnly_RequiresEncryption(t *tes
 	s.handler.ProposeSignalChat(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("Expected 400 for missing encryption fields, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf("Expected 400 for admin_only without encryption fields, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	// Test: admin_only with encryption fields should succeed
+	// Test: admin_only with incomplete encryption fields should fail
 	payload := "encrypted_payload_data"
+	body, _ = json.Marshal(models.ProposeConnectionChatRequest{
+		GroupName:        "Admin Chat 2",
+		Description:      "An admin chat",
+		AccessLevel:      "admin_only",
+		EncryptedPayload: &payload,
+	})
+	req = httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/signal-group-proposals?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr = httptest.NewRecorder()
+	s.handler.ProposeSignalChat(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for incomplete encryption fields, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Test: admin_only with complete encryption fields should succeed
 	iv := "initialization_vector"
 	wrappedKeys := []models.WrappedKeyEntry{
 		{UserID: "user1", WrappedDEK: "wrapped_dek_1"},
 	}
 	body, _ = json.Marshal(models.ProposeConnectionChatRequest{
-		GroupName:        "Admin Chat",
+		GroupName:        "Admin Chat 3",
 		Description:      "An admin chat",
 		AccessLevel:      "admin_only",
 		EncryptedPayload: &payload,
@@ -675,7 +696,30 @@ func TestConnectionHandler_ProposeSignalChat_AdminOnly_RequiresEncryption(t *tes
 	s.handler.ProposeSignalChat(rr, req)
 
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("Expected 201 with encryption fields, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf("Expected 201 with complete encryption fields, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Test: all_members with encryption fields should fail
+	body, _ = json.Marshal(models.ProposeConnectionChatRequest{
+		GroupName:        "All Members Chat",
+		Description:      "All members chat",
+		AccessLevel:      "all_members",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
+	})
+	req = httptest.NewRequest(http.MethodPost,
+		"/api/v1/connections/"+connectionID+"/signal-group-proposals?id="+connectionID+"&proposer_group_id="+groupA.ID,
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(user))
+	req = req.WithContext(ctx)
+
+	rr = httptest.NewRecorder()
+	s.handler.ProposeSignalChat(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected 400 for all_members with encryption fields, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -500,20 +500,20 @@ func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// For admin_only access level (restricted tier), encryption fields are required
+	// Validate encrypted bundle for restricted tiers (admin_only)
 	if req.AccessLevel == string(models.ConnectionAccessLevelAdminOnly) {
-		if req.EncryptedPayload == nil || *req.EncryptedPayload == "" {
-			writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload is required for admin_only access level")
+		// Require encrypted bundle for admin_only
+		hasPayload := req.EncryptedPayload != nil && *req.EncryptedPayload != ""
+		hasIV := req.EncryptionIV != nil && *req.EncryptionIV != ""
+		hasKeys := len(req.WrappedKeys) > 0
+
+		if !hasPayload || !hasIV || !hasKeys {
+			writeError(w, http.StatusBadRequest, "validation_error", "encrypted_payload, encryption_iv, and wrapped_keys are required for admin_only access level")
 			return
 		}
-		if req.EncryptionIV == nil || *req.EncryptionIV == "" {
-			writeError(w, http.StatusBadRequest, "validation_error", "encryption_iv is required for admin_only access level")
-			return
-		}
-		if len(req.WrappedKeys) == 0 {
-			writeError(w, http.StatusBadRequest, "validation_error", "wrapped_keys is required for admin_only access level")
-			return
-		}
+	} else if req.EncryptedPayload != nil || req.EncryptionIV != nil || len(req.WrappedKeys) > 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "encrypted bundle is not allowed for all_members access level")
+		return
 	}
 
 	proposal, err := h.connectionRepo.ProposeSignalChat(r.Context(), connectionID, proposerGroupID, &req)
