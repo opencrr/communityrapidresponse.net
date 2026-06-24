@@ -55,10 +55,14 @@ export async function getGroupPublicKeys(groupId) {
 
 /**
  * Get public keys for members of a connection
- * GET /api/v1/encryption/public-keys?connection_id=X
+ * GET /api/v1/encryption/public-keys?connection_id=X[&access_level=admin_only|all_members]
  */
-export async function getConnectionPublicKeys(connectionId) {
-    return getPublicKeys({ connection_id: connectionId });
+export async function getConnectionPublicKeys(connectionId, accessLevel) {
+    const params = { connection_id: connectionId };
+    if (accessLevel) {
+        params.access_level = accessLevel;
+    }
+    return getPublicKeys(params);
 }
 
 /**

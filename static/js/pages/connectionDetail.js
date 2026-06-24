@@ -436,7 +436,7 @@ async function handleProposeChatSubmit(connection) {
 
         if (accessLevel === 'admin_only') {
             try {
-                const publicKeysResponse = await getConnectionPublicKeys(connection.id);
+                const publicKeysResponse = await getConnectionPublicKeys(connection.id, accessLevel);
                 const memberKeys = publicKeysResponse.public_keys || [];
 
                 if (memberKeys.length === 0) {
