@@ -17,21 +17,21 @@ import (
 )
 
 var (
-	ErrGroupNotFound            = errors.New("group not found")
-	ErrInviteLinkNotFound       = errors.New("invite link not found")
-	ErrInviteLinkExpired        = errors.New("invite link expired")
-	ErrInviteLinkExhausted      = errors.New("invite link max uses reached")
-	ErrInvitationNotFound       = errors.New("invitation not found")
-	ErrInvitationAlreadyPending = errors.New("invitation already pending")
-	ErrInvitationExpired        = errors.New("invitation expired")
-	ErrGroupAlreadyMember       = errors.New("user is already a member")
-	ErrUserBlockedFromGroup     = errors.New("user is blocked from this group")
-	ErrInviterLeft              = errors.New("inviter is no longer a member of the group")
-	ErrNotTrustedOrAdmin        = errors.New("user is not trusted or admin in this group")
-	ErrSelfVouch                = errors.New("cannot vouch for yourself")
-	ErrResourceNotFound         = errors.New("resource not found")
-	ErrCannotBlockSelf          = errors.New("cannot block own group")
-	ErrGroupAlreadyBlocked      = errors.New("group already blocked")
+	ErrGroupNotFound             = errors.New("group not found")
+	ErrInviteLinkNotFound        = errors.New("invite link not found")
+	ErrInviteLinkExpired         = errors.New("invite link expired")
+	ErrInviteLinkExhausted       = errors.New("invite link max uses reached")
+	ErrInvitationNotFound        = errors.New("invitation not found")
+	ErrInvitationAlreadyPending  = errors.New("invitation already pending")
+	ErrInvitationExpired         = errors.New("invitation expired")
+	ErrGroupAlreadyMember        = errors.New("user is already a member")
+	ErrUserBlockedFromGroup      = errors.New("user is blocked from this group")
+	ErrInviterLeft               = errors.New("inviter is no longer a member of the group")
+	ErrNotTrustedOrAdmin         = errors.New("user is not trusted or admin in this group")
+	ErrSelfVouch                 = errors.New("cannot vouch for yourself")
+	ErrResourceNotFound          = errors.New("resource not found")
+	ErrCannotBlockSelf           = errors.New("cannot block own group")
+	ErrGroupAlreadyBlocked       = errors.New("group already blocked")
 	ErrTopicBoardPostingNotFound = errors.New("topic board posting not found")
 )
 
@@ -1464,6 +1464,26 @@ func (r *GroupRepository) CreateTrustVouch(ctx context.Context, groupID, voucher
 
 	_ = promoted // available for future use (e.g., returning promotion status)
 	return err
+}
+
+// GroupTierMembershipPredicate returns a SQL WHERE clause fragment for filtering group members
+// who meet the access tier requirement. Returns error for open tier (not encrypted).
+// Uses 'gm' as the group_members table alias and assumes users table is available in the query.
+func GroupTierMembershipPredicate(tier models.AccessTier) (string, error) {
+	switch tier {
+	case models.AccessTierResident:
+		return "EXISTS (SELECT 1 FROM users WHERE users.id = gm.user_id AND users.postcard_verified = TRUE)", nil
+	case models.AccessTierMember:
+		return "gm.user_id IS NOT NULL", nil
+	case models.AccessTierTrusted:
+		return "(gm.trust_level = 'trusted' OR gm.is_admin = TRUE)", nil
+	case models.AccessTierAdminOnly:
+		return "gm.is_admin = TRUE", nil
+	case models.AccessTierOpen:
+		return "", fmt.Errorf("open tier does not require membership predicate (not encrypted)")
+	default:
+		return "", fmt.Errorf("unknown access tier: %s", tier)
+	}
 }
 
 // GetTrustVouchCount returns the number of trust vouches a user has received in a group.

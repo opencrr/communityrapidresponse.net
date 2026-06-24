@@ -231,4 +231,3 @@ func (r *MeshtasticChannelRepository) scanChannels(ctx context.Context, query st
 
 	return channels, nil
 }
-
