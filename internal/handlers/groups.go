@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1324,24 +1325,28 @@ func (h *GroupHandler) CreateSignalGroup(w http.ResponseWriter, r *http.Request)
 		PlaintextInviteLink: req.InviteLink,
 	}
 
-	if err := h.signalGroupRepo.CreateForOwnerGroup(r.Context(), signalGroup); err != nil {
+	if err := h.db.Transaction(r.Context(), func(tx *sql.Tx) error {
+		if err := h.signalGroupRepo.CreateForOwnerGroupTx(r.Context(), tx, signalGroup); err != nil {
+			return err
+		}
+
+		if accessTier != models.AccessTierOpen {
+			secretRepo := database.NewEncryptedSecretRepository(h.db)
+			secret := &models.EncryptedSecret{
+				SecretType:       models.SecretTypeSignalInvite,
+				SignalGroupID:    &signalGroup.ID,
+				EncryptedPayload: *req.EncryptedPayload,
+				EncryptionIV:     *req.EncryptionIV,
+				UpdatedBy:        claims.UserID,
+			}
+			if createErr := secretRepo.CreateTx(r.Context(), tx, secret, req.WrappedKeys); createErr != nil {
+				return createErr
+			}
+		}
+		return nil
+	}); err != nil {
 		writeServerError(w, r, err, "Failed to create signal group", "group", "create_signal_group")
 		return
-	}
-
-	if accessTier != models.AccessTierOpen {
-		secretRepo := database.NewEncryptedSecretRepository(h.db)
-		secret := &models.EncryptedSecret{
-			SecretType:       models.SecretTypeSignalInvite,
-			SignalGroupID:    &signalGroup.ID,
-			EncryptedPayload: *req.EncryptedPayload,
-			EncryptionIV:     *req.EncryptionIV,
-			UpdatedBy:        claims.UserID,
-		}
-		if createErr := secretRepo.Create(r.Context(), secret, req.WrappedKeys); createErr != nil {
-			writeServerError(w, r, createErr, "Failed to create encrypted secret", "group", "create_signal_group")
-			return
-		}
 	}
 
 	// Audit log

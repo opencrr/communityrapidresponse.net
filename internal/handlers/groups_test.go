@@ -2226,6 +2226,26 @@ func TestGroupHandler_CreateSignalGroup_RestrictedTierWithValidBundle(t *testing
 	if respBody["access_tier"] != "trusted" {
 		t.Errorf("Expected access_tier=trusted, got %v", respBody["access_tier"])
 	}
+
+	sgID, _ := respBody["id"].(string)
+	secretRepo := database.NewEncryptedSecretRepository(suite.db)
+	secret, err := secretRepo.GetBySignalGroupID(ctx, sgID)
+	if err != nil {
+		t.Fatalf("GetBySignalGroupID failed: %v", err)
+	}
+	if secret.EncryptedPayload != payload {
+		t.Errorf("Expected encrypted_payload %q, got %q", payload, secret.EncryptedPayload)
+	}
+	if secret.EncryptionIV != iv {
+		t.Errorf("Expected encryption_iv %q, got %q", iv, secret.EncryptionIV)
+	}
+	wrappedDEK, err := secretRepo.GetWrappedDEK(ctx, secret.ID, user.ID)
+	if err != nil {
+		t.Fatalf("GetWrappedDEK failed: %v", err)
+	}
+	if wrappedDEK != wrappedKeys[0].WrappedDEK {
+		t.Errorf("Expected wrapped_dek %q, got %q", wrappedKeys[0].WrappedDEK, wrappedDEK)
+	}
 }
 
 func TestGroupHandler_CreateSignalGroup_RestrictedTierMissingBundle(t *testing.T) {

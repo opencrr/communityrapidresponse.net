@@ -145,8 +145,8 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 
 	query := `
 		INSERT INTO signal_groups
-		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, created_by, created_at, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, plaintext_invite_link, created_by, created_at, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := tx.ExecContext(ctx, query,
@@ -159,6 +159,7 @@ func (r *SignalGroupRepository) CreateGroupTx(ctx context.Context, tx *sql.Tx, g
 		group.GroupName,
 		group.Description,
 		group.AccessTier,
+		group.PlaintextInviteLink,
 		group.CreatedBy,
 		group.CreatedAt,
 		group.IsActive,
@@ -434,4 +435,18 @@ func (r *SignalGroupRepository) CreateForOwnerGroup(ctx context.Context, group *
 	group.ConnectionID = nil
 
 	return r.Create(ctx, group)
+}
+
+// CreateForOwnerGroupTx creates a signal group owned by a group within a transaction.
+func (r *SignalGroupRepository) CreateForOwnerGroupTx(ctx context.Context, tx *sql.Tx, group *models.SignalGroup) error {
+	if group.OwnerGroupID == nil || *group.OwnerGroupID == "" {
+		return errors.New("owner_group_id is required")
+	}
+	// Ensure the other owner fields are nil for the 5-way XOR constraint
+	group.RegionID = nil
+	group.SchoolID = nil
+	group.DistrictID = nil
+	group.ConnectionID = nil
+
+	return r.CreateGroupTx(ctx, tx, group)
 }
