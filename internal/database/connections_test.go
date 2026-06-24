@@ -624,6 +624,7 @@ func TestGroupRepository_BlockGroup_EvictsSharedConnection(t *testing.T) {
 func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	db := testDB(t)
 	repo := NewConnectionRepository(db)
+	secretRepo := NewEncryptedSecretRepository(db)
 	ctx := context.Background()
 
 	userID := createConnectionTestUser(t, db, "vote_chat_adminonly1")
@@ -641,10 +642,18 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 		cleanupConnectionTest(t, db, []string{groupAID, groupBID}, []string{userID}, []string{regionID}, []string{connectionID})
 	})
 
-	// Propose an admin_only chat.
+	// Propose an admin_only chat with encryption fields.
+	payload := "encrypted_payload_data"
+	iv := "initialization_vector"
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: userID, WrappedDEK: "wrapped_dek_1"},
+	}
 	chatProposal, _ := repo.ProposeSignalChat(ctx, connectionID, groupAID, &models.ProposeConnectionChatRequest{
-		GroupName:   "Admin Only Chat",
-		AccessLevel: "admin_only",
+		GroupName:        "Admin Only Chat",
+		AccessLevel:      "admin_only",
+		EncryptedPayload: &payload,
+		EncryptionIV:     &iv,
+		WrappedKeys:      wrappedKeys,
 	})
 
 	result, err := repo.VoteOnChatProposal(ctx, chatProposal.ID, groupBID, true)
@@ -671,6 +680,31 @@ func TestConnectionRepository_VoteOnChatProposal_AdminOnlyTier(t *testing.T) {
 	}
 	if signalGroups[0].PlaintextInviteLink != nil {
 		t.Errorf("Expected plaintext_invite_link to be NULL for admin-only chat, got %v", signalGroups[0].PlaintextInviteLink)
+	}
+
+	// Verify that encrypted secrets were created for the admin_only chat
+	groupID := signalGroups[0].ID
+	secret, err := secretRepo.GetBySignalGroupID(ctx, groupID)
+	if err != nil {
+		t.Fatalf("GetBySignalGroupID failed: %v", err)
+	}
+	if secret.SecretType != models.SecretTypeSignalInvite {
+		t.Errorf("Expected secret type signal_invite, got %s", secret.SecretType)
+	}
+	if secret.EncryptedPayload != payload {
+		t.Errorf("Expected encrypted payload %q, got %q", payload, secret.EncryptedPayload)
+	}
+	if secret.EncryptionIV != iv {
+		t.Errorf("Expected encryption IV %q, got %q", iv, secret.EncryptionIV)
+	}
+
+	// Verify wrapped keys were created
+	wrappedDEK, err := secretRepo.GetWrappedDEK(ctx, secret.ID, userID)
+	if err != nil {
+		t.Fatalf("GetWrappedDEK failed: %v", err)
+	}
+	if wrappedDEK != "wrapped_dek_1" {
+		t.Errorf("Expected wrapped DEK %q, got %q", "wrapped_dek_1", wrappedDEK)
 	}
 }
 
