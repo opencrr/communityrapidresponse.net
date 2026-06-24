@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -663,10 +664,47 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 
 	// Non-admins only see all_members (open-tier) chats; admin_only chats are
 	// withheld unless the caller is an admin of a connected group.
-	filtered := make([]*models.SignalGroup, 0, len(groups))
+	type signalGroupResponse struct {
+		ID                  string    `json:"id"`
+		RegionID            *string   `json:"region_id,omitempty"`
+		SchoolID            *string   `json:"school_id,omitempty"`
+		DistrictID          *string   `json:"district_id,omitempty"`
+		OwnerGroupID        *string   `json:"owner_group_id,omitempty"`
+		ConnectionID        *string   `json:"connection_id,omitempty"`
+		RegionName          string    `json:"region_name,omitempty"`
+		SchoolName          string    `json:"school_name,omitempty"`
+		DistrictName        string    `json:"district_name,omitempty"`
+		GroupName           string    `json:"group_name"`
+		Description         *string   `json:"description,omitempty"`
+		CreatedAt           time.Time `json:"created_at"`
+		IsActive            bool      `json:"is_active"`
+		AccessTier          string    `json:"access_tier"`
+		PlaintextInviteLink *string   `json:"plaintext_invite_link,omitempty"`
+	}
+	filtered := make([]signalGroupResponse, 0, len(groups))
 	for _, g := range groups {
 		if isAdminOfAny || g.AccessTier != models.AccessTierAdminOnly {
-			filtered = append(filtered, g)
+			resp := signalGroupResponse{
+				ID:           g.ID,
+				RegionID:     g.RegionID,
+				SchoolID:     g.SchoolID,
+				DistrictID:   g.DistrictID,
+				OwnerGroupID: g.OwnerGroupID,
+				ConnectionID: g.ConnectionID,
+				RegionName:   g.RegionName,
+				SchoolName:   g.SchoolName,
+				DistrictName: g.DistrictName,
+				GroupName:    g.GroupName,
+				Description:  g.Description,
+				CreatedAt:    g.CreatedAt,
+				IsActive:     g.IsActive,
+				AccessTier:   string(g.AccessTier),
+			}
+			// Include plaintext_invite_link for open-tier chats
+			if g.AccessTier == models.AccessTierOpen {
+				resp.PlaintextInviteLink = g.PlaintextInviteLink
+			}
+			filtered = append(filtered, resp)
 		}
 	}
 

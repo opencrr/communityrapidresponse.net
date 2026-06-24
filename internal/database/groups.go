@@ -800,7 +800,7 @@ func generateInviteToken() (string, error) {
 // GetSignalGroups returns public signal group data for groups owned by this group.
 func (r *GroupRepository) GetSignalGroups(ctx context.Context, groupID string) ([]models.SignalGroupPublic, error) {
 	query := `
-		SELECT id, owner_group_id, group_name, description, access_tier, created_at,
+		SELECT id, owner_group_id, group_name, description, access_tier, created_at, plaintext_invite_link,
 			EXISTS (SELECT 1 FROM deletion_proposals WHERE asset_type = 'signal_group' AND asset_id = sg.id AND status = 'pending') AS has_pending_deletion
 		FROM signal_groups sg
 		WHERE sg.owner_group_id = ? AND sg.is_active = TRUE
@@ -818,7 +818,7 @@ func (r *GroupRepository) GetSignalGroups(ctx context.Context, groupID string) (
 		var sg models.SignalGroupPublic
 		if err := rows.Scan(
 			&sg.ID, &sg.OwnerGroupID, &sg.Name, &sg.Description,
-			&sg.AccessTier, &sg.CreatedAt, &sg.HasPendingDeletion,
+			&sg.AccessTier, &sg.CreatedAt, &sg.PlaintextInviteLink, &sg.HasPendingDeletion,
 		); err != nil {
 			return nil, err
 		}
