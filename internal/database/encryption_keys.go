@@ -179,6 +179,23 @@ func (r *EncryptionKeyRepository) GetPublicKeysForDistrict(ctx context.Context, 
 	return r.queryPublicKeys(ctx, query, districtID)
 }
 
+// GetPublicKeysForGroup retrieves public keys for entitled members of a group at a specific access tier
+func (r *EncryptionKeyRepository) GetPublicKeysForGroup(ctx context.Context, groupID string, tier models.AccessTier) ([]models.PublicKeyEntry, error) {
+	tierPredicate, err := GroupTierMembershipPredicate(tier)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT ek.user_id, ek.public_key
+		FROM user_encryption_keys ek
+		INNER JOIN group_members gm ON ek.user_id = gm.user_id
+		INNER JOIN users u ON ek.user_id = u.id
+		WHERE gm.group_id = ? AND ` + tierPredicate + ` AND u.is_superuser = FALSE
+	`
+	return r.queryPublicKeys(ctx, query, groupID)
+}
+
 // GetPublicKeysForConnection retrieves public keys for users eligible to access a connection chat.
 // level must be a models.ConnectionAccessLevel value (all_members or admin_only).
 func (r *EncryptionKeyRepository) GetPublicKeysForConnection(ctx context.Context, connID string, level string) ([]models.PublicKeyEntry, error) {
