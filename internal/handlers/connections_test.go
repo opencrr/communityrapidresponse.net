@@ -9,7 +9,9 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
 	"github.com/opencrr/communityrapidresponse.net/internal/middleware"
@@ -72,9 +74,10 @@ func setupConnectionTestSuite(t *testing.T) *ConnectionTestSuite {
 	regionRepo := database.NewRegionRepository(db)
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
-	connectionHandler := NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
+	connectionHandler := NewConnectionHandler(connectionRepo, groupRepo, auditRepo, encryptedSecretRepo, userRepo)
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	groupHandler := NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo, encryptedSecretRepo)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
@@ -1242,5 +1245,289 @@ func TestConnectionHandler_ListConnectionResources_NonMemberRejected(t *testing.
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("Non-member expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// --- Get Connection Chat Secret Tests ---
+
+func (s *ConnectionTestSuite) createConnectionWithEncryptedSignalChat(connID, groupID, creatorID string, accessTier models.AccessTier) (*models.SignalGroup, *models.EncryptedSecret) {
+	ctx := context.Background()
+
+	// Create signal group for connection via direct SQL
+	sgID := uuid.New().String()
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO signal_groups (id, region_id, school_id, district_id, owner_group_id, connection_id, group_name, description, access_tier, plaintext_invite_link, created_by, created_at, is_active)
+		 VALUES (?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?, NULL, NULL, ?, TRUE)`,
+		sgID, connID, "Encrypted Connection Chat", string(accessTier), now)
+	if err != nil {
+		s.t.Fatalf("Failed to create connection signal group: %v", err)
+	}
+
+	sg := &models.SignalGroup{
+		ID:           sgID,
+		ConnectionID: &connID,
+		GroupName:    "Encrypted Connection Chat",
+		AccessTier:   accessTier,
+		CreatedAt:    now,
+		IsActive:     true,
+	}
+
+	// Create encrypted secret
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(s.db)
+	secret := &models.EncryptedSecret{
+		SecretType:       "connection_chat_invite",
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "test_payload_encrypted",
+		EncryptionIV:     "test_iv",
+		UpdatedBy:        creatorID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: creatorID, WrappedDEK: "test_wrapped_dek_for_creator"},
+	}
+	if err := encryptedSecretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		s.t.Fatalf("Failed to create encrypted secret: %v", err)
+	}
+	return sg, secret
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_EntitledMember(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	adminA := s.createTestUser("conn_chat_secret_adminA", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := s.createTestUser("conn_chat_secret_adminB", models.TierVouched, false)
+	adminB.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 1", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B", adminB.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	sg, secret := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierMember)
+
+	ctx := context.Background()
+	// Add wrapped DEK for adminB (connected via groupB; adminA already has one as the creator)
+	_, _ = s.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, adminB.ID, "test_wrapped_dek_for_adminB", time.Now().UTC())
+
+	defer s.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminB)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var result models.EncryptedSecretResponse
+	_ = json.NewDecoder(rr.Body).Decode(&result)
+	if result.SecretID != secret.ID {
+		t.Errorf("Expected SecretID %s, got %s", secret.ID, result.SecretID)
+	}
+	if result.EncryptedPayload != "test_payload_encrypted" {
+		t.Errorf("Expected encrypted payload, got %s", result.EncryptedPayload)
+	}
+	if result.WrappedDEK != "test_wrapped_dek_for_adminB" {
+		t.Errorf("Expected wrapped DEK for adminB, got %s", result.WrappedDEK)
+	}
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_UnderTierCaller(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	adminA := s.createTestUser("conn_chat_secret_adminA2", models.TierVouched, false)
+	adminA.VouchVerified = true
+	// adminC owns groupB so that memberB can be added as a non-admin member of the connection
+	adminC := s.createTestUser("conn_chat_secret_adminC2", models.TierVouched, false)
+	adminC.VouchVerified = true
+	memberB := s.createTestUser("conn_chat_secret_memberB", models.TierVouched, false)
+	memberB.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 2", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A2", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B2", adminC.ID, []string{region.ID})
+	_ = s.groupRepo.AddMember(context.Background(), groupB.ID, memberB.ID, false, false)
+
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	// Create admin-only chat
+	sg, secret := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierAdminOnly)
+
+	ctx := context.Background()
+	// Add wrapped DEK for memberB (but they're not an admin of any connected group)
+	_, _ = s.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, memberB.ID, "test_wrapped_dek_for_memberB", time.Now().UTC())
+
+	defer s.cleanup([]string{adminA.ID, adminC.ID, memberB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(memberB)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for under-tier caller, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_NonMember(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	adminA := s.createTestUser("conn_chat_secret_adminA3", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := s.createTestUser("conn_chat_secret_adminB3", models.TierVouched, false)
+	adminB.VouchVerified = true
+	outsider := s.createTestUser("conn_chat_secret_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 3", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A3", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B3", adminB.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	sg, _ := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierOpen)
+
+	defer s.cleanup([]string{adminA.ID, adminB.ID, outsider.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(outsider)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for non-member, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_SignalGroupNotInConnection(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	adminA := s.createTestUser("conn_chat_secret_adminA4", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := s.createTestUser("conn_chat_secret_adminB4", models.TierVouched, false)
+	adminB.VouchVerified = true
+	adminC := s.createTestUser("conn_chat_secret_adminC", models.TierVouched, false)
+	adminC.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 4", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A4", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B4", adminB.ID, []string{region.ID})
+	groupC := s.createTestGroup("Group Chat Secret C", adminC.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	// Create signal group for a different connection
+	connectionID2 := s.formConnection(groupB.ID, groupC.ID)
+	sg, _ := s.createConnectionWithEncryptedSignalChat(connectionID2, groupB.ID, adminB.ID, models.AccessTierOpen)
+
+	defer s.cleanup([]string{adminA.ID, adminB.ID, adminC.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID, groupC.ID}, []string{connectionID, connectionID2})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminA)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 for signal group not in connection, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_NoWrappedDEK(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	adminA := s.createTestUser("conn_chat_secret_adminA5", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := s.createTestUser("conn_chat_secret_adminB5", models.TierVouched, false)
+	adminB.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 5", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A5", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B5", adminB.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	sg, _ := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierMember)
+
+	// Do NOT add wrapped DEK for adminB
+
+	defer s.cleanup([]string{adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(adminB)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for member with no wrapped DEK, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionHandler_GetConnectionChatSecret_SuperuserBypass(t *testing.T) {
+	s := setupConnectionTestSuite(t)
+
+	superuser := s.createTestUser("conn_chat_secret_superuser", models.TierUnverified, true)
+	adminA := s.createTestUser("conn_chat_secret_adminA6", models.TierVouched, false)
+	adminA.VouchVerified = true
+	adminB := s.createTestUser("conn_chat_secret_adminB6", models.TierVouched, false)
+	adminB.VouchVerified = true
+	region := s.createTestRegion("Conn Chat Secret Region 6", models.RegionTypeState, nil)
+
+	groupA := s.createTestGroup("Group Chat Secret A6", adminA.ID, []string{region.ID})
+	groupB := s.createTestGroup("Group Chat Secret B6", adminB.ID, []string{region.ID})
+	connectionID := s.formConnection(groupA.ID, groupB.ID)
+
+	sg, secret := s.createConnectionWithEncryptedSignalChat(connectionID, groupA.ID, adminA.ID, models.AccessTierAdminOnly)
+
+	ctx := context.Background()
+	// Add wrapped DEK for superuser even though they're not in the connection
+	_, _ = s.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, superuser.ID, "test_wrapped_dek_for_superuser", time.Now().UTC())
+
+	defer s.cleanup([]string{superuser.ID, adminA.ID, adminB.ID}, []string{region.ID}, []string{groupA.ID, groupB.ID}, []string{connectionID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+connectionID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := req.URL.Query()
+	q.Set("id", connectionID)
+	q.Set("sgid", sg.ID)
+	req.URL.RawQuery = q.Encode()
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, s.claimsForUser(superuser)))
+
+	rr := httptest.NewRecorder()
+	s.handler.GetConnectionChatSecret(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for superuser bypass, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var result models.EncryptedSecretResponse
+	_ = json.NewDecoder(rr.Body).Decode(&result)
+	if result.SecretID != secret.ID {
+		t.Errorf("Expected SecretID %s, got %s", secret.ID, result.SecretID)
 	}
 }

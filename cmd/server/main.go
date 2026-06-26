@@ -228,7 +228,7 @@ func main() {
 
 	// Initialize group repository and handler
 	groupRepo := database.NewGroupRepository(db)
-	groupHandler := handlers.NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo, encryptedSecretRepo)
 	groupHandler.SetRateLimiter(rateLimiter)
 
 	// Initialize school handler
@@ -238,7 +238,7 @@ func main() {
 
 	// Initialize connection repository and handler
 	connectionRepo := database.NewConnectionRepository(db)
-	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo)
+	connectionHandler := handlers.NewConnectionHandler(connectionRepo, groupRepo, auditRepo, encryptedSecretRepo, userRepo)
 
 	// Initialize encryption handler
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, groupRepo, signalGroupRepo, connectionRepo)

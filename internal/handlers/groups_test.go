@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
@@ -72,7 +73,8 @@ func setupGroupTestSuite(t *testing.T) *GroupTestSuite {
 	userRepo := database.NewUserRepository(db)
 	auditRepo := database.NewAuditRepository(db)
 	meshtasticChannelRepo := database.NewMeshtasticChannelRepository(db)
-	handler := NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(db)
+	handler := NewGroupHandler(db, groupRepo, signalGroupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo, encryptedSecretRepo)
 
 	jwtConfig := &config.JWTConfig{
 		Secret:          "test_secret_key_at_least_32_characters_long",
@@ -4338,5 +4340,272 @@ func TestGroupHandler_ListMembers_AddressVerifiedVisibleToAdmin(t *testing.T) {
 		if !m.AddressVerified {
 			t.Errorf("Expected address_verified=true for admin view of user %s, got false", m.Username)
 		}
+	}
+}
+
+// --- Get Signal Group Secret Tests ---
+
+func (s *GroupTestSuite) createSignalGroupWithEncryptedSecret(groupID, creatorID string, accessTier models.AccessTier) (*models.SignalGroup, *models.EncryptedSecret) {
+	ctx := context.Background()
+	sg := &models.SignalGroup{
+		OwnerGroupID: &groupID,
+		GroupName:    "Encrypted SG",
+		AccessTier:   accessTier,
+		CreatedBy:    &creatorID,
+	}
+	if err := s.signalGroupRepo.CreateForOwnerGroup(ctx, sg); err != nil {
+		s.t.Fatalf("Failed to create signal group: %v", err)
+	}
+
+	encryptedSecretRepo := database.NewEncryptedSecretRepository(s.db)
+	secret := &models.EncryptedSecret{
+		SecretType:       "signal_group_invite",
+		SignalGroupID:    &sg.ID,
+		EncryptedPayload: "test_payload_encrypted",
+		EncryptionIV:     "test_iv",
+		UpdatedBy:        creatorID,
+	}
+	wrappedKeys := []models.WrappedKeyEntry{
+		{UserID: creatorID, WrappedDEK: "test_wrapped_dek_for_creator"},
+	}
+	if err := encryptedSecretRepo.Create(ctx, secret, wrappedKeys); err != nil {
+		s.t.Fatalf("Failed to create encrypted secret: %v", err)
+	}
+	return sg, secret
+}
+
+func TestGroupHandler_GetSignalGroupSecret_EntitledMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_secret_admin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpsg_secret_member", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion1", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	_ = suite.groupRepo.AddMember(ctx, groupID, member.ID, false, false)
+
+	sg, secret := suite.createSignalGroupWithEncryptedSecret(groupID, admin.ID, models.AccessTierMember)
+
+	// Add wrapped DEK for member
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, member.ID, "test_wrapped_dek_for_member", time.Now().UTC())
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(member)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result models.EncryptedSecretResponse
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	if result.SecretID != secret.ID {
+		t.Errorf("Expected SecretID %s, got %s", secret.ID, result.SecretID)
+	}
+	if result.EncryptedPayload != "test_payload_encrypted" {
+		t.Errorf("Expected encrypted payload, got %s", result.EncryptedPayload)
+	}
+	if result.WrappedDEK != "test_wrapped_dek_for_member" {
+		t.Errorf("Expected wrapped DEK for member, got %s", result.WrappedDEK)
+	}
+}
+
+func TestGroupHandler_GetSignalGroupSecret_UnderTierCaller(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_secret_admin2", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpsg_secret_member2", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion2", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	_ = suite.groupRepo.AddMember(ctx, groupID, member.ID, false, false)
+
+	sg, secret := suite.createSignalGroupWithEncryptedSecret(groupID, admin.ID, models.AccessTierAdminOnly)
+
+	// Add wrapped DEK for member (but they're not an admin)
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, member.ID, "test_wrapped_dek_for_member", time.Now().UTC())
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(member)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for under-tier caller, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_GetSignalGroupSecret_NonMember(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_secret_admin3", models.TierVouched, false)
+	admin.VouchVerified = true
+	outsider := suite.createTestUser("grpsg_secret_outsider", models.TierVouched, false)
+	outsider.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion3", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, outsider.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	sg, _ := suite.createSignalGroupWithEncryptedSecret(groupID, admin.ID, models.AccessTierOpen)
+
+	defer suite.cleanup([]string{admin.ID, outsider.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(outsider)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for non-member, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_GetSignalGroupSecret_UnknownSignalGroupID(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	user := suite.createTestUser("grpsg_secret_unknown", models.TierVouched, false)
+	user.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion4", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, user.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(user, region)
+
+	defer suite.cleanup([]string{user.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(user)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/unknown-sg-id/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", "unknown-sg-id")
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 for unknown signal group, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_GetSignalGroupSecret_NoWrappedDEK(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpsg_secret_admin4", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpsg_secret_member4", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion5", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	_ = suite.groupRepo.AddMember(ctx, groupID, member.ID, false, false)
+
+	sg, _ := suite.createSignalGroupWithEncryptedSecret(groupID, admin.ID, models.AccessTierMember)
+
+	// Do NOT add wrapped DEK for member
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(member)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for member with no wrapped DEK, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGroupHandler_GetSignalGroupSecret_SuperuserBypass(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	superuser := suite.createTestUser("grpsg_secret_superuser", models.TierUnverified, true)
+	admin := suite.createTestUser("grpsg_secret_admin5", models.TierVouched, false)
+	admin.VouchVerified = true
+	region := suite.createTestRegion("GrpSGSecretRegion6", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, true)
+
+	groupID := suite.createActiveGroupForSignalTests(admin, region)
+	sg, secret := suite.createSignalGroupWithEncryptedSecret(groupID, admin.ID, models.AccessTierAdminOnly)
+
+	// Add wrapped DEK for superuser even though they're not in the group
+	_, _ = suite.db.ExecContext(ctx, "INSERT INTO encrypted_secret_keys (secret_id, user_id, wrapped_dek, created_at) VALUES (?, ?, ?, ?)",
+		secret.ID, superuser.ID, "test_wrapped_dek_for_superuser", time.Now().UTC())
+
+	defer suite.cleanup([]string{superuser.ID, admin.ID}, []string{region.ID}, []string{groupID})
+
+	claims := suite.claimsForUser(superuser)
+	httpReq := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sg.ID+"/secret", nil)
+	q := httpReq.URL.Query()
+	q.Set("id", sg.ID)
+	httpReq.URL.RawQuery = q.Encode()
+	ctx = middleware.ContextWithUser(httpReq.Context(), claims)
+	httpReq = httpReq.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.GetSignalGroupSecret(rec, httpReq)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for superuser bypass, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result models.EncryptedSecretResponse
+	_ = json.NewDecoder(rec.Body).Decode(&result)
+	if result.SecretID != secret.ID {
+		t.Errorf("Expected SecretID %s, got %s", secret.ID, result.SecretID)
 	}
 }

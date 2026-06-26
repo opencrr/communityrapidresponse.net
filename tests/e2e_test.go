@@ -125,8 +125,8 @@ func SetupE2ETest(t *testing.T) *E2ETestSuite {
 
 	connectionRepo := database.NewConnectionRepository(db)
 	encryptionHandler := handlers.NewEncryptionHandler(encryptionKeyRepo, encryptedSecretRepo, regionRepo, schoolRepo, userRepo, communityGroupRepo, groupRepo, connectionRepo)
-	groupHandler := handlers.NewGroupHandler(db, communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo)
-	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo)
+	groupHandler := handlers.NewGroupHandler(db, communityGroupRepo, groupRepo, meshtasticChannelRepo, regionRepo, userRepo, auditRepo, encryptedSecretRepo)
+	connectionHandler := handlers.NewConnectionHandler(connectionRepo, communityGroupRepo, auditRepo, encryptedSecretRepo, userRepo)
 
 	// Create router (rate limiting disabled for tests)
 	router := handlers.NewRouter(
