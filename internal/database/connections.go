@@ -1247,6 +1247,7 @@ func (r *ConnectionRepository) ListConnectionSignalGroupsWithSecrets(ctx context
 		// Include encrypted secret if present
 		if secretID.Valid && encPayload.Valid && encIV.Valid && wrappedDEK.Valid {
 			group.EncryptedSecret = &models.EncryptedSecretResponse{
+				SecretID:         secretID.String,
 				EncryptedPayload: encPayload.String,
 				EncryptionIV:     encIV.String,
 				WrappedDEK:       wrappedDEK.String,
