@@ -678,7 +678,7 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		return
 	}
 
-	groups, err := h.connectionRepo.ListConnectionSignalGroups(r.Context(), connectionID)
+	groups, err := h.connectionRepo.ListConnectionSignalGroupsWithSecrets(r.Context(), connectionID, claims.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to list signal groups", "connection", "list_signal_groups")
 		return
@@ -687,44 +687,49 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 	// Non-admins only see all_members (open-tier) chats; admin_only chats are
 	// withheld unless the caller is an admin of a connected group.
 	type signalGroupResponse struct {
-		ID                  string    `json:"id"`
-		RegionID            *string   `json:"region_id,omitempty"`
-		SchoolID            *string   `json:"school_id,omitempty"`
-		DistrictID          *string   `json:"district_id,omitempty"`
-		OwnerGroupID        *string   `json:"owner_group_id,omitempty"`
-		ConnectionID        *string   `json:"connection_id,omitempty"`
-		RegionName          string    `json:"region_name,omitempty"`
-		SchoolName          string    `json:"school_name,omitempty"`
-		DistrictName        string    `json:"district_name,omitempty"`
-		GroupName           string    `json:"group_name"`
-		Description         *string   `json:"description,omitempty"`
-		CreatedAt           time.Time `json:"created_at"`
-		IsActive            bool      `json:"is_active"`
-		AccessTier          string    `json:"access_tier"`
-		PlaintextInviteLink *string   `json:"plaintext_invite_link,omitempty"`
+		ID                  string                       `json:"id"`
+		RegionID            *string                      `json:"region_id,omitempty"`
+		SchoolID            *string                      `json:"school_id,omitempty"`
+		DistrictID          *string                      `json:"district_id,omitempty"`
+		OwnerGroupID        *string                      `json:"owner_group_id,omitempty"`
+		ConnectionID        *string                      `json:"connection_id,omitempty"`
+		RegionName          string                       `json:"region_name,omitempty"`
+		SchoolName          string                       `json:"school_name,omitempty"`
+		DistrictName        string                       `json:"district_name,omitempty"`
+		GroupName           string                       `json:"group_name"`
+		Description         *string                      `json:"description,omitempty"`
+		CreatedAt           time.Time                    `json:"created_at"`
+		IsActive            bool                         `json:"is_active"`
+		AccessTier          string                       `json:"access_tier"`
+		PlaintextInviteLink *string                      `json:"plaintext_invite_link,omitempty"`
+		EncryptedSecret     *models.EncryptedSecretResponse `json:"encrypted_secret,omitempty"`
 	}
 	filtered := make([]signalGroupResponse, 0, len(groups))
 	for _, g := range groups {
-		if isAdminOfAny || g.AccessTier != models.AccessTierAdminOnly {
+		if isAdminOfAny || g.SignalGroupPublic.AccessTier != string(models.AccessTierAdminOnly) {
 			resp := signalGroupResponse{
-				ID:           g.ID,
-				RegionID:     g.RegionID,
-				SchoolID:     g.SchoolID,
-				DistrictID:   g.DistrictID,
-				OwnerGroupID: g.OwnerGroupID,
-				ConnectionID: g.ConnectionID,
-				RegionName:   g.RegionName,
-				SchoolName:   g.SchoolName,
-				DistrictName: g.DistrictName,
-				GroupName:    g.GroupName,
-				Description:  g.Description,
-				CreatedAt:    g.CreatedAt,
-				IsActive:     g.IsActive,
-				AccessTier:   string(g.AccessTier),
+				ID:           g.SignalGroupPublic.ID,
+				RegionID:     g.SignalGroupPublic.RegionID,
+				SchoolID:     g.SignalGroupPublic.SchoolID,
+				DistrictID:   g.SignalGroupPublic.DistrictID,
+				OwnerGroupID: g.SignalGroupPublic.OwnerGroupID,
+				ConnectionID: g.SignalGroupPublic.ConnectionID,
+				RegionName:   g.SignalGroupPublic.RegionName,
+				SchoolName:   g.SignalGroupPublic.SchoolName,
+				DistrictName: g.SignalGroupPublic.DistrictName,
+				GroupName:    g.SignalGroupPublic.Name,
+				Description:  g.SignalGroupPublic.Description,
+				CreatedAt:    g.SignalGroupPublic.CreatedAt,
+				IsActive:     true,
+				AccessTier:   g.SignalGroupPublic.AccessTier,
 			}
 			// Include plaintext_invite_link for open-tier chats
-			if g.AccessTier == models.AccessTierOpen {
-				resp.PlaintextInviteLink = g.PlaintextInviteLink
+			if g.SignalGroupPublic.AccessTier == string(models.AccessTierOpen) {
+				resp.PlaintextInviteLink = g.SignalGroupPublic.PlaintextInviteLink
+			}
+			// Include encrypted_secret for admin_only chats (admins only)
+			if isAdminOfAny && g.EncryptedSecret != nil {
+				resp.EncryptedSecret = g.EncryptedSecret
 			}
 			filtered = append(filtered, resp)
 		}

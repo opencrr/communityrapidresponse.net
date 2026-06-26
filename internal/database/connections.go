@@ -1193,6 +1193,72 @@ func (r *ConnectionRepository) ListConnectionSignalGroups(ctx context.Context, c
 	return groups, rows.Err()
 }
 
+// ListConnectionSignalGroupsWithSecrets returns signal groups with encrypted secrets for a connection.
+func (r *ConnectionRepository) ListConnectionSignalGroupsWithSecrets(ctx context.Context, connectionID string, userID string) ([]models.SignalGroupWithSecret, error) {
+	query := `
+		SELECT sg.id, sg.region_id, sg.school_id, sg.district_id, sg.owner_group_id, sg.connection_id, sg.group_name,
+			sg.description, sg.access_tier, sg.plaintext_invite_link, sg.created_by, sg.created_at, sg.is_active,
+			es.id, es.encrypted_payload, es.encryption_iv, esk.wrapped_dek
+		FROM signal_groups sg
+		LEFT JOIN encrypted_secrets es ON es.signal_group_id = sg.id
+		LEFT JOIN encrypted_secret_keys esk ON esk.secret_id = es.id AND esk.user_id = ?
+		WHERE sg.connection_id = ? AND sg.is_active = TRUE
+		ORDER BY sg.created_at
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list connection signal groups with secrets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var groups []models.SignalGroupWithSecret
+	for rows.Next() {
+		var secretID, encPayload, encIV, wrappedDEK sql.NullString
+		var createdBy sql.NullString
+		var isActive bool
+
+		group := models.SignalGroupWithSecret{
+			SignalGroupPublic: models.SignalGroupPublic{},
+			EncryptedSecret:   nil,
+		}
+
+		if scanErr := rows.Scan(
+			&group.SignalGroupPublic.ID,
+			&group.SignalGroupPublic.RegionID,
+			&group.SignalGroupPublic.SchoolID,
+			&group.SignalGroupPublic.DistrictID,
+			&group.SignalGroupPublic.OwnerGroupID,
+			&group.SignalGroupPublic.ConnectionID,
+			&group.SignalGroupPublic.Name,
+			&group.SignalGroupPublic.Description,
+			&group.SignalGroupPublic.AccessTier,
+			&group.SignalGroupPublic.PlaintextInviteLink,
+			&createdBy,
+			&group.SignalGroupPublic.CreatedAt,
+			&isActive,
+			&secretID,
+			&encPayload,
+			&encIV,
+			&wrappedDEK,
+		); scanErr != nil {
+			return nil, fmt.Errorf("scan signal group with secret: %w", scanErr)
+		}
+
+		// Include encrypted secret if present
+		if secretID.Valid && encPayload.Valid && encIV.Valid && wrappedDEK.Valid {
+			group.EncryptedSecret = &models.EncryptedSecretResponse{
+				EncryptedPayload: encPayload.String,
+				EncryptionIV:     encIV.String,
+				WrappedDEK:       wrappedDEK.String,
+			}
+		}
+
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
 // ListChatProposals returns pending chat proposals for a connection.
 func (r *ConnectionRepository) ListChatProposals(ctx context.Context, connectionID string) ([]models.ConnectionChatProposalWithVotes, error) {
 	proposalRows, err := r.db.QueryContext(ctx,
