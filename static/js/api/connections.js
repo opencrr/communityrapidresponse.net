@@ -25,6 +25,7 @@ export async function proposeSignalChat(connectionId, data) {
 export async function listChatProposals(connectionId) { return get(`/connections/${connectionId}/signal-group-proposals`); }
 export async function voteOnChatProposal(proposalId, data) { return post(`/connection-chat-proposals/${proposalId}/vote`, data); }
 export async function listConnectionSignalGroups(connectionId) { return get(`/connections/${connectionId}/signal-groups`); }
+export async function getConnectionChatSecret(connectionId, signalGroupId) { return get(`/connections/${connectionId}/signal-groups/${signalGroupId}/secret`); }
 
 // Connection resource sharing
 export async function shareResource(connectionId, data) { return post(`/connections/${connectionId}/shared-resources`, data); }
@@ -43,6 +44,7 @@ export default {
     listChatProposals,
     voteOnChatProposal,
     listConnectionSignalGroups,
+    getConnectionChatSecret,
     shareResource,
     unshareResource,
     listConnectionResources,

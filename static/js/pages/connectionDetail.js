@@ -7,6 +7,7 @@
 import {
     getConnection,
     listConnectionSignalGroups,
+    getConnectionChatSecret,
     listConnectionResources,
     listChatProposals,
     inviteToConnection,
@@ -153,15 +154,17 @@ async function loadSignalChats(connectionId) {
         const response = await listConnectionSignalGroups(connectionId);
         const signalGroups = response.signal_groups || [];
 
-        // Decrypt invite links
+        // Decrypt invite links for restricted-tier chats
         const privateKey = await getPrivateKey();
         const decryptedGroups = await Promise.all(signalGroups.map(async (sg) => {
             let link = null;
-            const secret = sg.encrypted_secret;
-            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+            if (sg.access_tier !== 'open' && privateKey) {
                 try {
-                    link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
-                } catch (e) { /* decryption failed */ }
+                    const secretResp = await getConnectionChatSecret(connectionId, sg.id);
+                    if (secretResp.encrypted_payload && secretResp.wrapped_dek) {
+                        link = await decryptSecret(secretResp.encrypted_payload, secretResp.encryption_iv, secretResp.wrapped_dek, privateKey);
+                    }
+                } catch (e) { /* decryption failed or user not entitled */ }
             }
             return { ...sg, _decryptedLink: link };
         }));
