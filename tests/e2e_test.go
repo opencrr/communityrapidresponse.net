@@ -5116,8 +5116,9 @@ func TestE2E_EncryptedChatLifecycle(t *testing.T) {
 
 		var sgBody map[string]interface{}
 		_ = json.NewDecoder(sgResp.Body).Decode(&sgBody)
+		signalGroupID := sgBody["id"].(string)
 
-		secretResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+groupID, nil, adminToken)
+		secretResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+signalGroupID, nil, adminToken)
 		defer func() { _ = secretResp.Body.Close() }()
 
 		if secretResp.StatusCode != http.StatusOK {
@@ -5195,7 +5196,7 @@ func TestE2E_EncryptedChatLifecycle(t *testing.T) {
 		}
 
 		// User2 should no longer be able to fetch a usable wrapped DEK for this secret
-		user2SecretsResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+groupID, nil, user2Token)
+		user2SecretsResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+signalGroupID, nil, user2Token)
 		defer func() { _ = user2SecretsResp.Body.Close() }()
 
 		if user2SecretsResp.StatusCode != http.StatusOK {

@@ -654,3 +654,65 @@ func (r *EncryptedSecretRepository) RevokeGroupSecretKeysForUser(ctx context.Con
 
 	return nil
 }
+
+// GetSecretsByGroupID retrieves all encrypted secrets for a signal group with their wrapped keys
+type SecretWithKeys struct {
+	ID          string        `json:"id"`
+	WrappedKeys []WrappedKey  `json:"wrapped_keys"`
+}
+
+// WrappedKey represents a wrapped DEK for a user
+type WrappedKey struct {
+	UserID     string `json:"user_id"`
+	WrappedDEK string `json:"wrapped_dek"`
+}
+
+func (r *EncryptedSecretRepository) GetSecretsByGroupID(ctx context.Context, groupID string) ([]SecretWithKeys, error) {
+	query := `
+		SELECT es.id, esk.user_id, esk.wrapped_dek
+		FROM encrypted_secrets es
+		INNER JOIN signal_groups sg ON es.signal_group_id = sg.id
+		INNER JOIN encrypted_secret_keys esk ON es.id = esk.secret_id
+		WHERE sg.id = ?
+		ORDER BY es.id, esk.user_id
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	secretMap := make(map[string]*SecretWithKeys)
+	var order []string
+
+	for rows.Next() {
+		var secretID, userID, wrappedDEK string
+		if err := rows.Scan(&secretID, &userID, &wrappedDEK); err != nil {
+			return nil, err
+		}
+
+		if _, exists := secretMap[secretID]; !exists {
+			secretMap[secretID] = &SecretWithKeys{
+				ID:          secretID,
+				WrappedKeys: []WrappedKey{},
+			}
+			order = append(order, secretID)
+		}
+
+		secretMap[secretID].WrappedKeys = append(secretMap[secretID].WrappedKeys, WrappedKey{
+			UserID:     userID,
+			WrappedDEK: wrappedDEK,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make([]SecretWithKeys, 0, len(order))
+	for _, id := range order {
+		results = append(results, *secretMap[id])
+	}
+	return results, nil
+}

@@ -152,6 +152,7 @@ func (r *Router) Setup() http.Handler {
 	r.mux.HandleFunc("/api/v1/encryption/public-keys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPublicKeys)))
 	r.mux.HandleFunc("/api/v1/encryption/pending-rekeys", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingRekeys)))
 	r.mux.HandleFunc("/api/v1/encryption/rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionRekey)))
+	r.mux.HandleFunc("/api/v1/encryption/secrets", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionSecrets)))
 	r.mux.HandleFunc("/api/v1/encryption/pending-group-rotations", r.authenticated(r.methodHandler(http.MethodGet, r.handleEncryptionPendingGroupRotations)))
 	r.mux.HandleFunc("/api/v1/encryption/group-rekey", r.authenticated(r.methodHandler(http.MethodPost, r.handleEncryptionGroupRekey)))
 
@@ -509,6 +510,15 @@ func (r *Router) handleEncryptionRekey(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	r.encryption.SubmitRekeys(w, req)
+}
+
+// handleEncryptionSecrets handles GET /api/v1/encryption/secrets
+func (r *Router) handleEncryptionSecrets(w http.ResponseWriter, req *http.Request) {
+	if r.encryption == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Endpoint not available")
+		return
+	}
+	r.encryption.GetSecrets(w, req)
 }
 
 // handleEncryptionPendingGroupRotations handles GET /api/v1/encryption/pending-group-rotations

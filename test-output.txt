@@ -1,0 +1,952 @@
+Running unit tests...
+go test ./internal/config/... ./internal/middleware/... ./internal/models/... -v
+=== RUN   TestLoad
+=== RUN   TestLoad/loads_default_values
+=== RUN   TestLoad/loads_from_environment
+=== RUN   TestLoad/handles_invalid_port_gracefully
+--- PASS: TestLoad (0.00s)
+    --- PASS: TestLoad/loads_default_values (0.00s)
+    --- PASS: TestLoad/loads_from_environment (0.00s)
+    --- PASS: TestLoad/handles_invalid_port_gracefully (0.00s)
+=== RUN   TestDatabaseConfig_DSN
+--- PASS: TestDatabaseConfig_DSN (0.00s)
+=== RUN   TestGetEnv
+=== RUN   TestGetEnv/returns_env_value_when_set
+=== RUN   TestGetEnv/returns_default_when_not_set
+--- PASS: TestGetEnv (0.00s)
+    --- PASS: TestGetEnv/returns_env_value_when_set (0.00s)
+    --- PASS: TestGetEnv/returns_default_when_not_set (0.00s)
+=== RUN   TestGetEnvInt
+=== RUN   TestGetEnvInt/returns_env_value_as_int
+=== RUN   TestGetEnvInt/returns_default_for_non-integer
+=== RUN   TestGetEnvInt/returns_default_when_not_set
+--- PASS: TestGetEnvInt (0.00s)
+    --- PASS: TestGetEnvInt/returns_env_value_as_int (0.00s)
+    --- PASS: TestGetEnvInt/returns_default_for_non-integer (0.00s)
+    --- PASS: TestGetEnvInt/returns_default_when_not_set (0.00s)
+=== RUN   TestSplitCSV
+=== RUN   TestSplitCSV/single_value
+=== RUN   TestSplitCSV/multiple_values
+=== RUN   TestSplitCSV/trims_whitespace
+=== RUN   TestSplitCSV/filters_empty_entries
+=== RUN   TestSplitCSV/trailing_comma
+=== RUN   TestSplitCSV/wildcard
+=== RUN   TestSplitCSV/empty_string
+=== RUN   TestSplitCSV/whitespace_only
+--- PASS: TestSplitCSV (0.00s)
+    --- PASS: TestSplitCSV/single_value (0.00s)
+    --- PASS: TestSplitCSV/multiple_values (0.00s)
+    --- PASS: TestSplitCSV/trims_whitespace (0.00s)
+    --- PASS: TestSplitCSV/filters_empty_entries (0.00s)
+    --- PASS: TestSplitCSV/trailing_comma (0.00s)
+    --- PASS: TestSplitCSV/wildcard (0.00s)
+    --- PASS: TestSplitCSV/empty_string (0.00s)
+    --- PASS: TestSplitCSV/whitespace_only (0.00s)
+=== RUN   TestValidate
+=== RUN   TestValidate/valid_dev_config_passes
+=== RUN   TestValidate/valid_production_config_passes
+=== RUN   TestValidate/invalid_ENVIRONMENT_fails
+=== RUN   TestValidate/empty_JWT_SECRET_fails
+=== RUN   TestValidate/short_JWT_SECRET_fails
+=== RUN   TestValidate/MFA_ENCRYPTION_KEY_required_when_MFA_enabled
+=== RUN   TestValidate/MFA_ENCRYPTION_KEY_wrong_length_fails
+=== RUN   TestValidate/invalid_email_backend_fails
+=== RUN   TestValidate/invalid_mail_provider_fails
+=== RUN   TestValidate/production_with_SECURE_COOKIES=false_fails
+=== RUN   TestValidate/production_with_mock_email_backend_fails
+=== RUN   TestValidate/production_with_EMAIL_ENABLED=false_fails
+=== RUN   TestValidate/production_with_empty_DB_password_fails
+=== RUN   TestValidate/production_with_empty_MAPBOX_SECRET_TOKEN_fails
+=== RUN   TestValidate/production_with_lob_and_empty_LOB_API_KEY_fails
+=== RUN   TestValidate/production_with_postgrid_and_empty_POSTGRID_PRINT_API_KEY_fails
+=== RUN   TestValidate/production_with_sendgrid_and_empty_SENDGRID_API_KEY_fails
+=== RUN   TestValidate/production_with_smtp_and_missing_credentials_fails
+=== RUN   TestValidate/production_with_wildcard_CORS_origin_fails
+=== RUN   TestValidate/production_with_explicit_CORS_origins_passes
+=== RUN   TestValidate/development_with_wildcard_CORS_origin_passes
+=== RUN   TestValidate/production_rejects_.env.example_JWT_SECRET_default
+=== RUN   TestValidate/production_rejects_.env.example_MFA_ENCRYPTION_KEY_default
+=== RUN   TestValidate/production_rejects_.env.example_DB_PASSWORD_default
+=== RUN   TestValidate/production_rejects_.env.example_JWT_ISSUER_default
+=== RUN   TestValidate/development_allows_.env.example_defaults
+=== RUN   TestValidate/staging_treated_as_production
+=== RUN   TestValidate/collects_multiple_errors_at_once
+--- PASS: TestValidate (0.00s)
+    --- PASS: TestValidate/valid_dev_config_passes (0.00s)
+    --- PASS: TestValidate/valid_production_config_passes (0.00s)
+    --- PASS: TestValidate/invalid_ENVIRONMENT_fails (0.00s)
+    --- PASS: TestValidate/empty_JWT_SECRET_fails (0.00s)
+    --- PASS: TestValidate/short_JWT_SECRET_fails (0.00s)
+    --- PASS: TestValidate/MFA_ENCRYPTION_KEY_required_when_MFA_enabled (0.00s)
+    --- PASS: TestValidate/MFA_ENCRYPTION_KEY_wrong_length_fails (0.00s)
+    --- PASS: TestValidate/invalid_email_backend_fails (0.00s)
+    --- PASS: TestValidate/invalid_mail_provider_fails (0.00s)
+    --- PASS: TestValidate/production_with_SECURE_COOKIES=false_fails (0.00s)
+    --- PASS: TestValidate/production_with_mock_email_backend_fails (0.00s)
+    --- PASS: TestValidate/production_with_EMAIL_ENABLED=false_fails (0.00s)
+    --- PASS: TestValidate/production_with_empty_DB_password_fails (0.00s)
+    --- PASS: TestValidate/production_with_empty_MAPBOX_SECRET_TOKEN_fails (0.00s)
+    --- PASS: TestValidate/production_with_lob_and_empty_LOB_API_KEY_fails (0.00s)
+    --- PASS: TestValidate/production_with_postgrid_and_empty_POSTGRID_PRINT_API_KEY_fails (0.00s)
+    --- PASS: TestValidate/production_with_sendgrid_and_empty_SENDGRID_API_KEY_fails (0.00s)
+    --- PASS: TestValidate/production_with_smtp_and_missing_credentials_fails (0.00s)
+    --- PASS: TestValidate/production_with_wildcard_CORS_origin_fails (0.00s)
+    --- PASS: TestValidate/production_with_explicit_CORS_origins_passes (0.00s)
+    --- PASS: TestValidate/development_with_wildcard_CORS_origin_passes (0.00s)
+    --- PASS: TestValidate/production_rejects_.env.example_JWT_SECRET_default (0.00s)
+    --- PASS: TestValidate/production_rejects_.env.example_MFA_ENCRYPTION_KEY_default (0.00s)
+    --- PASS: TestValidate/production_rejects_.env.example_DB_PASSWORD_default (0.00s)
+    --- PASS: TestValidate/production_rejects_.env.example_JWT_ISSUER_default (0.00s)
+    --- PASS: TestValidate/development_allows_.env.example_defaults (0.00s)
+    --- PASS: TestValidate/staging_treated_as_production (0.00s)
+    --- PASS: TestValidate/collects_multiple_errors_at_once (0.00s)
+=== RUN   TestEnvironment_IsProduction
+=== RUN   TestEnvironment_IsProduction/production
+=== RUN   TestEnvironment_IsProduction/staging
+=== RUN   TestEnvironment_IsProduction/development
+=== RUN   TestEnvironment_IsProduction/test
+--- PASS: TestEnvironment_IsProduction (0.00s)
+    --- PASS: TestEnvironment_IsProduction/production (0.00s)
+    --- PASS: TestEnvironment_IsProduction/staging (0.00s)
+    --- PASS: TestEnvironment_IsProduction/development (0.00s)
+    --- PASS: TestEnvironment_IsProduction/test (0.00s)
+=== RUN   TestLoad_Environment
+=== RUN   TestLoad_Environment/defaults_to_development
+=== RUN   TestLoad_Environment/loads_from_ENVIRONMENT
+--- PASS: TestLoad_Environment (0.00s)
+    --- PASS: TestLoad_Environment/defaults_to_development (0.00s)
+    --- PASS: TestLoad_Environment/loads_from_ENVIRONMENT (0.00s)
+=== RUN   TestConsensusConfig_RequiredVotes
+=== RUN   TestConsensusConfig_RequiredVotes/3_admins,_50%,_floor_3_->_3_(floor)
+=== RUN   TestConsensusConfig_RequiredVotes/4_admins,_50%,_floor_3_->_3_(floor_wins_over_2)
+=== RUN   TestConsensusConfig_RequiredVotes/5_admins,_50%,_floor_3_->_3_(ceil(2.5)=3)
+=== RUN   TestConsensusConfig_RequiredVotes/6_admins,_50%,_floor_3_->_3_(50%=3)
+=== RUN   TestConsensusConfig_RequiredVotes/7_admins,_50%,_floor_3_->_4_(ceil(3.5)=4)
+=== RUN   TestConsensusConfig_RequiredVotes/10_admins,_50%,_floor_3_->_5
+=== RUN   TestConsensusConfig_RequiredVotes/20_admins,_50%,_floor_3_->_10
+=== RUN   TestConsensusConfig_RequiredVotes/3_admins,_67%,_floor_3_->_3_(floor)
+=== RUN   TestConsensusConfig_RequiredVotes/6_admins,_67%,_floor_3_->_5_(ceil(4.02)=5)
+=== RUN   TestConsensusConfig_RequiredVotes/10_admins,_67%,_floor_3_->_7
+=== RUN   TestConsensusConfig_RequiredVotes/3_admins,_50%,_floor_2_->_2_(ceil(1.5)=2)
+=== RUN   TestConsensusConfig_RequiredVotes/4_admins,_50%,_floor_2_->_2
+=== RUN   TestConsensusConfig_RequiredVotes/5_admins,_50%,_floor_2_->_3_(ceil(2.5)=3)
+=== RUN   TestConsensusConfig_RequiredVotes/0_admins,_50%,_floor_3_->_3_(floor)
+=== RUN   TestConsensusConfig_RequiredVotes/1_admin,_50%,_floor_3_->_3_(floor)
+=== RUN   TestConsensusConfig_RequiredVotes/100_admins,_50%,_floor_3_->_50
+--- PASS: TestConsensusConfig_RequiredVotes (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/3_admins,_50%,_floor_3_->_3_(floor) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/4_admins,_50%,_floor_3_->_3_(floor_wins_over_2) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/5_admins,_50%,_floor_3_->_3_(ceil(2.5)=3) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/6_admins,_50%,_floor_3_->_3_(50%=3) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/7_admins,_50%,_floor_3_->_4_(ceil(3.5)=4) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/10_admins,_50%,_floor_3_->_5 (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/20_admins,_50%,_floor_3_->_10 (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/3_admins,_67%,_floor_3_->_3_(floor) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/6_admins,_67%,_floor_3_->_5_(ceil(4.02)=5) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/10_admins,_67%,_floor_3_->_7 (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/3_admins,_50%,_floor_2_->_2_(ceil(1.5)=2) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/4_admins,_50%,_floor_2_->_2 (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/5_admins,_50%,_floor_2_->_3_(ceil(2.5)=3) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/0_admins,_50%,_floor_3_->_3_(floor) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/1_admin,_50%,_floor_3_->_3_(floor) (0.00s)
+    --- PASS: TestConsensusConfig_RequiredVotes/100_admins,_50%,_floor_3_->_50 (0.00s)
+PASS
+ok  	github.com/opencrr/communityrapidresponse.net/internal/config	(cached)
+=== RUN   TestJWTAuth_GenerateToken
+--- PASS: TestJWTAuth_GenerateToken (0.00s)
+=== RUN   TestJWTAuth_ValidateToken
+=== RUN   TestJWTAuth_ValidateToken/validates_valid_token
+=== RUN   TestJWTAuth_ValidateToken/rejects_invalid_token
+=== RUN   TestJWTAuth_ValidateToken/rejects_token_with_wrong_secret
+--- PASS: TestJWTAuth_ValidateToken (0.00s)
+    --- PASS: TestJWTAuth_ValidateToken/validates_valid_token (0.00s)
+    --- PASS: TestJWTAuth_ValidateToken/rejects_invalid_token (0.00s)
+    --- PASS: TestJWTAuth_ValidateToken/rejects_token_with_wrong_secret (0.00s)
+=== RUN   TestJWTAuth_Authenticate
+=== RUN   TestJWTAuth_Authenticate/allows_request_with_valid_token
+=== RUN   TestJWTAuth_Authenticate/rejects_request_without_token
+=== RUN   TestJWTAuth_Authenticate/rejects_request_with_invalid_token
+=== RUN   TestJWTAuth_Authenticate/reads_token_from_cookie
+--- PASS: TestJWTAuth_Authenticate (0.00s)
+    --- PASS: TestJWTAuth_Authenticate/allows_request_with_valid_token (0.00s)
+    --- PASS: TestJWTAuth_Authenticate/rejects_request_without_token (0.00s)
+    --- PASS: TestJWTAuth_Authenticate/rejects_request_with_invalid_token (0.00s)
+    --- PASS: TestJWTAuth_Authenticate/reads_token_from_cookie (0.00s)
+=== RUN   TestRequireTier
+=== RUN   TestRequireTier/allows_access_for_sufficient_tier
+=== RUN   TestRequireTier/denies_access_for_insufficient_tier
+--- PASS: TestRequireTier (0.00s)
+    --- PASS: TestRequireTier/allows_access_for_sufficient_tier (0.00s)
+    --- PASS: TestRequireTier/denies_access_for_insufficient_tier (0.00s)
+=== RUN   TestExtractToken
+=== RUN   TestExtractToken/extracts_from_Authorization_header
+=== RUN   TestExtractToken/extracts_from_cookie
+=== RUN   TestExtractToken/prefers_header_over_cookie
+=== RUN   TestExtractToken/returns_empty_for_missing_token
+--- PASS: TestExtractToken (0.00s)
+    --- PASS: TestExtractToken/extracts_from_Authorization_header (0.00s)
+    --- PASS: TestExtractToken/extracts_from_cookie (0.00s)
+    --- PASS: TestExtractToken/prefers_header_over_cookie (0.00s)
+    --- PASS: TestExtractToken/returns_empty_for_missing_token (0.00s)
+=== RUN   TestJWTAuth_GenerateTokenWithType
+=== RUN   TestJWTAuth_GenerateTokenWithType/generates_full_token
+=== RUN   TestJWTAuth_GenerateTokenWithType/generates_MFA_setup_token
+=== RUN   TestJWTAuth_GenerateTokenWithType/generates_pending_MFA_token
+=== RUN   TestJWTAuth_GenerateTokenWithType/MFA_tokens_have_shorter_expiration
+--- PASS: TestJWTAuth_GenerateTokenWithType (0.00s)
+    --- PASS: TestJWTAuth_GenerateTokenWithType/generates_full_token (0.00s)
+    --- PASS: TestJWTAuth_GenerateTokenWithType/generates_MFA_setup_token (0.00s)
+    --- PASS: TestJWTAuth_GenerateTokenWithType/generates_pending_MFA_token (0.00s)
+    --- PASS: TestJWTAuth_GenerateTokenWithType/MFA_tokens_have_shorter_expiration (0.00s)
+=== RUN   TestJWTAuth_AuthenticateWithTypes
+=== RUN   TestJWTAuth_AuthenticateWithTypes/allows_matching_token_type
+=== RUN   TestJWTAuth_AuthenticateWithTypes/rejects_mismatched_token_type
+=== RUN   TestJWTAuth_AuthenticateWithTypes/allows_multiple_token_types
+=== RUN   TestJWTAuth_AuthenticateWithTypes/default_Authenticate_only_allows_full_tokens
+=== RUN   TestJWTAuth_AuthenticateWithTypes/returns_appropriate_error_message_for_MFA_tokens
+--- PASS: TestJWTAuth_AuthenticateWithTypes (0.00s)
+    --- PASS: TestJWTAuth_AuthenticateWithTypes/allows_matching_token_type (0.00s)
+    --- PASS: TestJWTAuth_AuthenticateWithTypes/rejects_mismatched_token_type (0.00s)
+    --- PASS: TestJWTAuth_AuthenticateWithTypes/allows_multiple_token_types (0.00s)
+    --- PASS: TestJWTAuth_AuthenticateWithTypes/default_Authenticate_only_allows_full_tokens (0.00s)
+    --- PASS: TestJWTAuth_AuthenticateWithTypes/returns_appropriate_error_message_for_MFA_tokens (0.00s)
+=== RUN   TestTokenExpiration
+--- PASS: TestTokenExpiration (1.00s)
+=== RUN   TestJWTAuth_TokenRevocation
+=== RUN   TestJWTAuth_TokenRevocation/rejects_token_when_user_is_blocked
+=== RUN   TestJWTAuth_TokenRevocation/rejects_token_when_user_is_deleted
+=== RUN   TestJWTAuth_TokenRevocation/rejects_token_issued_before_invalidation
+=== RUN   TestJWTAuth_TokenRevocation/accepts_token_issued_after_invalidation
+=== RUN   TestJWTAuth_TokenRevocation/accepts_token_when_status_cache_is_nil
+=== RUN   TestJWTAuth_TokenRevocation/fails_closed_on_status_check_error
+2026/06/26 21:25:22 ERROR user status check failed, failing closed user_id=error-user-id error="database connection failed"
+=== RUN   TestJWTAuth_TokenRevocation/OptionalAuthenticate_treats_revoked_user_as_unauthenticated
+=== RUN   TestJWTAuth_TokenRevocation/non-blocked_non-deleted_user_passes_through
+--- PASS: TestJWTAuth_TokenRevocation (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/rejects_token_when_user_is_blocked (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/rejects_token_when_user_is_deleted (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/rejects_token_issued_before_invalidation (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/accepts_token_issued_after_invalidation (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/accepts_token_when_status_cache_is_nil (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/fails_closed_on_status_check_error (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/OptionalAuthenticate_treats_revoked_user_as_unauthenticated (0.00s)
+    --- PASS: TestJWTAuth_TokenRevocation/non-blocked_non-deleted_user_passes_through (0.00s)
+=== RUN   TestCSRFProtection_SafeMethodsPassThrough
+--- PASS: TestCSRFProtection_SafeMethodsPassThrough (0.00s)
+=== RUN   TestCSRFProtection_SetsCookieOnGET
+--- PASS: TestCSRFProtection_SetsCookieOnGET (0.00s)
+=== RUN   TestCSRFProtection_DoesNotOverwriteExistingCookie
+--- PASS: TestCSRFProtection_DoesNotOverwriteExistingCookie (0.00s)
+=== RUN   TestCSRFProtection_ValidTokenPassesPOST
+--- PASS: TestCSRFProtection_ValidTokenPassesPOST (0.00s)
+=== RUN   TestCSRFProtection_MissingHeader403
+--- PASS: TestCSRFProtection_MissingHeader403 (0.00s)
+=== RUN   TestCSRFProtection_MissingCookie403
+--- PASS: TestCSRFProtection_MissingCookie403 (0.00s)
+=== RUN   TestCSRFProtection_MismatchedTokens403
+--- PASS: TestCSRFProtection_MismatchedTokens403 (0.00s)
+=== RUN   TestCSRFProtection_TamperedSignature403
+--- PASS: TestCSRFProtection_TamperedSignature403 (0.00s)
+=== RUN   TestCSRFProtection_ExemptPathsBypass
+--- PASS: TestCSRFProtection_ExemptPathsBypass (0.00s)
+=== RUN   TestCSRFProtection_NonExemptPathRequiresToken
+--- PASS: TestCSRFProtection_NonExemptPathRequiresToken (0.00s)
+=== RUN   TestCSRFProtection_SecureCookieFlag
+--- PASS: TestCSRFProtection_SecureCookieFlag (0.00s)
+=== RUN   TestCSRFProtection_UnsafeMethods
+--- PASS: TestCSRFProtection_UnsafeMethods (0.00s)
+=== RUN   TestCSRFProtection_ValidTokenAllMethods
+--- PASS: TestCSRFProtection_ValidTokenAllMethods (0.00s)
+=== RUN   TestVerifyCSRFToken_InvalidFormat
+--- PASS: TestVerifyCSRFToken_InvalidFormat (0.00s)
+=== RUN   TestDeriveCSRFSecret_DifferentFromInput
+--- PASS: TestDeriveCSRFSecret_DifferentFromInput (0.00s)
+=== RUN   TestDeriveCSRFSecret_Deterministic
+--- PASS: TestDeriveCSRFSecret_Deterministic (0.00s)
+=== RUN   TestDeriveCSRFSecret_DifferentInputsDifferentOutputs
+--- PASS: TestDeriveCSRFSecret_DifferentInputsDifferentOutputs (0.00s)
+=== RUN   TestGenerateCSRFToken_UniqueTokens
+--- PASS: TestGenerateCSRFToken_UniqueTokens (0.00s)
+=== RUN   TestLogger
+2026/06/26 21:25:22 INFO http request method=GET path=/test status=200 duration_ms=0 remote_addr=192.0.2.1:1234 request_id=cc7f0b6a-3dec-4d25-a01f-046e3b83a76b
+--- PASS: TestLogger (0.00s)
+=== RUN   TestRecoverer
+=== RUN   TestRecoverer/recovers_from_panic
+2026/06/26 21:25:22 ERROR panic recovered error="test panic" stack="goroutine 79 [running]:\nruntime/debug.Stack()\n\t/usr/local/go/src/runtime/debug/stack.go:26 +0x5e\ngithub.com/opencrr/communityrapidresponse.net/internal/middleware.TestRecoverer.func1.Recoverer.2.1()\n\t/home/agent/.agentask/wt-worker-d5db8569c-zmrt7-opencrr-communityrapidresponse.net/internal/middleware/middleware.go:52 +0x65\npanic({0x6f1d20?, 0x7e7670?})\n\t/usr/local/go/src/runtime/panic.go:783 +0x132\ngithub.com/opencrr/communityrapidresponse.net/internal/middleware.TestRecoverer.func1.1({0x7f09761a75c0?, 0x40?}, 0xc00004b808?)\n\t/home/agent/.agentask/wt-worker-d5db8569c-zmrt7-opencrr-communityrapidresponse.net/internal/middleware/middleware_test.go:29 +0x25\nnet/http.HandlerFunc.ServeHTTP(0x47a965?, {0x7eb9e0?, 0xc0001aeb00?}, 0xc000055ea0?)\n\t/usr/local/go/src/net/http/server.go:2322 +0x29\ngithub.com/opencrr/communityrapidresponse.net/internal/middleware.TestRecoverer.func1.Recoverer.2({0x7eb9e0?, 0xc0001aeb00?}, 0x7679aa?)\n\t/home/agent/.agentask/wt-worker-d5db8569c-zmrt7-opencrr-communityrapidresponse.net/internal/middleware/middleware.go:59 +0x6c\nnet/http.HandlerFunc.ServeHTTP(...)\n\t/usr/local/go/src/net/http/server.go:2322\ngithub.com/opencrr/communityrapidresponse.net/internal/middleware.TestRecoverer.func1(0xc000205500)\n\t/home/agent/.agentask/wt-worker-d5db8569c-zmrt7-opencrr-communityrapidresponse.net/internal/middleware/middleware_test.go:36 +0x105\ntesting.tRunner(0xc000205500, 0x78d7d8)\n\t/usr/local/go/src/testing/testing.go:1934 +0xea\ncreated by testing.(*T).Run in goroutine 78\n\t/usr/local/go/src/testing/testing.go:1997 +0x465\n" request_id=""
+=== RUN   TestRecoverer/passes_through_normal_requests
+--- PASS: TestRecoverer (0.00s)
+    --- PASS: TestRecoverer/recovers_from_panic (0.00s)
+    --- PASS: TestRecoverer/passes_through_normal_requests (0.00s)
+=== RUN   TestCORS
+=== RUN   TestCORS/adds_CORS_headers_for_allowed_origin
+=== RUN   TestCORS/wildcard_responds_with_literal_*_and_no_credentials
+=== RUN   TestCORS/exact-match_origin_sets_credentials
+=== RUN   TestCORS/does_not_add_header_for_disallowed_origin
+=== RUN   TestCORS/empty_origins_denies_all_cross-origin_requests
+=== RUN   TestCORS/handles_preflight_OPTIONS_request
+--- PASS: TestCORS (0.00s)
+    --- PASS: TestCORS/adds_CORS_headers_for_allowed_origin (0.00s)
+    --- PASS: TestCORS/wildcard_responds_with_literal_*_and_no_credentials (0.00s)
+    --- PASS: TestCORS/exact-match_origin_sets_credentials (0.00s)
+    --- PASS: TestCORS/does_not_add_header_for_disallowed_origin (0.00s)
+    --- PASS: TestCORS/empty_origins_denies_all_cross-origin_requests (0.00s)
+    --- PASS: TestCORS/handles_preflight_OPTIONS_request (0.00s)
+=== RUN   TestMaxBodySize
+=== RUN   TestMaxBodySize/allows_body_within_limit
+=== RUN   TestMaxBodySize/rejects_body_exceeding_limit
+=== RUN   TestMaxBodySize/nil_body_passes_through
+--- PASS: TestMaxBodySize (0.00s)
+    --- PASS: TestMaxBodySize/allows_body_within_limit (0.00s)
+    --- PASS: TestMaxBodySize/rejects_body_exceeding_limit (0.00s)
+    --- PASS: TestMaxBodySize/nil_body_passes_through (0.00s)
+=== RUN   TestContentType
+--- PASS: TestContentType (0.00s)
+=== RUN   TestSecurityHeaders
+--- PASS: TestSecurityHeaders (0.00s)
+=== RUN   TestSecurityHeaders_WithCSP
+--- PASS: TestSecurityHeaders_WithCSP (0.00s)
+=== RUN   TestSecurityHeaders_HSTS_OnlyWhenSecure
+=== RUN   TestSecurityHeaders_HSTS_OnlyWhenSecure/HSTS_present_when_SecureCookies=true
+=== RUN   TestSecurityHeaders_HSTS_OnlyWhenSecure/HSTS_absent_when_SecureCookies=false
+--- PASS: TestSecurityHeaders_HSTS_OnlyWhenSecure (0.00s)
+    --- PASS: TestSecurityHeaders_HSTS_OnlyWhenSecure/HSTS_present_when_SecureCookies=true (0.00s)
+    --- PASS: TestSecurityHeaders_HSTS_OnlyWhenSecure/HSTS_absent_when_SecureCookies=false (0.00s)
+=== RUN   TestResponseWriter
+--- PASS: TestResponseWriter (0.00s)
+=== RUN   TestRateLimitMiddleware_AllowsRequests
+--- PASS: TestRateLimitMiddleware_AllowsRequests (0.00s)
+=== RUN   TestRateLimitMiddleware_BlocksExcessRequests
+--- PASS: TestRateLimitMiddleware_BlocksExcessRequests (0.00s)
+=== RUN   TestGetClientIP_NoTrustedProxies
+=== RUN   TestGetClientIP_NoTrustedProxies/returns_RemoteAddr_when_no_headers
+=== RUN   TestGetClientIP_NoTrustedProxies/ignores_X-Forwarded-For_without_trusted_proxies
+=== RUN   TestGetClientIP_NoTrustedProxies/ignores_X-Real-IP_without_trusted_proxies
+=== RUN   TestGetClientIP_NoTrustedProxies/handles_RemoteAddr_without_port
+--- PASS: TestGetClientIP_NoTrustedProxies (0.00s)
+    --- PASS: TestGetClientIP_NoTrustedProxies/returns_RemoteAddr_when_no_headers (0.00s)
+    --- PASS: TestGetClientIP_NoTrustedProxies/ignores_X-Forwarded-For_without_trusted_proxies (0.00s)
+    --- PASS: TestGetClientIP_NoTrustedProxies/ignores_X-Real-IP_without_trusted_proxies (0.00s)
+    --- PASS: TestGetClientIP_NoTrustedProxies/handles_RemoteAddr_without_port (0.00s)
+=== RUN   TestGetClientIP_WithTrustedProxies
+=== RUN   TestGetClientIP_WithTrustedProxies/extracts_rightmost_untrusted_IP_from_XFF
+=== RUN   TestGetClientIP_WithTrustedProxies/single_client_IP_in_XFF
+=== RUN   TestGetClientIP_WithTrustedProxies/multi-hop_chain_returns_rightmost_untrusted
+=== RUN   TestGetClientIP_WithTrustedProxies/spoofed_XFF_from_untrusted_source_returns_RemoteAddr
+=== RUN   TestGetClientIP_WithTrustedProxies/X-Real-IP_trusted_source_with_no_XFF
+=== RUN   TestGetClientIP_WithTrustedProxies/X-Real-IP_ignored_from_untrusted_source
+=== RUN   TestGetClientIP_WithTrustedProxies/all_XFF_IPs_are_trusted_proxies_falls_back_to_RemoteAddr
+=== RUN   TestGetClientIP_WithTrustedProxies/empty_XFF_falls_back_to_RemoteAddr_from_trusted_proxy
+=== RUN   TestGetClientIP_WithTrustedProxies/localhost_trusted_proxy_extracts_client_IP
+=== RUN   TestGetClientIP_WithTrustedProxies/no_headers_from_trusted_proxy_returns_RemoteAddr
+--- PASS: TestGetClientIP_WithTrustedProxies (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/extracts_rightmost_untrusted_IP_from_XFF (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/single_client_IP_in_XFF (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/multi-hop_chain_returns_rightmost_untrusted (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/spoofed_XFF_from_untrusted_source_returns_RemoteAddr (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/X-Real-IP_trusted_source_with_no_XFF (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/X-Real-IP_ignored_from_untrusted_source (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/all_XFF_IPs_are_trusted_proxies_falls_back_to_RemoteAddr (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/empty_XFF_falls_back_to_RemoteAddr_from_trusted_proxy (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/localhost_trusted_proxy_extracts_client_IP (0.00s)
+    --- PASS: TestGetClientIP_WithTrustedProxies/no_headers_from_trusted_proxy_returns_RemoteAddr (0.00s)
+=== RUN   TestSetTrustedProxies
+--- PASS: TestSetTrustedProxies (0.00s)
+=== RUN   TestRateLimitKey
+--- PASS: TestRateLimitKey (0.00s)
+=== RUN   TestRequestContext_PopulatesIPAndUserAgent
+--- PASS: TestRequestContext_PopulatesIPAndUserAgent (0.00s)
+=== RUN   TestRequestContext_EmptyUserAgent
+--- PASS: TestRequestContext_EmptyUserAgent (0.00s)
+=== RUN   TestRequestContext_PropagatesParentContextValues
+--- PASS: TestRequestContext_PropagatesParentContextValues (0.00s)
+=== RUN   TestGetIPFromContext_Missing
+--- PASS: TestGetIPFromContext_Missing (0.00s)
+=== RUN   TestGetIPFromContext_WrongType
+--- PASS: TestGetIPFromContext_WrongType (0.00s)
+=== RUN   TestGetUserAgentFromContext_Missing
+--- PASS: TestGetUserAgentFromContext_Missing (0.00s)
+=== RUN   TestGetUserAgentFromContext_WrongType
+--- PASS: TestGetUserAgentFromContext_WrongType (0.00s)
+=== RUN   TestUserStatusCache_FirstCallFetchesFromChecker
+--- PASS: TestUserStatusCache_FirstCallFetchesFromChecker (0.00s)
+=== RUN   TestUserStatusCache_ReturnsCachedWithinTTL
+--- PASS: TestUserStatusCache_ReturnsCachedWithinTTL (0.00s)
+=== RUN   TestUserStatusCache_RefetchesAfterTTL
+--- PASS: TestUserStatusCache_RefetchesAfterTTL (0.02s)
+=== RUN   TestUserStatusCache_BlockedUser
+--- PASS: TestUserStatusCache_BlockedUser (0.00s)
+=== RUN   TestUserStatusCache_DeletedUser
+--- PASS: TestUserStatusCache_DeletedUser (0.00s)
+=== RUN   TestUserStatusCache_TokenInvalidated
+--- PASS: TestUserStatusCache_TokenInvalidated (0.00s)
+=== RUN   TestUserStatusCache_InvalidateClearsEntry
+--- PASS: TestUserStatusCache_InvalidateClearsEntry (0.00s)
+=== RUN   TestUserStatusCache_PropagatesErrors
+--- PASS: TestUserStatusCache_PropagatesErrors (0.00s)
+=== RUN   TestUserStatusCache_ErrorNotCached
+--- PASS: TestUserStatusCache_ErrorNotCached (0.00s)
+=== RUN   TestUserStatusCache_DifferentUsersIndependent
+--- PASS: TestUserStatusCache_DifferentUsersIndependent (0.00s)
+PASS
+ok  	github.com/opencrr/communityrapidresponse.net/internal/middleware	(cached)
+=== RUN   TestVerificationTier
+--- PASS: TestVerificationTier (0.00s)
+=== RUN   TestRegionType
+--- PASS: TestRegionType (0.00s)
+=== RUN   TestVerificationStatus
+--- PASS: TestVerificationStatus (0.00s)
+=== RUN   TestProposalStatus
+--- PASS: TestProposalStatus (0.00s)
+=== RUN   TestUserJSON
+--- PASS: TestUserJSON (0.00s)
+=== RUN   TestPublicUser
+--- PASS: TestPublicUser (0.00s)
+=== RUN   TestVerificationRequestNoAddress
+--- PASS: TestVerificationRequestNoAddress (0.00s)
+=== RUN   TestSignalGroupJSONSerialization
+--- PASS: TestSignalGroupJSONSerialization (0.00s)
+=== RUN   TestAddressNeverStored
+    models_test.go:205: IMPORTANT: Address struct is for in-memory processing only. Never store in database.
+--- PASS: TestAddressNeverStored (0.00s)
+=== RUN   TestGeoJSONGeometry
+--- PASS: TestGeoJSONGeometry (0.00s)
+=== RUN   TestGeoJSONGeometry_MultiPolygon
+--- PASS: TestGeoJSONGeometry_MultiPolygon (0.00s)
+=== RUN   TestGeoJSONGeometry_RealWorldMultiPolygon
+--- PASS: TestGeoJSONGeometry_RealWorldMultiPolygon (0.00s)
+=== RUN   TestNotificationTypes
+--- PASS: TestNotificationTypes (0.00s)
+=== RUN   TestAuditActionConstants
+--- PASS: TestAuditActionConstants (0.00s)
+=== RUN   TestUpdateRegionRequest
+--- PASS: TestUpdateRegionRequest (0.00s)
+=== RUN   TestRegionSummaryWithGeometry
+--- PASS: TestRegionSummaryWithGeometry (0.00s)
+=== RUN   TestRegionSummaryWithoutGeometry
+--- PASS: TestRegionSummaryWithoutGeometry (0.00s)
+=== RUN   TestSecretType
+--- PASS: TestSecretType (0.00s)
+=== RUN   TestProposalStatusApprovedPendingFinalization
+--- PASS: TestProposalStatusApprovedPendingFinalization (0.00s)
+=== RUN   TestEncryptedSecretJSON
+--- PASS: TestEncryptedSecretJSON (0.00s)
+=== RUN   TestEncryptedSecretJSON_MeshtasticChannel
+--- PASS: TestEncryptedSecretJSON_MeshtasticChannel (0.00s)
+=== RUN   TestEncryptedSecretKeyJSON
+--- PASS: TestEncryptedSecretKeyJSON (0.00s)
+=== RUN   TestSecretUpdateProposalJSON
+--- PASS: TestSecretUpdateProposalJSON (0.00s)
+=== RUN   TestSecretProposalResponseJSON
+--- PASS: TestSecretProposalResponseJSON (0.00s)
+=== RUN   TestCreateSecretProposalRequestJSON
+--- PASS: TestCreateSecretProposalRequestJSON (0.00s)
+=== RUN   TestFinalizeSecretUpdateRequestJSON
+--- PASS: TestFinalizeSecretUpdateRequestJSON (0.00s)
+=== RUN   TestUserEncryptionKeyJSON
+--- PASS: TestUserEncryptionKeyJSON (0.00s)
+=== RUN   TestEncryptionKeyResponseJSON
+--- PASS: TestEncryptionKeyResponseJSON (0.00s)
+=== RUN   TestPublicKeyEntryJSON
+--- PASS: TestPublicKeyEntryJSON (0.00s)
+=== RUN   TestSubmitRekeysRequestJSON
+--- PASS: TestSubmitRekeysRequestJSON (0.00s)
+=== RUN   TestCreateEncryptionKeyRequestJSON
+--- PASS: TestCreateEncryptionKeyRequestJSON (0.00s)
+=== RUN   TestMeshtasticChannelJSON
+--- PASS: TestMeshtasticChannelJSON (0.00s)
+=== RUN   TestMeshtasticChannelJSON_SchoolScope
+--- PASS: TestMeshtasticChannelJSON_SchoolScope (0.00s)
+=== RUN   TestMeshtasticChannelPublicJSON
+--- PASS: TestMeshtasticChannelPublicJSON (0.00s)
+=== RUN   TestMeshtasticChannelWithSecretJSON
+--- PASS: TestMeshtasticChannelWithSecretJSON (0.00s)
+=== RUN   TestMeshtasticChannelWithSecret_NoSecret
+--- PASS: TestMeshtasticChannelWithSecret_NoSecret (0.00s)
+=== RUN   TestCreateMeshtasticChannelRequestJSON
+--- PASS: TestCreateMeshtasticChannelRequestJSON (0.00s)
+=== RUN   TestUpdateMeshtasticChannelRequestJSON
+--- PASS: TestUpdateMeshtasticChannelRequestJSON (0.00s)
+=== RUN   TestMeshtasticChannelListResponseJSON
+--- PASS: TestMeshtasticChannelListResponseJSON (0.00s)
+=== RUN   TestWrappedKeyEntryJSON
+--- PASS: TestWrappedKeyEntryJSON (0.00s)
+=== RUN   TestSecretProposalDetailResponseJSON
+--- PASS: TestSecretProposalDetailResponseJSON (0.00s)
+PASS
+ok  	github.com/opencrr/communityrapidresponse.net/internal/models	(cached)
+Running service tests...
+go test ./internal/services/... -v
+=== RUN   TestSanitizeHeaderValue_StripsCR
+--- PASS: TestSanitizeHeaderValue_StripsCR (0.00s)
+=== RUN   TestSanitizeHeaderValue_StripsLF
+--- PASS: TestSanitizeHeaderValue_StripsLF (0.00s)
+=== RUN   TestSanitizeHeaderValue_StripsCRLF
+--- PASS: TestSanitizeHeaderValue_StripsCRLF (0.00s)
+=== RUN   TestSanitizeHeaderValue_PassthroughClean
+--- PASS: TestSanitizeHeaderValue_PassthroughClean (0.00s)
+=== RUN   TestGenerateBoundary_Unique
+--- PASS: TestGenerateBoundary_Unique (0.00s)
+=== RUN   TestGenerateBoundary_HasPrefix
+--- PASS: TestGenerateBoundary_HasPrefix (0.00s)
+=== RUN   TestSMTPSend_HeaderInjectionPrevented
+2026/06/26 21:39:55 INFO smtp disabled, would send email to="v***@example.com\r\nBcc: attacker@evil.com"
+--- PASS: TestSMTPSend_HeaderInjectionPrevented (0.00s)
+=== RUN   TestSMTPSend_CRLFInjectedToField
+--- PASS: TestSMTPSend_CRLFInjectedToField (0.00s)
+=== RUN   TestEmailTemplates_Build
+=== RUN   TestEmailTemplates_Build/InviteLinkUpdated
+=== RUN   TestEmailTemplates_Build/VerificationComplete
+=== RUN   TestEmailTemplates_Build/VouchReceived
+=== RUN   TestEmailTemplates_Build/VouchComplete
+=== RUN   TestEmailTemplates_Build/RekeyingNeeded
+--- PASS: TestEmailTemplates_Build (0.00s)
+    --- PASS: TestEmailTemplates_Build/InviteLinkUpdated (0.00s)
+    --- PASS: TestEmailTemplates_Build/VerificationComplete (0.00s)
+    --- PASS: TestEmailTemplates_Build/VouchReceived (0.00s)
+    --- PASS: TestEmailTemplates_Build/VouchComplete (0.00s)
+    --- PASS: TestEmailTemplates_Build/RekeyingNeeded (0.00s)
+=== RUN   TestEmailTemplates_SecurityRequirements
+--- PASS: TestEmailTemplates_SecurityRequirements (0.00s)
+=== RUN   TestEmailTemplates_LoginURL
+--- PASS: TestEmailTemplates_LoginURL (0.00s)
+=== RUN   TestEmailTemplates_HTMLEscaping
+--- PASS: TestEmailTemplates_HTMLEscaping (0.00s)
+=== RUN   TestNormalizeEmail_RejectsPlus
+--- PASS: TestNormalizeEmail_RejectsPlus (0.00s)
+=== RUN   TestNormalizeEmail_NormalizesGmailDots
+--- PASS: TestNormalizeEmail_NormalizesGmailDots (0.00s)
+=== RUN   TestNormalizeEmail_NormalizesGooglemail
+--- PASS: TestNormalizeEmail_NormalizesGooglemail (0.00s)
+=== RUN   TestNormalizeEmail_PreservesDotsForOtherDomains
+--- PASS: TestNormalizeEmail_PreservesDotsForOtherDomains (0.00s)
+=== RUN   TestNormalizeEmail_InvalidEmails
+--- PASS: TestNormalizeEmail_InvalidEmails (0.00s)
+=== RUN   TestContainsEmailAlias
+--- PASS: TestContainsEmailAlias (0.00s)
+=== RUN   TestReadLimitedBody
+=== RUN   TestReadLimitedBody/within_limit_returns_data
+=== RUN   TestReadLimitedBody/exactly_at_limit_returns_data
+=== RUN   TestReadLimitedBody/exceeds_limit_returns_error
+=== RUN   TestReadLimitedBody/empty_body_returns_empty_slice
+=== RUN   TestReadLimitedBody/read_error_propagated
+=== RUN   TestReadLimitedBody/one_byte_over_limit_returns_error
+=== RUN   TestReadLimitedBody/works_with_bytes_reader
+--- PASS: TestReadLimitedBody (0.00s)
+    --- PASS: TestReadLimitedBody/within_limit_returns_data (0.00s)
+    --- PASS: TestReadLimitedBody/exactly_at_limit_returns_data (0.00s)
+    --- PASS: TestReadLimitedBody/exceeds_limit_returns_error (0.00s)
+    --- PASS: TestReadLimitedBody/empty_body_returns_empty_slice (0.00s)
+    --- PASS: TestReadLimitedBody/read_error_propagated (0.00s)
+    --- PASS: TestReadLimitedBody/one_byte_over_limit_returns_error (0.00s)
+    --- PASS: TestReadLimitedBody/works_with_bytes_reader (0.00s)
+=== RUN   TestLobService_ValidateAddress_MockMode
+=== RUN   TestLobService_ValidateAddress_MockMode/validates_regular_address
+=== RUN   TestLobService_ValidateAddress_MockMode/detects_PO_Box_in_mock_mode
+=== RUN   TestLobService_ValidateAddress_MockMode/detects_P.O._Box_variant
+--- PASS: TestLobService_ValidateAddress_MockMode (0.00s)
+    --- PASS: TestLobService_ValidateAddress_MockMode/validates_regular_address (0.00s)
+    --- PASS: TestLobService_ValidateAddress_MockMode/detects_PO_Box_in_mock_mode (0.00s)
+    --- PASS: TestLobService_ValidateAddress_MockMode/detects_P.O._Box_variant (0.00s)
+=== RUN   TestLobService_ValidateAddress_WithAPI
+--- PASS: TestLobService_ValidateAddress_WithAPI (0.00s)
+=== RUN   TestLobService_ValidateAddress_POBox
+--- PASS: TestLobService_ValidateAddress_POBox (0.00s)
+=== RUN   TestLobService_ValidateAddress_CMRA
+--- PASS: TestLobService_ValidateAddress_CMRA (0.00s)
+=== RUN   TestLobService_ValidateAddress_Commercial
+--- PASS: TestLobService_ValidateAddress_Commercial (0.00s)
+=== RUN   TestLobService_ValidateAddress_Residential
+--- PASS: TestLobService_ValidateAddress_Residential (0.00s)
+=== RUN   TestLobService_ValidateAddress_Undeliverable
+--- PASS: TestLobService_ValidateAddress_Undeliverable (0.00s)
+=== RUN   TestLobService_SendPostcard_MockMode
+2026/06/26 21:39:55 INFO lob api key not configured, using mock mode
+--- PASS: TestLobService_SendPostcard_MockMode (0.00s)
+=== RUN   TestLobService_SendPostcard_WithAPI
+--- PASS: TestLobService_SendPostcard_WithAPI (0.00s)
+=== RUN   TestLobService_SendPostcard_MissingReturnAddress
+--- PASS: TestLobService_SendPostcard_MissingReturnAddress (0.00s)
+=== RUN   TestLobService_APIError
+--- PASS: TestLobService_APIError (0.00s)
+=== RUN   TestLobService_DeliverabilityVariants
+=== RUN   TestLobService_DeliverabilityVariants/deliverable
+=== RUN   TestLobService_DeliverabilityVariants/deliverable_missing_unit
+=== RUN   TestLobService_DeliverabilityVariants/deliverable_unnecessary_unit
+=== RUN   TestLobService_DeliverabilityVariants/deliverable_incorrect_unit
+=== RUN   TestLobService_DeliverabilityVariants/undeliverable
+=== RUN   TestLobService_DeliverabilityVariants/no_match
+--- PASS: TestLobService_DeliverabilityVariants (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/deliverable (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/deliverable_missing_unit (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/deliverable_unnecessary_unit (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/deliverable_incorrect_unit (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/undeliverable (0.00s)
+    --- PASS: TestLobService_DeliverabilityVariants/no_match (0.00s)
+=== RUN   TestLobService_SendPostcard_APIError
+--- PASS: TestLobService_SendPostcard_APIError (0.00s)
+=== RUN   TestLobService_SendPostcard_InvalidAPIKeyFallback
+2026/06/26 21:39:55 WARN lob api key is invalid, using mock mode
+--- PASS: TestLobService_SendPostcard_InvalidAPIKeyFallback (0.00s)
+=== RUN   TestLobService_SendPostcard_MalformedJSON
+--- PASS: TestLobService_SendPostcard_MalformedJSON (0.00s)
+=== RUN   TestLobService_ValidateAddress_MalformedJSON
+--- PASS: TestLobService_ValidateAddress_MalformedJSON (0.00s)
+=== RUN   TestLobFixture_ResidentialAddress
+--- PASS: TestLobFixture_ResidentialAddress (0.00s)
+=== RUN   TestLobFixture_CommercialAddress
+--- PASS: TestLobFixture_CommercialAddress (0.00s)
+=== RUN   TestLobFixture_CMRAAddress
+--- PASS: TestLobFixture_CMRAAddress (0.00s)
+=== RUN   TestLobFixture_POBoxAddress
+--- PASS: TestLobFixture_POBoxAddress (0.00s)
+=== RUN   TestLobFixture_AddressTypeVariants
+=== RUN   TestLobFixture_AddressTypeVariants/residential_address
+=== RUN   TestLobFixture_AddressTypeVariants/commercial_address
+=== RUN   TestLobFixture_AddressTypeVariants/cmra_address
+=== RUN   TestLobFixture_AddressTypeVariants/po_box_address
+--- PASS: TestLobFixture_AddressTypeVariants (0.00s)
+    --- PASS: TestLobFixture_AddressTypeVariants/residential_address (0.00s)
+    --- PASS: TestLobFixture_AddressTypeVariants/commercial_address (0.00s)
+    --- PASS: TestLobFixture_AddressTypeVariants/cmra_address (0.00s)
+    --- PASS: TestLobFixture_AddressTypeVariants/po_box_address (0.00s)
+=== RUN   TestNewMailService_Postgrid
+2026/06/26 21:39:55 INFO using postgrid as mail provider
+--- PASS: TestNewMailService_Postgrid (0.00s)
+=== RUN   TestNewMailService_Lob
+2026/06/26 21:39:55 INFO using lob as mail provider data_retention="90 days"
+--- PASS: TestNewMailService_Lob (0.00s)
+=== RUN   TestNewMailService_DefaultsToLob
+2026/06/26 21:39:55 INFO mail provider not set, defaulting to lob
+--- PASS: TestNewMailService_DefaultsToLob (0.00s)
+=== RUN   TestNewMailService_InvalidProvider
+--- PASS: TestNewMailService_InvalidProvider (0.00s)
+=== RUN   TestGeocodeAddress_SanFrancisco
+--- PASS: TestGeocodeAddress_SanFrancisco (0.00s)
+=== RUN   TestGeocodeAddress_Brooklyn
+--- PASS: TestGeocodeAddress_Brooklyn (0.00s)
+=== RUN   TestGeocodeAddress_Seattle
+--- PASS: TestGeocodeAddress_Seattle (0.00s)
+=== RUN   TestGeocodeAddress_Rural
+--- PASS: TestGeocodeAddress_Rural (0.00s)
+=== RUN   TestGeocodeAddress_NoResults
+--- PASS: TestGeocodeAddress_NoResults (0.00s)
+=== RUN   TestGeocodeAddress_ContextExtraction
+=== RUN   TestGeocodeAddress_ContextExtraction/San_Francisco_-_no_locality
+=== RUN   TestGeocodeAddress_ContextExtraction/Brooklyn_-_has_locality
+=== RUN   TestGeocodeAddress_ContextExtraction/Seattle_-_no_locality
+--- PASS: TestGeocodeAddress_ContextExtraction (0.00s)
+    --- PASS: TestGeocodeAddress_ContextExtraction/San_Francisco_-_no_locality (0.00s)
+    --- PASS: TestGeocodeAddress_ContextExtraction/Brooklyn_-_has_locality (0.00s)
+    --- PASS: TestGeocodeAddress_ContextExtraction/Seattle_-_no_locality (0.00s)
+=== RUN   TestGetStateBoundary_Washington
+--- PASS: TestGetStateBoundary_Washington (0.00s)
+=== RUN   TestGetStateBoundary_California
+--- PASS: TestGetStateBoundary_California (0.00s)
+=== RUN   TestGetStateBoundary_SkipsBusinesses
+--- PASS: TestGetStateBoundary_SkipsBusinesses (0.00s)
+=== RUN   TestGetStateBoundary_SkipsCityAddressType
+--- PASS: TestGetStateBoundary_SkipsCityAddressType (0.00s)
+=== RUN   TestGetCountyBoundary
+--- PASS: TestGetCountyBoundary (0.00s)
+=== RUN   TestGetCityBoundary_Seattle
+--- PASS: TestGetCityBoundary_Seattle (0.00s)
+=== RUN   TestGetLocalityBoundary_Brooklyn
+--- PASS: TestGetLocalityBoundary_Brooklyn (0.00s)
+=== RUN   TestOSMSearchResultParsing
+=== RUN   TestOSMSearchResultParsing/Washington_with_mixed_results
+=== RUN   TestOSMSearchResultParsing/California_state_only
+=== RUN   TestOSMSearchResultParsing/Seattle_city
+--- PASS: TestOSMSearchResultParsing (0.00s)
+    --- PASS: TestOSMSearchResultParsing/Washington_with_mixed_results (0.00s)
+    --- PASS: TestOSMSearchResultParsing/California_state_only (0.00s)
+    --- PASS: TestOSMSearchResultParsing/Seattle_city (0.00s)
+=== RUN   TestRealOSMFixtures
+--- PASS: TestRealOSMFixtures (0.01s)
+=== RUN   TestMapboxService_GeocodeAddress_MockMode
+--- PASS: TestMapboxService_GeocodeAddress_MockMode (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_WithAPI
+    mapbox_test.go:88: Skipping API test - requires URL override capability
+--- SKIP: TestMapboxService_GeocodeAddress_WithAPI (0.00s)
+=== RUN   TestMapboxService_ReverseGeocode_MockMode
+--- PASS: TestMapboxService_ReverseGeocode_MockMode (0.00s)
+=== RUN   TestMapboxService_GetPublicToken
+--- PASS: TestMapboxService_GetPublicToken (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_AddressNotFound
+--- PASS: TestMapboxService_GeocodeAddress_AddressNotFound (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_APIError
+--- PASS: TestMapboxService_GeocodeAddress_APIError (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_MalformedJSON
+--- PASS: TestMapboxService_GeocodeAddress_MalformedJSON (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_CountyFallback
+--- PASS: TestMapboxService_GeocodeAddress_CountyFallback (0.00s)
+=== RUN   TestMapboxService_GeocodeAddress_FullHierarchy
+--- PASS: TestMapboxService_GeocodeAddress_FullHierarchy (0.00s)
+=== RUN   TestGeocodeResult
+--- PASS: TestGeocodeResult (0.00s)
+=== RUN   TestSearchStateBoundary_SkipsCityResults
+--- PASS: TestSearchStateBoundary_SkipsCityResults (0.00s)
+=== RUN   TestSearchStateBoundary_OnlyCityResults_ReturnsError
+--- PASS: TestSearchStateBoundary_OnlyCityResults_ReturnsError (0.00s)
+=== RUN   TestFetchCityBoundaryByName_SkipsStateAndCountyResults
+--- PASS: TestFetchCityBoundaryByName_SkipsStateAndCountyResults (0.00s)
+=== RUN   TestGetCountyBoundary_SkipsNonCountyResults
+--- PASS: TestGetCountyBoundary_SkipsNonCountyResults (0.00s)
+=== RUN   TestGetLocalityBoundary_SkipsCountyResults
+--- PASS: TestGetLocalityBoundary_SkipsCountyResults (0.00s)
+=== RUN   TestNewMFAService
+=== RUN   TestNewMFAService/creates_service_with_valid_config
+=== RUN   TestNewMFAService/rejects_invalid_encryption_key_length
+=== RUN   TestNewMFAService/rejects_empty_encryption_key
+--- PASS: TestNewMFAService (0.00s)
+    --- PASS: TestNewMFAService/creates_service_with_valid_config (0.00s)
+    --- PASS: TestNewMFAService/rejects_invalid_encryption_key_length (0.00s)
+    --- PASS: TestNewMFAService/rejects_empty_encryption_key (0.00s)
+=== RUN   TestMFAService_GenerateSecret
+=== RUN   TestMFAService_GenerateSecret/generates_valid_TOTP_key
+=== RUN   TestMFAService_GenerateSecret/generates_unique_secrets
+--- PASS: TestMFAService_GenerateSecret (0.00s)
+    --- PASS: TestMFAService_GenerateSecret/generates_valid_TOTP_key (0.00s)
+    --- PASS: TestMFAService_GenerateSecret/generates_unique_secrets (0.00s)
+=== RUN   TestMFAService_EncryptDecrypt
+=== RUN   TestMFAService_EncryptDecrypt/encrypts_and_decrypts_secret
+=== RUN   TestMFAService_EncryptDecrypt/produces_different_ciphertext_for_same_plaintext
+=== RUN   TestMFAService_EncryptDecrypt/fails_to_decrypt_with_wrong_key
+=== RUN   TestMFAService_EncryptDecrypt/fails_to_decrypt_invalid_base64
+--- PASS: TestMFAService_EncryptDecrypt (0.00s)
+    --- PASS: TestMFAService_EncryptDecrypt/encrypts_and_decrypts_secret (0.00s)
+    --- PASS: TestMFAService_EncryptDecrypt/produces_different_ciphertext_for_same_plaintext (0.00s)
+    --- PASS: TestMFAService_EncryptDecrypt/fails_to_decrypt_with_wrong_key (0.00s)
+    --- PASS: TestMFAService_EncryptDecrypt/fails_to_decrypt_invalid_base64 (0.00s)
+=== RUN   TestMFAService_ValidateCode
+=== RUN   TestMFAService_ValidateCode/rejects_invalid_code_format
+=== RUN   TestMFAService_ValidateCode/rejects_random_code
+=== RUN   TestMFAService_ValidateCode/fails_with_invalid_encrypted_secret
+--- PASS: TestMFAService_ValidateCode (0.00s)
+    --- PASS: TestMFAService_ValidateCode/rejects_invalid_code_format (0.00s)
+    --- PASS: TestMFAService_ValidateCode/rejects_random_code (0.00s)
+    --- PASS: TestMFAService_ValidateCode/fails_with_invalid_encrypted_secret (0.00s)
+=== RUN   TestMFAService_GenerateQRCode
+=== RUN   TestMFAService_GenerateQRCode/generates_valid_QR_code_data_URL
+--- PASS: TestMFAService_GenerateQRCode (0.01s)
+    --- PASS: TestMFAService_GenerateQRCode/generates_valid_QR_code_data_URL (0.01s)
+=== RUN   TestMFAService_GenerateBackupCodes
+=== RUN   TestMFAService_GenerateBackupCodes/generates_correct_number_of_codes
+=== RUN   TestMFAService_GenerateBackupCodes/generates_codes_in_correct_format
+=== RUN   TestMFAService_GenerateBackupCodes/generates_unique_codes
+--- PASS: TestMFAService_GenerateBackupCodes (0.00s)
+    --- PASS: TestMFAService_GenerateBackupCodes/generates_correct_number_of_codes (0.00s)
+    --- PASS: TestMFAService_GenerateBackupCodes/generates_codes_in_correct_format (0.00s)
+    --- PASS: TestMFAService_GenerateBackupCodes/generates_unique_codes (0.00s)
+=== RUN   TestMFAService_HashBackupCodes
+=== RUN   TestMFAService_HashBackupCodes/hashes_codes_to_JSON_array
+--- PASS: TestMFAService_HashBackupCodes (0.13s)
+    --- PASS: TestMFAService_HashBackupCodes/hashes_codes_to_JSON_array (0.13s)
+=== RUN   TestMFAService_ValidateBackupCode
+=== RUN   TestMFAService_ValidateBackupCode/validates_correct_backup_code
+=== RUN   TestMFAService_ValidateBackupCode/validates_code_without_dash
+=== RUN   TestMFAService_ValidateBackupCode/validates_lowercase_code
+=== RUN   TestMFAService_ValidateBackupCode/rejects_invalid_backup_code
+=== RUN   TestMFAService_ValidateBackupCode/rejects_already_used_code
+=== RUN   TestMFAService_ValidateBackupCode/returns_error_for_empty_codes_JSON
+=== RUN   TestMFAService_ValidateBackupCode/returns_error_for_empty_array
+--- PASS: TestMFAService_ValidateBackupCode (0.99s)
+    --- PASS: TestMFAService_ValidateBackupCode/validates_correct_backup_code (0.07s)
+    --- PASS: TestMFAService_ValidateBackupCode/validates_code_without_dash (0.13s)
+    --- PASS: TestMFAService_ValidateBackupCode/validates_lowercase_code (0.20s)
+    --- PASS: TestMFAService_ValidateBackupCode/rejects_invalid_backup_code (0.20s)
+    --- PASS: TestMFAService_ValidateBackupCode/rejects_already_used_code (0.20s)
+    --- PASS: TestMFAService_ValidateBackupCode/returns_error_for_empty_codes_JSON (0.00s)
+    --- PASS: TestMFAService_ValidateBackupCode/returns_error_for_empty_array (0.00s)
+=== RUN   TestMFAService_GetBackupCodeCount
+=== RUN   TestMFAService_GetBackupCodeCount/counts_backup_codes_correctly
+=== RUN   TestMFAService_GetBackupCodeCount/returns_0_for_empty_JSON
+=== RUN   TestMFAService_GetBackupCodeCount/returns_0_for_empty_array
+=== RUN   TestMFAService_GetBackupCodeCount/returns_0_for_invalid_JSON
+--- PASS: TestMFAService_GetBackupCodeCount (0.33s)
+    --- PASS: TestMFAService_GetBackupCodeCount/counts_backup_codes_correctly (0.33s)
+    --- PASS: TestMFAService_GetBackupCodeCount/returns_0_for_empty_JSON (0.00s)
+    --- PASS: TestMFAService_GetBackupCodeCount/returns_0_for_empty_array (0.00s)
+    --- PASS: TestMFAService_GetBackupCodeCount/returns_0_for_invalid_JSON (0.00s)
+=== RUN   TestMFAService_Integration
+=== RUN   TestMFAService_Integration/full_MFA_setup_flow
+--- PASS: TestMFAService_Integration (0.73s)
+    --- PASS: TestMFAService_Integration/full_MFA_setup_flow (0.73s)
+=== RUN   TestNotificationService_QueueInviteLinkUpdatedEvent
+2026/06/26 21:39:57 INFO queued invite link update event group_id=group-123 region_id=region-456
+--- PASS: TestNotificationService_QueueInviteLinkUpdatedEvent (0.00s)
+=== RUN   TestNotificationService_QueueVerificationComplete
+2026/06/26 21:39:57 INFO queued verification complete notification user_id=user-123
+--- PASS: TestNotificationService_QueueVerificationComplete (0.00s)
+=== RUN   TestNotificationService_QueueVouchReceived
+2026/06/26 21:39:57 INFO queued vouch received notification user_id=user-123 voucher_id=voucher-456
+--- PASS: TestNotificationService_QueueVouchReceived (0.00s)
+=== RUN   TestNotificationService_QueueVouchComplete
+2026/06/26 21:39:57 INFO queued vouch complete notification user_id=user-123
+--- PASS: TestNotificationService_QueueVouchComplete (0.00s)
+=== RUN   TestNotificationService_UUIDs
+2026/06/26 21:39:57 INFO queued verification complete notification user_id=user-1
+2026/06/26 21:39:57 INFO queued verification complete notification user_id=user-2
+--- PASS: TestNotificationService_UUIDs (0.00s)
+=== RUN   TestNotificationService_QueueRekeyingNeededEvent
+2026/06/26 21:39:57 INFO queued re-keying needed event user_id=user-rotated-keys
+--- PASS: TestNotificationService_QueueRekeyingNeededEvent (0.00s)
+=== RUN   TestNotificationWorker_ProcessNotification
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO sent notification notification_id=notif-1 notification_type=verification_complete user_id=user-123
+--- PASS: TestNotificationWorker_ProcessNotification (0.00s)
+=== RUN   TestNotificationWorker_RateLimiting
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO rate limited notification user_id=user-123 notification_type=verification_complete
+--- PASS: TestNotificationWorker_RateLimiting (0.00s)
+=== RUN   TestNotificationWorker_BlockedUser
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO skipping notification for blocked user user_id=user-123
+--- PASS: TestNotificationWorker_BlockedUser (0.00s)
+=== RUN   TestNotificationWorker_FanOut
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO fan-out complete region_id=region-456 queued_count=3
+--- PASS: TestNotificationWorker_FanOut (0.00s)
+=== RUN   TestHashEmailContent
+--- PASS: TestHashEmailContent (0.00s)
+=== RUN   TestNotificationWorker_RekeyingFanOut
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO re-keying fan-out complete rotated_user_id=rotated-user-1 queued_count=3
+--- PASS: TestNotificationWorker_RekeyingFanOut (0.00s)
+=== RUN   TestNotificationWorker_RekeyingFanOut_NoSharedSecrets
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO re-keying fan-out complete rotated_user_id=lonely-user queued_count=0
+--- PASS: TestNotificationWorker_RekeyingFanOut_NoSharedSecrets (0.00s)
+=== RUN   TestNotificationWorker_RekeyingFanOut_MissingResourceID
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 ERROR re-keying fan-out event missing user id event_id=rekey-fanout-no-resource
+--- PASS: TestNotificationWorker_RekeyingFanOut_MissingResourceID (0.00s)
+=== RUN   TestNotificationWorker_RekeyingFanOut_NilSecretKeyLookup
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 ERROR secret key lookup not configured, cannot fan out re-keying notification
+--- PASS: TestNotificationWorker_RekeyingFanOut_NilSecretKeyLookup (0.00s)
+=== RUN   TestNotificationWorker_RekeyingFanOut_LookupError
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 ERROR failed to get users sharing secrets rotated_user_id=some-user error="database connection failed"
+--- PASS: TestNotificationWorker_RekeyingFanOut_LookupError (0.00s)
+=== RUN   TestNotificationWorker_RekeyingEmail
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 INFO sent notification notification_id=rekey-notif-1 notification_type=rekeying_needed user_id=user-recipient
+--- PASS: TestNotificationWorker_RekeyingEmail (0.00s)
+=== RUN   TestNotificationWorker_UnknownFanOutType
+2026/06/26 21:39:57 INFO processing notifications count=1
+2026/06/26 21:39:57 ERROR unknown fan-out event type notification_type=totally_unknown_type
+--- PASS: TestNotificationWorker_UnknownFanOutType (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_MockMode
+=== RUN   TestPostgridService_ValidateAddress_MockMode/validates_regular_address
+=== RUN   TestPostgridService_ValidateAddress_MockMode/detects_PO_Box_in_mock_mode
+=== RUN   TestPostgridService_ValidateAddress_MockMode/detects_P.O._Box_variant
+--- PASS: TestPostgridService_ValidateAddress_MockMode (0.00s)
+    --- PASS: TestPostgridService_ValidateAddress_MockMode/validates_regular_address (0.00s)
+    --- PASS: TestPostgridService_ValidateAddress_MockMode/detects_PO_Box_in_mock_mode (0.00s)
+    --- PASS: TestPostgridService_ValidateAddress_MockMode/detects_P.O._Box_variant (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_WithAPI
+--- PASS: TestPostgridService_ValidateAddress_WithAPI (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_POBox
+--- PASS: TestPostgridService_ValidateAddress_POBox (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_CMRA
+--- PASS: TestPostgridService_ValidateAddress_CMRA (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_Commercial
+--- PASS: TestPostgridService_ValidateAddress_Commercial (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_Residential
+--- PASS: TestPostgridService_ValidateAddress_Residential (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_Undeliverable
+--- PASS: TestPostgridService_ValidateAddress_Undeliverable (0.00s)
+=== RUN   TestPostgridService_SendPostcard_MockMode
+2026/06/26 21:39:57 INFO postgrid print and mail api key not configured, using mock mode
+--- PASS: TestPostgridService_SendPostcard_MockMode (0.00s)
+=== RUN   TestPostgridService_SendPostcard_WithAPI
+--- PASS: TestPostgridService_SendPostcard_WithAPI (0.00s)
+=== RUN   TestIsPOBoxAddress
+--- PASS: TestIsPOBoxAddress (0.00s)
+=== RUN   TestPostgridService_SendPostcard_MissingReturnAddress
+--- PASS: TestPostgridService_SendPostcard_MissingReturnAddress (0.00s)
+=== RUN   TestPostgridService_APIError
+--- PASS: TestPostgridService_APIError (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_CorrectedStatus
+--- PASS: TestPostgridService_ValidateAddress_CorrectedStatus (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_MalformedJSON
+--- PASS: TestPostgridService_ValidateAddress_MalformedJSON (0.00s)
+=== RUN   TestPostgridService_SendPostcard_APIError
+--- PASS: TestPostgridService_SendPostcard_APIError (0.00s)
+=== RUN   TestPostgridService_SendPostcard_InvalidAPIKeyFallback
+2026/06/26 21:39:57 WARN postgrid print/mail api key is invalid, using mock mode
+--- PASS: TestPostgridService_SendPostcard_InvalidAPIKeyFallback (0.00s)
+=== RUN   TestPostgridService_SendPostcard_MalformedJSON
+--- PASS: TestPostgridService_SendPostcard_MalformedJSON (0.00s)
+=== RUN   TestPostgridService_ValidateAddress_ErrorReasonExtraction
+--- PASS: TestPostgridService_ValidateAddress_ErrorReasonExtraction (0.00s)
+=== RUN   TestDBRateLimiter_Allow
+    ratelimit_test.go:20: TEST_DB_HOST not set, skipping database tests
+--- SKIP: TestDBRateLimiter_Allow (0.00s)
+=== RUN   TestDBRateLimiter_Reset
+    ratelimit_test.go:20: TEST_DB_HOST not set, skipping database tests
+--- SKIP: TestDBRateLimiter_Reset (0.00s)
+=== RUN   TestDBRateLimiter_Cleanup
+    ratelimit_test.go:20: TEST_DB_HOST not set, skipping database tests
+--- SKIP: TestDBRateLimiter_Cleanup (0.00s)
+=== RUN   TestNoOpRateLimiter
+=== RUN   TestNoOpRateLimiter/always_allows_requests
+=== RUN   TestNoOpRateLimiter/reset_does_nothing
+=== RUN   TestNoOpRateLimiter/cleanup_does_nothing
+--- PASS: TestNoOpRateLimiter (0.00s)
+    --- PASS: TestNoOpRateLimiter/always_allows_requests (0.00s)
+    --- PASS: TestNoOpRateLimiter/reset_does_nothing (0.00s)
+    --- PASS: TestNoOpRateLimiter/cleanup_does_nothing (0.00s)
+=== RUN   TestInMemoryRateLimiter_Allow
+=== RUN   TestInMemoryRateLimiter_Allow/allows_requests_under_limit
+=== RUN   TestInMemoryRateLimiter_Allow/blocks_requests_over_limit
+=== RUN   TestInMemoryRateLimiter_Allow/returns_correct_reset_time
+=== RUN   TestInMemoryRateLimiter_Allow/different_keys_are_independent
+--- PASS: TestInMemoryRateLimiter_Allow (0.00s)
+    --- PASS: TestInMemoryRateLimiter_Allow/allows_requests_under_limit (0.00s)
+    --- PASS: TestInMemoryRateLimiter_Allow/blocks_requests_over_limit (0.00s)
+    --- PASS: TestInMemoryRateLimiter_Allow/returns_correct_reset_time (0.00s)
+    --- PASS: TestInMemoryRateLimiter_Allow/different_keys_are_independent (0.00s)
+=== RUN   TestInMemoryRateLimiter_Reset
+--- PASS: TestInMemoryRateLimiter_Reset (0.00s)
+=== RUN   TestInMemoryRateLimiter_Cleanup
+--- PASS: TestInMemoryRateLimiter_Cleanup (0.00s)
+=== RUN   TestInMemoryRateLimiter_Concurrent
+--- PASS: TestInMemoryRateLimiter_Concurrent (0.00s)
+=== RUN   TestSendGridEmailService_DisabledMode
+2026/06/26 21:39:57 INFO sendgrid disabled, would send email to=u***@example.com subject="Verify your email address - Community Rapid Response"
+--- PASS: TestSendGridEmailService_DisabledMode (0.00s)
+=== RUN   TestSendGridEmailService_IsEnabled
+=== RUN   TestSendGridEmailService_IsEnabled/enabled
+=== RUN   TestSendGridEmailService_IsEnabled/disabled
+--- PASS: TestSendGridEmailService_IsEnabled (0.00s)
+    --- PASS: TestSendGridEmailService_IsEnabled/enabled (0.00s)
+    --- PASS: TestSendGridEmailService_IsEnabled/disabled (0.00s)
+=== RUN   TestSendGridEmailService_Backend
+--- PASS: TestSendGridEmailService_Backend (0.00s)
+=== RUN   TestSendGridEmailService_ImplementsInterface
+--- PASS: TestSendGridEmailService_ImplementsInterface (0.00s)
+=== RUN   TestSMTPEmailService_ImplementsInterface
+--- PASS: TestSMTPEmailService_ImplementsInterface (0.00s)
+=== RUN   TestMockEmailService_ImplementsInterface
+--- PASS: TestMockEmailService_ImplementsInterface (0.00s)
+=== RUN   TestNewEmailService_Factory
+=== RUN   TestNewEmailService_Factory/mock_backend
+=== RUN   TestNewEmailService_Factory/empty_backend_defaults_to_mock
+=== RUN   TestNewEmailService_Factory/sendgrid_backend
+=== RUN   TestNewEmailService_Factory/smtp_backend
+=== RUN   TestNewEmailService_Factory/invalid_backend
+--- PASS: TestNewEmailService_Factory (0.00s)
+    --- PASS: TestNewEmailService_Factory/mock_backend (0.00s)
+    --- PASS: TestNewEmailService_Factory/empty_backend_defaults_to_mock (0.00s)
+    --- PASS: TestNewEmailService_Factory/sendgrid_backend (0.00s)
+    --- PASS: TestNewEmailService_Factory/smtp_backend (0.00s)
+    --- PASS: TestNewEmailService_Factory/invalid_backend (0.00s)
+=== RUN   TestNewEmailService_RequiresAPIKey
+--- PASS: TestNewEmailService_RequiresAPIKey (0.00s)
+=== RUN   TestNewEmailService_RequiresSMTPHost
+--- PASS: TestNewEmailService_RequiresSMTPHost (0.00s)
+PASS
+ok  	github.com/opencrr/communityrapidresponse.net/internal/services	2.239s
+Note: database, handler, integration, and E2E tests require TEST_DB_* environment variables
+Set TEST_DB_HOST, TEST_DB_PORT, TEST_DB_USER, TEST_DB_PASSWORD, TEST_DB_NAME to run those tests
