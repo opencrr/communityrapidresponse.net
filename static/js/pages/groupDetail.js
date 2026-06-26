@@ -3,7 +3,7 @@
  * Shows full group info with sections gated by membership/admin status.
  */
 
-import { getGroup, listGroupMembers, listSignalGroups, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink, createSignalGroup } from '../api/groups.js';
+import { getGroup, listGroupMembers, listSignalGroups, getSignalGroupSecret, listMeshtasticChannels, listResources, listInviteLinks, leaveGroup, joinViaLink, createSignalGroup } from '../api/groups.js';
 import { isAuthenticated, getUser, isSuperuser } from '../utils/store.js';
 import { getPrivateKey, decryptSecret, encryptForMembers } from '../crypto/index.js';
 import { getOwnerGroupPublicKeys } from '../api/encryption.js';
@@ -257,15 +257,18 @@ async function loadSignalGroups(groupId, isAdmin) {
         const response = await listSignalGroups(groupId);
         const signalGroups = response.signal_groups || response.groups || [];
 
-        // Decrypt invite links
+        // Decrypt invite links for restricted-tier groups
         const privateKey = await getPrivateKey();
         const decryptedGroups = await Promise.all(signalGroups.map(async (sg) => {
             let link = null;
-            const secret = sg.encrypted_secret;
-            if (secret && secret.encrypted_payload && secret.wrapped_dek && privateKey) {
+            // For restricted-tier chats, fetch and decrypt the secret
+            if (sg.access_tier !== 'open' && privateKey) {
                 try {
-                    link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
-                } catch (e) { /* decryption failed */ }
+                    const secretResp = await getSignalGroupSecret(groupId, sg.id);
+                    if (secretResp.encrypted_payload && secretResp.wrapped_dek) {
+                        link = await decryptSecret(secretResp.encrypted_payload, secretResp.encryption_iv, secretResp.wrapped_dek, privateKey);
+                    }
+                } catch (e) { /* decryption failed or user not entitled */ }
             }
             return { ...sg, _decryptedLink: link };
         }));

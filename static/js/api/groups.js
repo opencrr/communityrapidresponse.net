@@ -29,6 +29,7 @@ export async function respondToInvitation(id, data) { return post(`/group-invita
 // Signal groups
 export async function createSignalGroup(groupId, data) { return post(`/groups/${groupId}/signal-groups`, data); }
 export async function listSignalGroups(groupId) { return get(`/groups/${groupId}/signal-groups`); }
+export async function getSignalGroupSecret(groupId, signalGroupId) { return get(`/groups/${groupId}/signal-groups/${signalGroupId}/secret`); }
 
 // Meshtastic channels
 export async function createMeshtasticChannel(groupId, data) { return post(`/groups/${groupId}/meshtastic-channels`, data); }
