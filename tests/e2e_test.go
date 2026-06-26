@@ -5050,3 +5050,148 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		}
 	})
 }
+
+func TestE2E_EncryptedChatLifecycle(t *testing.T) {
+	suite := SetupE2ETest(t)
+	ctx := context.Background()
+	password := "testpassword123!"
+
+	t.Run("restricted-tier encrypted chat with member lifecycle", func(t *testing.T) {
+		adminID := suite.registerOrGetUserID("ech_admin", "ech_admin@test.com", password)
+		defer suite.cleanup(adminID)
+		suite.disableMFA(adminID)
+		suite.makeUserFullyVerified(adminID)
+		adminToken := suite.reloginUser("ech_admin@test.com", password)
+
+		user2ID := suite.registerOrGetUserID("ech_user2", "ech_user2@test.com", password)
+		defer suite.cleanup(user2ID)
+		suite.disableMFA(user2ID)
+		suite.makeUserVouchVerified(user2ID)
+		user2Token := suite.reloginUser("ech_user2@test.com", password)
+
+		user3ID := suite.registerOrGetUserID("ech_user3", "ech_user3@test.com", password)
+		defer suite.cleanup(user3ID)
+		suite.disableMFA(user3ID)
+		suite.makeUserVouchVerified(user3ID)
+		_ = suite.reloginUser("ech_user3@test.com", password)
+
+		regionID := suite.createTestRegionForGroups(adminID)
+		defer suite.cleanupRegionsForGroups(regionID)
+
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			user2ID, regionID)
+		_, _ = suite.db.ExecContext(ctx,
+			"INSERT INTO user_regions (id, user_id, region_id, is_admin, verification_status, verified_at) VALUES (UUID(), ?, ?, FALSE, 'verified', NOW())",
+			user3ID, regionID)
+
+		groupID, _ := suite.createGroup("ECH Test Group", []string{regionID}, adminToken)
+		defer suite.cleanupGroups(groupID)
+
+		gradUserB, gradUserC := suite.graduateGroup(groupID, adminToken, regionID, "ech")
+		defer suite.cleanup(gradUserB, gradUserC)
+
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, user2ID, false, false)
+		_ = suite.communityGroupRepo.AddMember(ctx, groupID, user3ID, false, false)
+
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":        "Encrypted Chat",
+			"description":       "Restricted tier encrypted chat",
+			"access_tier":       "member",
+			"encrypted_payload": "dGVzdHBheWxvYWQ=",
+			"encryption_iv":     "dGVzdGl2",
+			"wrapped_keys": []map[string]interface{}{
+				{"user_id": adminID, "wrapped_dek": "dek_admin_1"},
+				{"user_id": user2ID, "wrapped_dek": "dek_user2_1"},
+				{"user_id": user3ID, "wrapped_dek": "dek_user3_1"},
+			},
+		}, adminToken)
+		defer func() { _ = sgResp.Body.Close() }()
+
+		if sgResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(sgResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201 to create signal group, got %d: %v", sgResp.StatusCode, errBody)
+		}
+
+		var sgBody map[string]interface{}
+		_ = json.NewDecoder(sgResp.Body).Decode(&sgBody)
+
+		secretResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+groupID, nil, adminToken)
+		defer func() { _ = secretResp.Body.Close() }()
+
+		if secretResp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 to fetch secrets, got %d", secretResp.StatusCode)
+		}
+
+		var secretsBody map[string]interface{}
+		_ = json.NewDecoder(secretResp.Body).Decode(&secretsBody)
+		secrets := secretsBody["secrets"].([]interface{})
+		if len(secrets) == 0 {
+			t.Fatalf("Expected at least one secret for the group")
+		}
+
+		secret := secrets[0].(map[string]interface{})
+		secretID := secret["id"].(string)
+
+		var user2DEKBefore string
+		_ = suite.db.QueryRowContext(ctx, `
+			SELECT wrapped_dek FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secretID, user2ID).Scan(&user2DEKBefore)
+		if user2DEKBefore == "" {
+			t.Fatalf("Expected user2 to have wrapped DEK before removal")
+		}
+
+		var countBefore int
+		_ = suite.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM encrypted_secret_keys WHERE secret_id = ?
+		`, secretID).Scan(&countBefore)
+		if countBefore != 3 {
+			t.Errorf("Expected 3 members before removal, got %d", countBefore)
+		}
+
+		leaveResp := suite.request("POST", "/api/v1/groups/"+groupID+"/leave", nil, user2Token)
+		defer func() { _ = leaveResp.Body.Close() }()
+		if leaveResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(leaveResp.Body).Decode(&errBody)
+			t.Errorf("Expected 200 to leave group, got %d: %v", leaveResp.StatusCode, errBody)
+		}
+
+		var user2DEKAfter string
+		err := suite.db.QueryRowContext(ctx, `
+			SELECT wrapped_dek FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secretID, user2ID).Scan(&user2DEKAfter)
+		if err == nil {
+			t.Error("Expected user2's encrypted_secret_keys row to be deleted after removal")
+		}
+
+		var countAfter int
+		_ = suite.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM encrypted_secret_keys WHERE secret_id = ?
+		`, secretID).Scan(&countAfter)
+		if countAfter != 2 {
+			t.Errorf("Expected 2 members after removal, got %d", countAfter)
+		}
+
+		var adminRotationPending bool
+		_ = suite.db.QueryRowContext(ctx, `
+			SELECT group_rotation_pending FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secretID, adminID).Scan(&adminRotationPending)
+		if !adminRotationPending {
+			t.Error("Expected admin's group_rotation_pending to be true after user2 removal")
+		}
+
+		var user3RotationPending bool
+		_ = suite.db.QueryRowContext(ctx, `
+			SELECT group_rotation_pending FROM encrypted_secret_keys
+			WHERE secret_id = ? AND user_id = ?
+		`, secretID, user3ID).Scan(&user3RotationPending)
+		if !user3RotationPending {
+			t.Error("Expected user3's group_rotation_pending to be true after user2 removal")
+		}
+	})
+}
