@@ -5193,5 +5193,33 @@ func TestE2E_EncryptedChatLifecycle(t *testing.T) {
 		if !user3RotationPending {
 			t.Error("Expected user3's group_rotation_pending to be true after user2 removal")
 		}
+
+		// User2 should no longer be able to fetch a usable wrapped DEK for this secret
+		user2SecretsResp := suite.request("GET", "/api/v1/encryption/secrets?group_id="+groupID, nil, user2Token)
+		defer func() { _ = user2SecretsResp.Body.Close() }()
+
+		if user2SecretsResp.StatusCode != http.StatusOK {
+			t.Logf("User2 cannot access secrets after leaving (expected)")
+		} else {
+			var user2SecretsBody map[string]interface{}
+			_ = json.NewDecoder(user2SecretsResp.Body).Decode(&user2SecretsBody)
+			user2Secrets := user2SecretsBody["secrets"].([]interface{})
+
+			// User2 should not have any wrapped DEKs for this secret
+			for _, s := range user2Secrets {
+				secretData := s.(map[string]interface{})
+				if secretData["id"].(string) == secretID {
+					wrappedKeys := secretData["wrapped_keys"].([]interface{})
+					for _, key := range wrappedKeys {
+						keyData := key.(map[string]interface{})
+						if keyData["user_id"].(string) == user2ID {
+							t.Error("User2 should not have a wrapped DEK after leaving the group")
+						}
+					}
+					// If we reach here, user2's wrapped_dek is missing from the response (expected)
+					break
+				}
+			}
+		}
 	})
 }
