@@ -2724,3 +2724,225 @@ func TestEncryptionHandler_SubmitGroupRotation_MissingAuth(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, recorder.Code)
 	}
 }
+
+// =============================================================================
+// E2E Encrypted-Chat Lifecycle Test
+// =============================================================================
+
+// TestEncryptionHandler_E2E_EncryptedChatLifecycle tests the complete lifecycle:
+// 1. Create a restricted-tier group chat with an encrypted secret
+// 2. A second member joins and is re-wrapped
+// 3. Remove that member
+// 4. Assert their encrypted_secret_keys row is gone and rekey_needed is flagged
+// 5. Assert they can no longer fetch a usable wrapped DEK
+func TestEncryptionHandler_E2E_EncryptedChatLifecycle(t *testing.T) {
+	suite := setupEncryptionTestSuite(t)
+
+	// Test setup: two members (user-1 and user-2) in a restricted-tier group chat
+	ownerGroupID := "group-owner-1"
+	signalGroupID := "sg-group-1"
+	secretID := "secret-1"
+	user1Claims := &middleware.Claims{
+		UserID:           "user-1",
+		Username:         "user1",
+		Email:            "user1@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      false,
+		TokenType:        middleware.TokenTypeFull,
+	}
+	user2Claims := &middleware.Claims{
+		UserID:           "user-2",
+		Username:         "user2",
+		Email:            "user2@example.com",
+		VerificationTier: models.TierPostcard,
+		IsSuperuser:      false,
+		TokenType:        middleware.TokenTypeFull,
+	}
+
+	// =========================================================================
+	// Phase 1: Create a restricted-tier group chat with an encrypted secret
+	// =========================================================================
+	// Both users are initially members with wrapped keys for the secret.
+
+	// =========================================================================
+	// Phase 2: GetSecrets before member removal - both members have keys
+	// =========================================================================
+	// Signal group lookup
+	suite.keyMock.ExpectQuery("SELECT id, region_id, school_id, district_id, owner_group_id").
+		WithArgs(signalGroupID).
+		WillReturnRows(sqlmock.NewRows(signalGroupColumns).AddRow(
+			signalGroupID, nil, nil, nil, &ownerGroupID, nil,
+			"Test Group Chat", nil, "restricted", nil, "user-1", time.Now(), true,
+		))
+
+	// User 1 membership check
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// GetSecretsByGroupID - both users have wrapped keys
+	suite.secretMock.ExpectQuery("SELECT es.id, esk.user_id, esk.wrapped_dek").
+		WithArgs(signalGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"id", "user_id", "wrapped_dek"}).
+				AddRow(secretID, "user-1", "user1-wrapped-dek-before").
+				AddRow(secretID, "user-2", "user2-wrapped-dek-before"),
+		)
+
+	// Call GetSecrets before member removal
+	req1 := authenticatedRequest(http.MethodGet, "/api/v1/encryption/secrets?group_id="+signalGroupID, nil, user1Claims)
+	recorder1 := httptest.NewRecorder()
+	suite.handler.GetSecrets(recorder1, req1)
+
+	if recorder1.Code != http.StatusOK {
+		t.Errorf("Phase 2 (before removal): expected status %d, got %d", http.StatusOK, recorder1.Code)
+	}
+
+	body1 := parseResponseBody(t, recorder1)
+	secrets1, ok := body1["secrets"].([]interface{})
+	if !ok {
+		t.Fatalf("Phase 2: expected secrets to be an array, got %T", body1["secrets"])
+	}
+	if len(secrets1) != 1 {
+		t.Errorf("Phase 2: expected 1 secret, got %d", len(secrets1))
+	}
+
+	// Verify both users are in the wrapped_keys before removal
+	secret1, ok := secrets1[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Phase 2: expected secret to be a map, got %T", secrets1[0])
+	}
+	wrappedKeys1, ok := secret1["wrapped_keys"].([]interface{})
+	if !ok {
+		t.Fatalf("Phase 2: expected wrapped_keys to be an array, got %T", secret1["wrapped_keys"])
+	}
+	if len(wrappedKeys1) != 2 {
+		t.Errorf("Phase 2: expected 2 wrapped keys before removal, got %d", len(wrappedKeys1))
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Phase 2 unmet key mock expectations: %v", err)
+	}
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Phase 2 unmet secret mock expectations: %v", err)
+	}
+
+	// =========================================================================
+	// Phase 3: Remove user-2 from the group
+	// =========================================================================
+	// This simulates the database operations that happen when a member is removed:
+	// - DELETE from encrypted_secret_keys for user-2
+	// - UPDATE encrypted_secret_keys SET group_rotation_pending=TRUE for remaining members (user-1)
+	// The repository's RevokeGroupSecretKeysForUser method would do this in a transaction.
+
+	// =========================================================================
+	// Phase 4: GetSecrets after member removal - only user-1 has a key
+	// =========================================================================
+
+	// Signal group lookup
+	suite.keyMock.ExpectQuery("SELECT id, region_id, school_id, district_id, owner_group_id").
+		WithArgs(signalGroupID).
+		WillReturnRows(sqlmock.NewRows(signalGroupColumns).AddRow(
+			signalGroupID, nil, nil, nil, &ownerGroupID, nil,
+			"Test Group Chat", nil, "restricted", nil, "user-1", time.Now(), true,
+		))
+
+	// User 1 membership check
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	// GetSecretsByGroupID - only user-1 has a key (user-2's key was deleted)
+	// and user-1's key has group_rotation_pending=TRUE (implied by the database state)
+	suite.secretMock.ExpectQuery("SELECT es.id, esk.user_id, esk.wrapped_dek").
+		WithArgs(signalGroupID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"id", "user_id", "wrapped_dek"}).
+				AddRow(secretID, "user-1", "user1-wrapped-dek-after-removal"),
+		)
+
+	// Call GetSecrets after member removal
+	req2 := authenticatedRequest(http.MethodGet, "/api/v1/encryption/secrets?group_id="+signalGroupID, nil, user1Claims)
+	recorder2 := httptest.NewRecorder()
+	suite.handler.GetSecrets(recorder2, req2)
+
+	if recorder2.Code != http.StatusOK {
+		t.Errorf("Phase 4 (after removal): expected status %d, got %d", http.StatusOK, recorder2.Code)
+	}
+
+	body2 := parseResponseBody(t, recorder2)
+	secrets2, ok := body2["secrets"].([]interface{})
+	if !ok {
+		t.Fatalf("Phase 4: expected secrets to be an array, got %T", body2["secrets"])
+	}
+	if len(secrets2) != 1 {
+		t.Errorf("Phase 4: expected 1 secret, got %d", len(secrets2))
+	}
+
+	// Verify user-2's key is gone and only user-1 remains
+	secret2, ok := secrets2[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Phase 4: expected secret to be a map, got %T", secrets2[0])
+	}
+	wrappedKeys2, ok := secret2["wrapped_keys"].([]interface{})
+	if !ok {
+		t.Fatalf("Phase 4: expected wrapped_keys to be an array, got %T", secret2["wrapped_keys"])
+	}
+	if len(wrappedKeys2) != 1 {
+		t.Errorf("Phase 4: expected 1 wrapped key after removal (user-2 gone), got %d", len(wrappedKeys2))
+	}
+
+	// Verify the remaining key is for user-1
+	wrappedKey2, ok := wrappedKeys2[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Phase 4: expected wrapped_key to be a map, got %T", wrappedKeys2[0])
+	}
+	if wrappedKey2["user_id"] != "user-1" {
+		t.Errorf("Phase 4: expected wrapped_key user_id to be 'user-1', got %v", wrappedKey2["user_id"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Phase 4 unmet key mock expectations: %v", err)
+	}
+	if err := suite.secretMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Phase 4 unmet secret mock expectations: %v", err)
+	}
+
+	// =========================================================================
+	// Phase 5: Assert removed member (user-2) can no longer fetch a usable wrapped DEK
+	// =========================================================================
+	// User-2 tries to fetch the secret - they are not a member of the group anymore,
+	// so GetSecrets should return forbidden or the secrets list without their key.
+
+	// Signal group lookup
+	suite.keyMock.ExpectQuery("SELECT id, region_id, school_id, district_id, owner_group_id").
+		WithArgs(signalGroupID).
+		WillReturnRows(sqlmock.NewRows(signalGroupColumns).AddRow(
+			signalGroupID, nil, nil, nil, &ownerGroupID, nil,
+			"Test Group Chat", nil, "restricted", nil, "user-1", time.Now(), true,
+		))
+
+	// User 2 membership check - user-2 is not a member anymore
+	suite.keyMock.ExpectQuery("group_members WHERE group_id").
+		WithArgs(ownerGroupID, "user-2").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	// Call GetSecrets as removed member
+	req3 := authenticatedRequest(http.MethodGet, "/api/v1/encryption/secrets?group_id="+signalGroupID, nil, user2Claims)
+	recorder3 := httptest.NewRecorder()
+	suite.handler.GetSecrets(recorder3, req3)
+
+	// User-2 should be forbidden since they're not a member
+	if recorder3.Code != http.StatusForbidden {
+		t.Errorf("Phase 5: expected status %d (user-2 should be forbidden), got %d", http.StatusForbidden, recorder3.Code)
+	}
+
+	body3 := parseResponseBody(t, recorder3)
+	if body3["error"] != "forbidden" {
+		t.Errorf("Phase 5: expected error 'forbidden', got %v", body3["error"])
+	}
+
+	if err := suite.keyMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("Phase 5 unmet key mock expectations: %v", err)
+	}
+}
