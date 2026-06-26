@@ -5050,3 +5050,162 @@ func TestE2E_FullDiscoveryFlow(t *testing.T) {
 		}
 	})
 }
+
+// TestE2E_EncryptedChatLifecycle tests the full lifecycle of an encrypted restricted-tier group
+// chat: creation with a wrapped DEK → second member joins and is re-wrapped → member removal →
+// key row deletion + group_rotation_pending flag → removed member cannot fetch a wrapped DEK.
+func TestE2E_EncryptedChatLifecycle(t *testing.T) {
+	suite := SetupE2ETest(t)
+	ctx := context.Background()
+
+	t.Run("restricted-tier encrypted chat with member lifecycle", func(t *testing.T) {
+		password := "testpassword123!"
+
+		// user1 is the group admin
+		user1ID, user1Token := suite.registerOrGetUser("ecl_admin", "ecl_admin@test.com", password)
+		defer suite.cleanup(user1ID)
+		suite.makeUserFullyVerified(user1ID)
+		user1Token = suite.reloginUser("ecl_admin@test.com", password)
+
+		// user2 will join after the signal group is created and then be re-wrapped
+		user2ID, user2Token := suite.registerOrGetUser("ecl_member", "ecl_member@test.com", password)
+		defer suite.cleanup(user2ID)
+		suite.makeUserFullyVerified(user2ID)
+		user2Token = suite.reloginUser("ecl_member@test.com", password)
+
+		// Create a test region and add user1 to it
+		regionID := suite.createTestRegionForGroups(user1ID)
+		defer suite.cleanupRegionsForGroups(regionID)
+		suite.addUserToRegionForGroups(user2ID, regionID)
+
+		// Create community group (provisional until 3 members)
+		groupID, _ := suite.createGroup("ECL Community Group", []string{regionID}, user1Token)
+		defer suite.cleanupGroups(groupID)
+
+		// Graduate the group by adding two more verified members
+		gradB, gradC := suite.graduateGroup(groupID, user1Token, regionID, "ecl")
+		defer suite.cleanup(gradB, gradC)
+
+		// Create restricted-tier signal group with only user1's wrapped DEK initially.
+		// user2 has not yet joined, so they are not included here.
+		sgResp := suite.request("POST", "/api/v1/groups/"+groupID+"/signal-groups", map[string]interface{}{
+			"group_name":        "Encrypted Neighbourhood Chat",
+			"description":       "Restricted members-only chat",
+			"access_tier":       "member",
+			"encrypted_payload": "dGVzdHBheWxvYWQ=",
+			"encryption_iv":     "dGVzdGl2MTIzNDU2",
+			"wrapped_keys": []map[string]interface{}{
+				{"user_id": user1ID, "wrapped_dek": "dXNlcjF3cmFwcGVkZGVr"},
+			},
+		}, user1Token)
+		defer func() { _ = sgResp.Body.Close() }()
+		if sgResp.StatusCode != http.StatusCreated {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(sgResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 201 for signal group creation, got %d: %v", sgResp.StatusCode, errBody)
+		}
+		var sgBody map[string]interface{}
+		_ = json.NewDecoder(sgResp.Body).Decode(&sgBody)
+		sgID, _ := sgBody["id"].(string)
+		if sgID == "" {
+			t.Fatal("Expected non-empty signal group ID")
+		}
+
+		// user1 fetches the secret to confirm access and capture secretID
+		secretResp1 := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sgID+"/secret", nil, user1Token)
+		defer func() { _ = secretResp1.Body.Close() }()
+		if secretResp1.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(secretResp1.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for user1 pre-join secret fetch, got %d: %v", secretResp1.StatusCode, errBody)
+		}
+		var secretBody1 map[string]interface{}
+		_ = json.NewDecoder(secretResp1.Body).Decode(&secretBody1)
+		secretID, _ := secretBody1["secret_id"].(string)
+		if secretID == "" {
+			t.Fatal("Expected non-empty secret_id in response")
+		}
+		if secretBody1["wrapped_dek"] == "" || secretBody1["wrapped_dek"] == nil {
+			t.Fatal("Expected non-empty wrapped_dek for user1")
+		}
+
+		// user2 joins the community group via invite link (post-creation join)
+		linkBody := suite.createInviteLink(groupID, nil, user1Token)
+		inviteToken, _ := linkBody["token"].(string)
+		joinResp := suite.request("POST", "/api/v1/groups/join/"+inviteToken, nil, user2Token)
+		defer func() { _ = joinResp.Body.Close() }()
+		if joinResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(joinResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for user2 join, got %d: %v", joinResp.StatusCode, errBody)
+		}
+
+		// Re-wrap: admin (user1) updates the secret to include user2's wrapped DEK.
+		// In production this would be triggered by a group-rekey proposal; here we use
+		// the repository directly to simulate the same atomic payload+key replacement.
+		err := suite.encryptedSecretRepo.UpdatePayloadAndKeys(ctx, secretID,
+			"dGVzdHBheWxvYWQ=", "dGVzdGl2MTIzNDU2", user1ID,
+			[]models.WrappedKeyEntry{
+				{UserID: user1ID, WrappedDEK: "dXNlcjF3cmFwcGVkZGVr"},
+				{UserID: user2ID, WrappedDEK: "dXNlcjJ3cmFwcGVkZGVr"},
+			},
+		)
+		if err != nil {
+			t.Fatalf("Failed to re-wrap secret for user2: %v", err)
+		}
+
+		// user2 can now fetch the secret (confirms re-wrap was effective)
+		secretResp2 := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sgID+"/secret", nil, user2Token)
+		defer func() { _ = secretResp2.Body.Close() }()
+		if secretResp2.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(secretResp2.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for user2 post-rewrap secret fetch, got %d: %v", secretResp2.StatusCode, errBody)
+		}
+		var secretBody2 map[string]interface{}
+		_ = json.NewDecoder(secretResp2.Body).Decode(&secretBody2)
+		if secretBody2["wrapped_dek"] == "" || secretBody2["wrapped_dek"] == nil {
+			t.Fatal("Expected non-empty wrapped_dek for user2 after re-wrap")
+		}
+
+		// Remove user2 from the community group (user2 leaves)
+		leaveResp := suite.request("POST", "/api/v1/groups/"+groupID+"/leave", nil, user2Token)
+		defer func() { _ = leaveResp.Body.Close() }()
+		if leaveResp.StatusCode != http.StatusOK {
+			var errBody map[string]interface{}
+			_ = json.NewDecoder(leaveResp.Body).Decode(&errBody)
+			t.Fatalf("Expected 200 for user2 leave, got %d: %v", leaveResp.StatusCode, errBody)
+		}
+
+		// Assert: user2's encrypted_secret_keys row is gone
+		var keyCount int
+		if err := suite.db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM encrypted_secret_keys WHERE secret_id = ? AND user_id = ?",
+			secretID, user2ID,
+		).Scan(&keyCount); err != nil {
+			t.Fatalf("Failed to query encrypted_secret_keys for user2: %v", err)
+		}
+		if keyCount != 0 {
+			t.Errorf("Expected 0 encrypted_secret_keys rows for user2 after removal, got %d", keyCount)
+		}
+
+		// Assert: group_rotation_pending is flagged for surviving members (user1's row)
+		var groupRotationPending bool
+		if err := suite.db.QueryRowContext(ctx,
+			"SELECT group_rotation_pending FROM encrypted_secret_keys WHERE secret_id = ? AND user_id = ?",
+			secretID, user1ID,
+		).Scan(&groupRotationPending); err != nil {
+			t.Fatalf("Failed to query group_rotation_pending for user1: %v", err)
+		}
+		if !groupRotationPending {
+			t.Error("Expected group_rotation_pending = TRUE for user1 after member removal")
+		}
+
+		// Assert: user2 can no longer fetch a usable wrapped DEK — must get 403
+		secretRespAfter := suite.request("GET", "/api/v1/groups/"+groupID+"/signal-groups/"+sgID+"/secret", nil, user2Token)
+		defer func() { _ = secretRespAfter.Body.Close() }()
+		if secretRespAfter.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 for removed user2 secret fetch, got %d", secretRespAfter.StatusCode)
+		}
+	})
+}
