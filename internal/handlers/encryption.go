@@ -584,20 +584,9 @@ func (h *EncryptionHandler) GetSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groupID := r.URL.Query().Get("group_id")
-	if groupID == "" {
+	signalGroupID := r.URL.Query().Get("group_id")
+	if signalGroupID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "group_id query parameter is required")
-		return
-	}
-
-	// Check if user is a member of the group
-	isMember, err := h.groupRepo.IsUserMember(r.Context(), groupID, claims.UserID)
-	if err != nil {
-		writeServerError(w, r, err, "Failed to verify group membership", "encryption", "check_membership")
-		return
-	}
-	if !isMember {
-		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group to view secrets")
 		return
 	}
 
@@ -608,8 +597,8 @@ func (h *EncryptionHandler) GetSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the signal group to verify it exists and get its ID
-	signalGroup, err := h.signalGroupRepo.GetByID(r.Context(), groupID)
+	// Get the signal group to verify it exists and get its owner group
+	signalGroup, err := h.signalGroupRepo.GetByID(r.Context(), signalGroupID)
 	if err != nil {
 		if errors.Is(err, database.ErrSignalGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "Signal group not found")
@@ -624,7 +613,18 @@ func (h *EncryptionHandler) GetSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secrets, err := h.encryptedSecretRepo.GetSecretsByGroupID(r.Context(), groupID)
+	// Check if user is a member of the owner community group
+	isMember, err := h.groupRepo.IsUserMember(r.Context(), *signalGroup.OwnerGroupID, claims.UserID)
+	if err != nil {
+		writeServerError(w, r, err, "Failed to verify group membership", "encryption", "check_membership")
+		return
+	}
+	if !isMember {
+		writeError(w, http.StatusForbidden, "forbidden", "You must be a member of this group to view secrets")
+		return
+	}
+
+	secrets, err := h.encryptedSecretRepo.GetSecretsByGroupID(r.Context(), signalGroupID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to get encrypted secrets", "encryption", "get_secrets")
 		return
