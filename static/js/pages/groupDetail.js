@@ -265,9 +265,8 @@ async function loadSignalGroups(groupId, isAdmin) {
             if (sg.access_tier !== 'open' && privateKey) {
                 try {
                     const secretResp = await getSignalGroupSecret(groupId, sg.id);
-                    const secret = secretResp.encrypted_secret;
-                    if (secret && secret.encrypted_payload && secret.wrapped_dek) {
-                        link = await decryptSecret(secret.encrypted_payload, secret.encryption_iv, secret.wrapped_dek, privateKey);
+                    if (secretResp.encrypted_payload && secretResp.wrapped_dek) {
+                        link = await decryptSecret(secretResp.encrypted_payload, secretResp.encryption_iv, secretResp.wrapped_dek, privateKey);
                     }
                 } catch (e) { /* decryption failed or user not entitled */ }
             }
