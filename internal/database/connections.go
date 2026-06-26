@@ -1216,7 +1216,6 @@ func (r *ConnectionRepository) ListConnectionSignalGroupsWithSecrets(ctx context
 	for rows.Next() {
 		var secretID, encPayload, encIV, wrappedDEK sql.NullString
 		var createdBy sql.NullString
-		var isActive bool
 
 		group := models.SignalGroupWithSecret{
 			SignalGroupPublic: models.SignalGroupPublic{},
@@ -1236,7 +1235,7 @@ func (r *ConnectionRepository) ListConnectionSignalGroupsWithSecrets(ctx context
 			&group.SignalGroupPublic.PlaintextInviteLink,
 			&createdBy,
 			&group.SignalGroupPublic.CreatedAt,
-			&isActive,
+			&group.SignalGroupPublic.IsActive,
 			&secretID,
 			&encPayload,
 			&encIV,

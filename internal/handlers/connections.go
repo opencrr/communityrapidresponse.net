@@ -720,7 +720,7 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 				GroupName:    g.SignalGroupPublic.Name,
 				Description:  g.SignalGroupPublic.Description,
 				CreatedAt:    g.SignalGroupPublic.CreatedAt,
-				IsActive:     true,
+				IsActive:     g.SignalGroupPublic.IsActive,
 				AccessTier:   g.SignalGroupPublic.AccessTier,
 			}
 			// Include plaintext_invite_link for open-tier chats
