@@ -40,6 +40,7 @@ type SignalGroupPublic struct {
 	Description         *string   `json:"description,omitempty"`
 	MemberCountEstimate string    `json:"member_count_estimate,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
+	IsActive            bool      `json:"is_active"`
 	AccessTier          string    `json:"access_tier"`
 	PlaintextInviteLink *string   `json:"plaintext_invite_link,omitempty"`
 	HasPendingDeletion  bool      `json:"has_pending_deletion"`

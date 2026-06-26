@@ -141,7 +141,7 @@ func (h *ConnectionHandler) RespondToProposal(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		Accept bool   `json:"accept"`
+		Accept  bool   `json:"accept"`
 		GroupID string `json:"group_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -395,9 +395,9 @@ func (h *ConnectionHandler) InviteToConnection(w http.ResponseWriter, r *http.Re
 	resourceType := "connection_proposal"
 	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionProposed,
 		&resourceType, &proposal.ID, map[string]interface{}{
-			"connection_id":  connectionID,
+			"connection_id":   connectionID,
 			"target_group_id": req.GroupID,
-			"proposal_type":  "expansion",
+			"proposal_type":   "expansion",
 		}), models.AuditActionConnectionProposed)
 
 	writeJSON(w, http.StatusCreated, proposal)
@@ -543,10 +543,10 @@ func (h *ConnectionHandler) ProposeSignalChat(w http.ResponseWriter, r *http.Req
 	resourceType := "connection_chat_proposal"
 	logAuditError(r, h.auditRepo.Log(r.Context(), &claims.UserID, models.AuditActionConnectionChatProposed,
 		&resourceType, &proposal.ID, map[string]interface{}{
-			"connection_id":    connectionID,
+			"connection_id":     connectionID,
 			"proposer_group_id": proposerGroupID,
-			"group_name":       req.GroupName,
-			"access_level":     req.AccessLevel,
+			"group_name":        req.GroupName,
+			"access_level":      req.AccessLevel,
 		}), models.AuditActionConnectionChatProposed)
 
 	writeJSON(w, http.StatusCreated, proposal)
@@ -678,34 +678,35 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 		return
 	}
 
-	groups, err := h.connectionRepo.ListConnectionSignalGroups(r.Context(), connectionID)
+	groups, err := h.connectionRepo.ListConnectionSignalGroupsWithSecrets(r.Context(), connectionID, claims.UserID)
 	if err != nil {
 		writeServerError(w, r, err, "Failed to list signal groups", "connection", "list_signal_groups")
 		return
 	}
 
-	// Non-admins only see all_members (open-tier) chats; admin_only chats are
-	// withheld unless the caller is an admin of a connected group.
+	// Non-admins only see open-tier chats; admin_only chats are withheld unless
+	// the caller is an admin of a connected group.
 	type signalGroupResponse struct {
-		ID                  string    `json:"id"`
-		RegionID            *string   `json:"region_id,omitempty"`
-		SchoolID            *string   `json:"school_id,omitempty"`
-		DistrictID          *string   `json:"district_id,omitempty"`
-		OwnerGroupID        *string   `json:"owner_group_id,omitempty"`
-		ConnectionID        *string   `json:"connection_id,omitempty"`
-		RegionName          string    `json:"region_name,omitempty"`
-		SchoolName          string    `json:"school_name,omitempty"`
-		DistrictName        string    `json:"district_name,omitempty"`
-		GroupName           string    `json:"group_name"`
-		Description         *string   `json:"description,omitempty"`
-		CreatedAt           time.Time `json:"created_at"`
-		IsActive            bool      `json:"is_active"`
-		AccessTier          string    `json:"access_tier"`
-		PlaintextInviteLink *string   `json:"plaintext_invite_link,omitempty"`
+		ID                  string                          `json:"id"`
+		RegionID            *string                         `json:"region_id,omitempty"`
+		SchoolID            *string                         `json:"school_id,omitempty"`
+		DistrictID          *string                         `json:"district_id,omitempty"`
+		OwnerGroupID        *string                         `json:"owner_group_id,omitempty"`
+		ConnectionID        *string                         `json:"connection_id,omitempty"`
+		RegionName          string                          `json:"region_name,omitempty"`
+		SchoolName          string                          `json:"school_name,omitempty"`
+		DistrictName        string                          `json:"district_name,omitempty"`
+		GroupName           string                          `json:"group_name"`
+		Description         *string                         `json:"description,omitempty"`
+		CreatedAt           time.Time                       `json:"created_at"`
+		IsActive            bool                            `json:"is_active"`
+		AccessTier          string                          `json:"access_tier"`
+		PlaintextInviteLink *string                         `json:"plaintext_invite_link,omitempty"`
+		EncryptedSecret     *models.EncryptedSecretResponse `json:"encrypted_secret,omitempty"`
 	}
 	filtered := make([]signalGroupResponse, 0, len(groups))
 	for _, g := range groups {
-		if isAdminOfAny || g.AccessTier != models.AccessTierAdminOnly {
+		if isAdminOfAny || g.AccessTier != string(models.AccessTierAdminOnly) {
 			resp := signalGroupResponse{
 				ID:           g.ID,
 				RegionID:     g.RegionID,
@@ -716,15 +717,17 @@ func (h *ConnectionHandler) ListConnectionSignalGroups(w http.ResponseWriter, r 
 				RegionName:   g.RegionName,
 				SchoolName:   g.SchoolName,
 				DistrictName: g.DistrictName,
-				GroupName:    g.GroupName,
+				GroupName:    g.Name,
 				Description:  g.Description,
 				CreatedAt:    g.CreatedAt,
 				IsActive:     g.IsActive,
-				AccessTier:   string(g.AccessTier),
+				AccessTier:   g.AccessTier,
 			}
-			// Include plaintext_invite_link for open-tier chats
-			if g.AccessTier == models.AccessTierOpen {
+			if g.AccessTier == string(models.AccessTierOpen) {
 				resp.PlaintextInviteLink = g.PlaintextInviteLink
+			}
+			if isAdminOfAny && g.EncryptedSecret != nil {
+				resp.EncryptedSecret = g.EncryptedSecret
 			}
 			filtered = append(filtered, resp)
 		}
