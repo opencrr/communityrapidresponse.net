@@ -319,7 +319,7 @@ export async function render(container) {
                         <h3>Your privacy</h3>
                         <ul>
                             <li>Addresses are never stored &mdash; used only for postcard mailing, then discarded</li>
-                            <li>For neighborhood, school, and district chats, Signal invite links are stored encrypted so only verified members can decrypt them. Group- and connection-owned chats are currently listed for coordination only &mdash; their invite links are shared out-of-band, not stored on the platform.</li>
+                            <li>For neighborhood, school, district, group, and connection chats, Signal invite links are stored encrypted so only verified members can decrypt them. Open-tier chats have public links accessible to anyone with the link.</li>
                             <li>The platform doesn't track which Signal groups you join</li>
                             <li>Group membership is visible to other group members, not to the public</li>
                         </ul>
@@ -349,15 +349,12 @@ export async function render(container) {
                     <section class="help-section">
                         <h3>Encryption</h3>
                         <p>
-                            For neighborhood, school, and district Signal chats, invite links and
+                            For restricted-tier neighborhood, school, district, group, and connection Signal chats, invite links and
                             sensitive data are stored using envelope encryption (RSA + AES-256-GCM),
                             so only authorized, verified members can decrypt them.
                         </p>
                         <p>
-                            Signal chats owned by groups and connections are currently listed for
-                            coordination only: their invite links are shared out-of-band rather than
-                            stored encrypted on the platform. Encrypted storage for these chats is a
-                            planned addition.
+                            Open-tier group and connection chats have public links accessible to anyone with the link.
                         </p>
                     </section>
                 </div>
