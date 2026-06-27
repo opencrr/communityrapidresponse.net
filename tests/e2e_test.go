@@ -5062,16 +5062,16 @@ func TestE2E_EncryptedChatLifecycle(t *testing.T) {
 		password := "testpassword123!"
 
 		// user1 is the group admin
-		user1ID, user1Token := suite.registerOrGetUser("ecl_admin", "ecl_admin@test.com", password)
+		user1ID, _ := suite.registerOrGetUser("ecl_admin", "ecl_admin@test.com", password)
 		defer suite.cleanup(user1ID)
 		suite.makeUserFullyVerified(user1ID)
-		user1Token = suite.reloginUser("ecl_admin@test.com", password)
+		user1Token := suite.reloginUser("ecl_admin@test.com", password)
 
 		// user2 will join after the signal group is created and then be re-wrapped
-		user2ID, user2Token := suite.registerOrGetUser("ecl_member", "ecl_member@test.com", password)
+		user2ID, _ := suite.registerOrGetUser("ecl_member", "ecl_member@test.com", password)
 		defer suite.cleanup(user2ID)
 		suite.makeUserFullyVerified(user2ID)
-		user2Token = suite.reloginUser("ecl_member@test.com", password)
+		user2Token := suite.reloginUser("ecl_member@test.com", password)
 
 		// Create a test region and add user1 to it
 		regionID := suite.createTestRegionForGroups(user1ID)
