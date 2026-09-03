@@ -96,11 +96,14 @@ let currentRoute = null;
  * Initialize the application
  */
 async function init() {
-    // Check authentication status
-    try {
-        await getCurrentUser();
-    } catch (error) {
-        clearUser();
+    // Skip getCurrentUser on /verify-email to avoid redirect loop on email_unverified token
+    if (window.location.pathname !== '/verify-email') {
+        // Check authentication status
+        try {
+            await getCurrentUser();
+        } catch (error) {
+            clearUser();
+        }
     }
 
     // For returning authenticated users, check for pending re-keys in background

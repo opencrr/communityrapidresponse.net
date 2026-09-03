@@ -90,10 +90,15 @@ async function request(endpoint, options = {}) {
         if (!response.ok) {
             // Check for email verification required error (403)
             if (response.status === 403 && data?.error === 'email_verification_required') {
-                // Redirect to verify-email page
-                window.location.pathname = '/verify-email';
-                // Return a dummy promise that never resolves (page navigation in progress)
-                return new Promise(() => {});
+                // Only redirect if not already on verify-email page to avoid infinite redirect loops
+                if (window.location.pathname !== '/verify-email') {
+                    window.location.pathname = '/verify-email';
+                    // Return a dummy promise that never resolves (page navigation in progress)
+                    return new Promise(() => {});
+                }
+                // If already on /verify-email, throw error instead to be handled by the page
+                const errorMessage = data?.error || data?.message || 'Email verification required';
+                throw new ApiError(errorMessage, response.status, data);
             }
 
             const errorMessage = data?.error || data?.message || `Request failed with status ${response.status}`;
