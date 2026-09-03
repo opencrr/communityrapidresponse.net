@@ -61,9 +61,18 @@ export async function getCurrentUser() {
         }
         return null;
     } catch (error) {
-        if (error instanceof ApiError && error.status === 401) {
-            clearUser();
-            return null;
+        if (error instanceof ApiError) {
+            // Handle 401 - user not authenticated
+            if (error.status === 401) {
+                clearUser();
+                return null;
+            }
+            // Handle 403 with email_verification_required - user is logged in but hasn't verified email
+            // This is expected on /verify-email and should not be treated as an authentication failure
+            if (error.status === 403 && error.data?.error === 'email_verification_required') {
+                clearUser();
+                return null;
+            }
         }
         throw error;
     }

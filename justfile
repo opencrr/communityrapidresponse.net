@@ -709,9 +709,12 @@ build-frontend: _check-esbuild
     # Update index.html to reference hashed bundles. Only the application module
     # script is rewritten — the non-module config.js / env-banner.js scripts must
     # keep their source paths (they are intentionally external for CSP, not bundled).
-    sed -i '' -E "s|(<script type=\"module\" src=\")/static/[^\"]+\.js(\"></script>)|\1/static/dist/$JS_FILE\2|" templates/index.html
-    sed -i '' -E "s|href=\"/static/[^\"]+\.css\"|href=\"/static/dist/$CSS_FILE\"|" templates/index.html
-    sed -i '' -E "s|(/static/images/[^\"?]*)(\?v=[^\"]*)?|\1?v=$FAVICON_V|g" templates/index.html
+    # The .bak suffix (no space before it) is portable across BSD and GNU sed;
+    # `-i ''` is BSD-only and fails on Linux.
+    sed -i.bak -E "s|(<script type=\"module\" src=\")/static/[^\"]+\.js(\"></script>)|\1/static/dist/$JS_FILE\2|" templates/index.html
+    sed -i.bak -E "s|href=\"/static/[^\"]+\.css\"|href=\"/static/dist/$CSS_FILE\"|" templates/index.html
+    sed -i.bak -E "s|(/static/images/[^\"?]*)(\?v=[^\"]*)?|\1?v=$FAVICON_V|g" templates/index.html
+    rm -f templates/index.html.bak
 
     echo "✅ Frontend build complete"
 
