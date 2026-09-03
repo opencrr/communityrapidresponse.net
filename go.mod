@@ -1,6 +1,6 @@
 module github.com/opencrr/communityrapidresponse.net
 
-go 1.25.11
+go 1.26.8
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
