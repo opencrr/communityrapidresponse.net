@@ -3,7 +3,7 @@
 > **Historical scan.** This report reflects the toolchain at scan time (`go1.25.9`).
 > Its primary finding — the `go1.25.9` stdlib CVEs — has since been **resolved**: the
 > project was bumped to `go1.25.11` (go.mod, Dockerfile, CI `GO_VERSION`) during the
-> v2 merge, and `govulncheck` reports no vulnerabilities on `go1.25.11`. Re-run
+> v2 merge, and `govulncheck` reports no vulnerabilities on `go1.25.11`. As of 2026-09, five further stdlib CVEs were reported against go1.25.11 and have been resolved by bumping to go1.26.8. Re-run
 > `just deps-scan` to regenerate against the current toolchain.
 
 **Scan date:** 2026-06-07
