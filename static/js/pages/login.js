@@ -94,6 +94,12 @@ async function handleSubmit(event) {
     try {
         const response = await login({ email, password });
 
+        // Check if email verification is required
+        if (response.email_action) {
+            navigate('/verify-email');
+            return;
+        }
+
         // Check if MFA action is required
         if (response.mfa_action) {
             if (response.mfa_action === 'setup') {

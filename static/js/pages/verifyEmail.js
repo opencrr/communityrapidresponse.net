@@ -1,10 +1,12 @@
 /**
  * Email verification page
- * Handles the email verification link from the verification email
+ * Handles both the email verification link from the verification email
+ * and the pending email verification state after login
  */
 
-import { get } from '../api/client.js';
+import { get, post } from '../api/client.js';
 import { navigate } from '../app.js';
+import toast from '../components/toast.js';
 
 /**
  * Render the email verification page
@@ -16,7 +18,7 @@ export async function render(container) {
     const token = urlParams.get('token');
 
     if (!token) {
-        renderError(container, 'Invalid verification link', 'No verification token found in the URL.');
+        renderPendingVerification(container);
         return;
     }
 
@@ -63,6 +65,80 @@ export async function render(container) {
 
         renderError(container, errorMessage, errorDescription);
     }
+}
+
+/**
+ * Render pending email verification state
+ * @param {HTMLElement} container - Container element
+ */
+function renderPendingVerification(container) {
+    container.innerHTML = `
+        <div class="page page--centered">
+            <div class="auth-page">
+                <div class="card">
+                    <div class="card__header">
+                        <h1 class="card__title">Verify Your Email</h1>
+                    </div>
+                    <div class="card__body">
+                        <div class="empty-state">
+                            <div class="empty-state__icon" style="color: var(--color-info);">✉️</div>
+                            <h3 class="empty-state__title">Check Your Email</h3>
+                            <p class="empty-state__description">We've sent a verification link to your email address. Click the link to verify your account.</p>
+                            <p class="empty-state__description" style="margin-top: 1rem; font-size: 0.9rem; color: var(--color-text-secondary);">Your address is never stored in our system</p>
+                            <div class="btn-group" style="margin-top: 1.5rem;">
+                                <button id="resend-btn" class="btn btn--primary">Resend verification email</button>
+                            </div>
+                            <div id="resend-status" class="form-error hidden" style="margin-top: 1rem;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const resendBtn = document.getElementById('resend-btn');
+    const resendStatus = document.getElementById('resend-status');
+
+    resendBtn.addEventListener('click', async () => {
+        resendBtn.disabled = true;
+        resendBtn.classList.add('btn--loading');
+        resendStatus.classList.add('hidden');
+        resendStatus.textContent = '';
+
+        try {
+            await post('/auth/resend-verification');
+            toast.success('Verification email sent!');
+            resendStatus.textContent = 'Verification email sent! Check your inbox.';
+            resendStatus.classList.remove('hidden');
+            resendStatus.classList.remove('form-error');
+            resendStatus.classList.add('form-success');
+
+            resendBtn.disabled = true;
+            resendBtn.textContent = 'Email sent';
+
+            setTimeout(() => {
+                resendBtn.disabled = false;
+                resendBtn.textContent = 'Resend verification email';
+                resendStatus.classList.add('hidden');
+            }, 5000);
+        } catch (error) {
+            let errorMessage = 'Failed to resend verification email. Please try again.';
+
+            if (error.status === 429) {
+                errorMessage = 'Too many requests. Please wait before trying again.';
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+
+            resendStatus.textContent = errorMessage;
+            resendStatus.classList.remove('hidden');
+            resendStatus.classList.add('form-error');
+            resendBtn.disabled = false;
+            resendBtn.classList.remove('btn--loading');
+        } finally {
+            resendBtn.classList.remove('btn--loading');
+        }
+    });
 }
 
 /**
