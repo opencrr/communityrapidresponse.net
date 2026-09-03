@@ -49,13 +49,14 @@ export async function render(container) {
     `;
 
     // Initialize map
-    await initHomeMap();
+    await initHomeMap(authenticated);
 }
 
 /**
  * Initialize the home page map
+ * @param {boolean} authenticated - Whether the user is authenticated
  */
-async function initHomeMap() {
+async function initHomeMap(authenticated) {
     const mapContainer = document.getElementById('home-map');
     if (!mapContainer) return;
 
