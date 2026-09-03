@@ -39,6 +39,12 @@ const (
 	accountLockoutDuration   = 15 * time.Minute
 )
 
+// Registration response messages
+const (
+	registrationSuccessMessage     = "Registration successful. Please check your email to verify your account."
+	registrationEmailFailedMessage = "Registration successful, but we couldn't send your verification email. You can request a new one after logging in."
+)
+
 // EmailVerificationClaims represents JWT claims for email verification tokens
 type EmailVerificationClaims struct {
 	UserID string `json:"user_id"`
@@ -251,17 +257,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if emailVerificationEnabled {
 		verificationToken, err := h.generateEmailVerificationToken(user.ID, user.Email)
 		if err != nil {
-			// Log error but don't fail registration
-			// User can request resend
-			resp.Message = "Registration successful. Please check your email to verify your account."
+			// Log error but don't fail registration; user can request a resend later.
+			slog.ErrorContext(r.Context(), "failed to generate email verification token",
+				"email", services.RedactEmail(user.Email), "error", err)
+			resp.Message = registrationEmailFailedMessage
+		} else if err := h.emailService.SendVerificationEmail(r.Context(), user.Email, verificationToken); err != nil {
+			// Log error but don't fail registration; user can request a resend later.
+			slog.ErrorContext(r.Context(), "failed to send verification email",
+				"email", services.RedactEmail(user.Email), "error", err)
+			resp.Message = registrationEmailFailedMessage
 		} else {
-			if err := h.emailService.SendVerificationEmail(r.Context(), user.Email, verificationToken); err != nil {
-				// Log error but don't fail registration
-				resp.Message = "Registration successful. Please check your email to verify your account."
-			} else {
-				resp.EmailVerificationSent = true
-				resp.Message = "Registration successful. Please check your email to verify your account."
-			}
+			resp.EmailVerificationSent = true
+			resp.Message = registrationSuccessMessage
 		}
 	}
 

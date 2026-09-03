@@ -105,6 +105,40 @@ func TestUserJSON(t *testing.T) {
 	}
 }
 
+func TestRegisterResponseJSON(t *testing.T) {
+	// A false EmailVerificationSent must be serialized explicitly so
+	// clients can distinguish "verification email not sent" from a field
+	// that was never set. An `omitempty` tag on this field would silently
+	// drop it from the wire format, which the frontend depends on to route
+	// users to the pending-verification page instead of a misleading
+	// "check your inbox" success message.
+	resp := RegisterResponse{
+		UserID:                "test-id",
+		Username:              "testuser",
+		Email:                 "test@example.com",
+		EmailVerificationSent: false,
+		Message:               "The verification email could not be sent.",
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("Failed to marshal RegisterResponse: %v", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Failed to unmarshal into map: %v", err)
+	}
+
+	sent, present := raw["email_verification_sent"]
+	if !present {
+		t.Fatalf("expected \"email_verification_sent\" key in JSON output, got: %s", data)
+	}
+	if sent != false {
+		t.Errorf("expected email_verification_sent=false, got %v", sent)
+	}
+}
+
 func TestPublicUser(t *testing.T) {
 	user := &PublicUser{
 		ID:               "test-id",

@@ -12,7 +12,7 @@ type RegisterResponse struct {
 	UserID                string `json:"user_id"`
 	Username              string `json:"username"`
 	Email                 string `json:"email"`
-	EmailVerificationSent bool   `json:"email_verification_sent,omitempty"`
+	EmailVerificationSent bool   `json:"email_verification_sent"`
 	Message               string `json:"message,omitempty"`
 }
 

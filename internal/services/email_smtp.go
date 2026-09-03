@@ -67,7 +67,7 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 	if !s.enabled {
 		// Subject is intentionally omitted: it can correlate users with
 		// password-reset / email-verification flows in log aggregation.
-		slog.Info("smtp disabled, would send email", "to", redactEmail(msg.To))
+		slog.Info("smtp disabled, would send email", "to", RedactEmail(msg.To))
 		return nil
 	}
 
@@ -115,7 +115,7 @@ func (s *SMTPEmailService) Send(ctx context.Context, msg *EmailMessage) error {
 		return fmt.Errorf("failed to send email via SMTP: %w", err)
 	}
 
-	slog.Info("email sent via smtp", "to", redactEmail(msg.To))
+	slog.Info("email sent via smtp", "to", RedactEmail(msg.To))
 	return nil
 }
 
@@ -165,7 +165,7 @@ func (s *SMTPEmailService) sendWithTLS(addr string, auth smtp.Auth, from, to str
 		return fmt.Errorf("failed to close email body: %w", err)
 	}
 
-	slog.Info("email sent via smtp with tls", "to", redactEmail(to))
+	slog.Info("email sent via smtp with tls", "to", RedactEmail(to))
 	return nil
 }
 

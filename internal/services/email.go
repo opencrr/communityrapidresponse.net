@@ -13,7 +13,9 @@ var (
 	ErrUnsupportedEmailBackend = errors.New("unsupported email backend")
 )
 
-func redactEmail(email string) string {
+// RedactEmail masks the local part of an email address for safe logging,
+// e.g. "jdoe@example.com" becomes "j***@example.com".
+func RedactEmail(email string) string {
 	parts := strings.SplitN(email, "@", 2)
 	if len(parts) != 2 {
 		return "***"
