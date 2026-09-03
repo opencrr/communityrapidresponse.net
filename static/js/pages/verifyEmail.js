@@ -9,6 +9,18 @@ import { navigate } from '../app.js';
 import toast from '../components/toast.js';
 
 /**
+ * Escape HTML to prevent XSS
+ * @param {string} text - Text to escape
+ * @returns {string} Escaped text
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
  * Render the email verification page
  * @param {HTMLElement} container - Container element to render into
  */
@@ -18,7 +30,10 @@ export async function render(container) {
     const token = urlParams.get('token');
 
     if (!token) {
-        renderPendingVerification(container);
+        // Message/email are passed as navigation state from login.js when available
+        // (e.g. a stale-session redirect from the API client has no such state).
+        const state = window.history.state || {};
+        renderPendingVerification(container, state.message, state.email);
         return;
     }
 
@@ -70,8 +85,17 @@ export async function render(container) {
 /**
  * Render pending email verification state
  * @param {HTMLElement} container - Container element
+ * @param {string} [message] - Message returned by the login response, if available
+ * @param {string} [email] - Email address the verification link was sent to, if available
  */
-function renderPendingVerification(container) {
+function renderPendingVerification(container, message, email) {
+    const description = message
+        ? escapeHtml(message)
+        : 'Please verify your email address to continue. Check your inbox for a verification link.';
+    const emailLine = email
+        ? `<p class="empty-state__description" style="margin-top: 1rem; font-size: 0.9rem; color: var(--color-text-secondary);">Sent to <strong>${escapeHtml(email)}</strong></p>`
+        : '';
+
     container.innerHTML = `
         <div class="page page--centered">
             <div class="auth-page">
@@ -83,8 +107,8 @@ function renderPendingVerification(container) {
                         <div class="empty-state">
                             <div class="empty-state__icon" style="color: var(--color-info);">✉️</div>
                             <h3 class="empty-state__title">Check Your Email</h3>
-                            <p class="empty-state__description">We've sent a verification link to your email address. Click the link to verify your account.</p>
-                            <p class="empty-state__description" style="margin-top: 1rem; font-size: 0.9rem; color: var(--color-text-secondary);">Your address is never stored in our system</p>
+                            <p class="empty-state__description">${description}</p>
+                            ${emailLine}
                             <div class="btn-group" style="margin-top: 1.5rem;">
                                 <button id="resend-btn" class="btn btn--primary">Resend verification email</button>
                             </div>

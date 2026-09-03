@@ -96,7 +96,10 @@ async function handleSubmit(event) {
 
         // Check if email verification is required
         if (response.email_action) {
-            navigate('/verify-email');
+            navigate('/verify-email', {
+                message: response.message,
+                email: response.user?.email,
+            });
             return;
         }
 
