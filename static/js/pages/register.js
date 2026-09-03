@@ -141,10 +141,8 @@ async function handleSubmit(event) {
         if (response.email_verification_sent === false && response.message) {
             // Show the distinct message and navigate to pending verification page
             navigate('/verify-email', {
-                state: {
-                    message: response.message,
-                    email: email
-                }
+                message: response.message,
+                email: email
             });
             return;
         }
