@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -55,7 +56,7 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 	}
 
 	if !s.enabled {
-		slog.Info("sendgrid disabled, would send email", "to", redactEmail(msg.To), "subject", msg.Subject)
+		slog.Info("sendgrid disabled, would send email", "to", RedactEmail(msg.To), "subject", msg.Subject)
 		return nil
 	}
 
@@ -98,11 +99,26 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("SendGrid API error: status %d", resp.StatusCode)
+		return fmt.Errorf("SendGrid API error: status %d%s", resp.StatusCode, sendGridErrorDetail(resp.Body))
 	}
 
-	slog.Info("email sent via sendgrid", "to", redactEmail(msg.To))
+	slog.Info("email sent via sendgrid", "to", RedactEmail(msg.To))
 	return nil
+}
+
+// sendGridErrorDetail extracts the first error message from a SendGrid error
+// response body (`{"errors":[{"message":"..."}]}`), formatted for appending
+// to an error string. Returns an empty string if the body can't be parsed.
+func sendGridErrorDetail(body io.Reader) string {
+	var parsed struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.NewDecoder(body).Decode(&parsed); err != nil || len(parsed.Errors) == 0 {
+		return ""
+	}
+	return ": " + parsed.Errors[0].Message
 }
 
 // SendVerificationEmail sends an email verification link to the user

@@ -216,6 +216,84 @@ func TestAuthHandler_Register(t *testing.T) {
 	})
 }
 
+// failingEmailService is an EmailServiceInterface that always fails to send,
+// used to exercise the "verification email could not be sent" registration path.
+type failingEmailService struct{}
+
+func (failingEmailService) SendVerificationEmail(ctx context.Context, toEmail, token string) error {
+	return fmt.Errorf("simulated sendgrid failure")
+}
+
+func (failingEmailService) Send(ctx context.Context, msg *services.EmailMessage) error {
+	return fmt.Errorf("simulated sendgrid failure")
+}
+
+func (failingEmailService) IsEnabled() bool { return true }
+
+func (failingEmailService) Backend() string { return "failing-mock" }
+
+func TestAuthHandler_Register_EmailSendFailure(t *testing.T) {
+	db := testDB(t)
+	userRepo := database.NewUserRepository(db)
+	jwtAuth := testJWTAuth()
+	handler := NewAuthHandlerWithEmailService(
+		nil, userRepo, jwtAuth, failingEmailService{}, "test_secret_key_at_least_32_characters_long",
+		false, false, nil, nil, nil, "http://localhost:3000", nil,
+	)
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE email LIKE '%@sendfailtest.com'")
+
+	body := map[string]string{
+		"username": "sendfailtest",
+		"email":    "user@sendfailtest.com",
+		"password": "securepassword123",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Register(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Assert against the raw JSON, not just the decoded struct: a missing
+	// "email_verification_sent" key and an explicit `false` both decode to
+	// the same Go zero value, so only the raw wire format catches a
+	// regression to `omitempty` on that field (which the frontend depends
+	// on seeing explicitly to route to the pending-verification page).
+	var raw map[string]interface{}
+	rawBody := rec.Body.Bytes()
+	if err := json.Unmarshal(rawBody, &raw); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	sent, present := raw["email_verification_sent"]
+	if !present {
+		t.Fatalf("expected \"email_verification_sent\" key to be present in JSON, got: %s", rawBody)
+	}
+	if sent != false {
+		t.Errorf("expected email_verification_sent=false, got %v", sent)
+	}
+
+	var resp models.RegisterResponse
+	_ = json.Unmarshal(rawBody, &resp)
+
+	if resp.EmailVerificationSent {
+		t.Error("expected EmailVerificationSent to be false")
+	}
+	if resp.Message != registrationEmailFailedMessage {
+		t.Errorf("expected distinct not-sent message %q, got %q", registrationEmailFailedMessage, resp.Message)
+	}
+	if resp.Message == registrationSuccessMessage {
+		t.Error("not-sent message must be distinct from the success message")
+	}
+
+	_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resp.UserID)
+}
+
 func TestAuthHandler_Login(t *testing.T) {
 	db := testDB(t)
 	userRepo := database.NewUserRepository(db)

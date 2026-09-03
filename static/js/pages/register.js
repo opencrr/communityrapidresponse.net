@@ -134,16 +134,22 @@ async function handleSubmit(event) {
     try {
         const response = await register({ username, email, password });
 
+        // Initialize encryption keys (generate keypair, backup to server)
+        await initializeEncryption(password);
+
         // Check if email verification is required
         if (response.email_verification_sent) {
-            // Initialize encryption keys in the background before showing message
-            await initializeEncryption(password);
             showVerificationMessage(form, email);
             return;
         }
 
-        // Initialize encryption keys (generate keypair, backup to server)
-        await initializeEncryption(password);
+        // Verification email failed to send server-side; land on the pending
+        // verification page with the honest "not sent" message instead of
+        // claiming the (nonexistent) email is in the user's inbox.
+        if (response.email_verification_sent === false && response.message) {
+            navigate('/verify-email', { message: response.message, email });
+            return;
+        }
 
         toast.success('Account created successfully!');
         navigate('/login');
