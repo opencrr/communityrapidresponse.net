@@ -1,10 +1,9 @@
 import { test, expect } from '@playwright/test';
 
-// Allowlist for known third-party console errors that are not critical to the app
-const CONSOLE_ERROR_ALLOWLIST = [
-    // Mapbox telemetry may be blocked by CSP but does not affect functionality
-    'undefined',
-];
+// Allowlist for known third-party console errors that are not critical to the app.
+// Entries must be exact substrings observed in genuine third-party noise.
+// If no benign third-party messages are observed, this array remains empty.
+const CONSOLE_ERROR_ALLOWLIST = [];
 
 test.describe('Home page', () => {
     test('landing page loads without console errors', async ({ page }) => {
