@@ -13,7 +13,7 @@ var (
 	ErrUnsupportedEmailBackend = errors.New("unsupported email backend")
 )
 
-func redactEmail(email string) string {
+func RedactEmail(email string) string {
 	parts := strings.SplitN(email, "@", 2)
 	if len(parts) != 2 {
 		return "***"

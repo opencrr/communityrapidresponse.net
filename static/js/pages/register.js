@@ -134,16 +134,26 @@ async function handleSubmit(event) {
     try {
         const response = await register({ username, email, password });
 
-        // Check if email verification is required
-        if (response.email_verification_sent) {
-            // Initialize encryption keys in the background before showing message
-            await initializeEncryption(password);
-            showVerificationMessage(form, email);
+        // Initialize encryption keys
+        await initializeEncryption(password);
+
+        // Check if email verification failed
+        if (response.email_verification_sent === false && response.message) {
+            // Show the distinct message and navigate to pending verification page
+            navigate('/verify-email', {
+                state: {
+                    message: response.message,
+                    email: email
+                }
+            });
             return;
         }
 
-        // Initialize encryption keys (generate keypair, backup to server)
-        await initializeEncryption(password);
+        // Check if email verification is required
+        if (response.email_verification_sent) {
+            showVerificationMessage(form, email);
+            return;
+        }
 
         toast.success('Account created successfully!');
         navigate('/login');

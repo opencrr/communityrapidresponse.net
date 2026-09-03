@@ -214,6 +214,78 @@ func TestAuthHandler_Register(t *testing.T) {
 			t.Errorf("Expected status 400, got %d", rec.Code)
 		}
 	})
+
+	t.Run("handles failed email verification send gracefully", func(t *testing.T) {
+		// Create handler with email service that fails on send
+		emailService := &FailingEmailService{}
+		handler := NewAuthHandlerWithEmailService(
+			db,
+			userRepo,
+			jwtAuth,
+			emailService,
+			"test_secret_key_at_least_32_characters_long",
+			false,
+			false,
+			nil,
+			nil,
+			nil,
+			"http://localhost:3000",
+			nil,
+		)
+
+		body := map[string]string{
+			"username": "emailfailtest",
+			"email":    "emailfail@registertest.com",
+			"password": "securepassword123",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Register(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Errorf("Expected status 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp models.RegisterResponse
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+		// Should still return 201 (registration successful)
+		// But email_verification_sent should be false
+		if resp.EmailVerificationSent {
+			t.Error("Expected email_verification_sent to be false when send fails")
+		}
+
+		// Message should indicate the send failure
+		if !strings.Contains(resp.Message, "could not be sent") {
+			t.Errorf("Expected message to indicate email send failure, got: %s", resp.Message)
+		}
+
+		// Cleanup
+		_, _ = db.ExecContext(context.Background(), "DELETE FROM users WHERE id = ?", resp.UserID)
+	})
+}
+
+// FailingEmailService is a test email service that always fails
+type FailingEmailService struct{}
+
+func (f *FailingEmailService) IsEnabled() bool {
+	return true
+}
+
+func (f *FailingEmailService) Backend() string {
+	return "failing"
+}
+
+func (f *FailingEmailService) Send(ctx context.Context, msg *services.EmailMessage) error {
+	return fmt.Errorf("simulated email send failure")
+}
+
+func (f *FailingEmailService) SendVerificationEmail(ctx context.Context, toEmail, token string) error {
+	return fmt.Errorf("simulated verification email send failure")
 }
 
 func TestAuthHandler_Login(t *testing.T) {

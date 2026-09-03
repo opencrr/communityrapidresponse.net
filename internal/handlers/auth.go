@@ -252,12 +252,15 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		verificationToken, err := h.generateEmailVerificationToken(user.ID, user.Email)
 		if err != nil {
 			// Log error but don't fail registration
-			// User can request resend
-			resp.Message = "Registration successful. Please check your email to verify your account."
+			slog.ErrorContext(r.Context(), "failed to generate email verification token", "user_id", user.ID, "email", services.RedactEmail(user.Email), "error", err)
+			resp.EmailVerificationSent = false
+			resp.Message = "The verification email could not be sent. You can request it again after logging in."
 		} else {
 			if err := h.emailService.SendVerificationEmail(r.Context(), user.Email, verificationToken); err != nil {
 				// Log error but don't fail registration
-				resp.Message = "Registration successful. Please check your email to verify your account."
+				slog.ErrorContext(r.Context(), "failed to send verification email", "user_id", user.ID, "email", services.RedactEmail(user.Email), "error", err)
+				resp.EmailVerificationSent = false
+				resp.Message = "The verification email could not be sent. You can request it again after logging in."
 			} else {
 				resp.EmailVerificationSent = true
 				resp.Message = "Registration successful. Please check your email to verify your account."
