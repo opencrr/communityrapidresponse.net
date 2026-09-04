@@ -1041,6 +1041,10 @@ func (h *GroupHandler) VouchForMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Group or target member not found")
 			return
 		}
+		if errors.Is(err, database.ErrAlreadyVouched) {
+			writeError(w, http.StatusConflict, "already_vouched", "You have already vouched for this member")
+			return
+		}
 		writeServerError(w, r, err, "Failed to create trust vouch", "group", "trust_vouch")
 		return
 	}
