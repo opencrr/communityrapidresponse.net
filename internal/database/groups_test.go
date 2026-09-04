@@ -1671,8 +1671,14 @@ func TestGroupRepository_CreateTrustVouch(t *testing.T) {
 	})
 
 	t.Run("duplicate vouch rejected", func(t *testing.T) {
-		// adminID already vouched for member2ID once
+		// First vouch should succeed
 		err := repo.CreateTrustVouch(ctx, group.ID, adminID, member2ID)
+		if err != nil {
+			t.Fatalf("First CreateTrustVouch failed: %v", err)
+		}
+
+		// Second vouch from same voucher for same member should fail
+		err = repo.CreateTrustVouch(ctx, group.ID, adminID, member2ID)
 		if err != ErrAlreadyVouched {
 			t.Errorf("Expected ErrAlreadyVouched, got %v", err)
 		}
