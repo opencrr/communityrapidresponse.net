@@ -1763,6 +1763,76 @@ func TestGroupHandler_VouchForMember_NotTrustedOrAdmin(t *testing.T) {
 	}
 }
 
+func TestGroupHandler_VouchForMember_AlreadyVouched(t *testing.T) {
+	suite := setupGroupTestSuite(t)
+
+	admin := suite.createTestUser("grpvouch_dupladmin", models.TierVouched, false)
+	admin.VouchVerified = true
+	member := suite.createTestUser("grpvouch_duplmember", models.TierVouched, false)
+	member.VouchVerified = true
+	region := suite.createTestRegion("GrpVouchRegionDupl", models.RegionTypeCity, nil)
+
+	ctx := context.Background()
+	_ = suite.regionRepo.AddUserToRegion(ctx, admin.ID, region.ID, false)
+	_ = suite.regionRepo.AddUserToRegion(ctx, member.ID, region.ID, false)
+
+	createReq := &models.CreateGroupRequest{
+		Name:       "Duplicate Vouch Test Group",
+		Visibility: "unlisted",
+		RegionIDs:  []string{region.ID},
+	}
+	group, err := suite.groupRepo.Create(ctx, createReq, admin.ID)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	// Add member to the group
+	err = suite.groupRepo.AddMember(ctx, group.ID, member.ID, false, false)
+	if err != nil {
+		t.Fatalf("Failed to add member: %v", err)
+	}
+
+	defer suite.cleanup([]string{admin.ID, member.ID}, []string{region.ID}, []string{group.ID})
+
+	// First vouch should succeed
+	claims := suite.claimsForUser(admin)
+	body := models.CreateTrustVouchRequest{UserID: member.ID}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/groups/"+group.ID+"/trust-vouches?id="+group.ID, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	ctx = middleware.ContextWithUser(req.Context(), claims)
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	suite.handler.VouchForMember(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("First vouch failed: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Second vouch by same person should fail with 409
+	bodyBytes2, _ := json.Marshal(body)
+	req2 := httptest.NewRequest("POST", "/groups/"+group.ID+"/trust-vouches?id="+group.ID, bytes.NewReader(bodyBytes2))
+	req2.Header.Set("Content-Type", "application/json")
+	ctx2 := middleware.ContextWithUser(req2.Context(), claims)
+	req2 = req2.WithContext(ctx2)
+
+	rec2 := httptest.NewRecorder()
+	suite.handler.VouchForMember(rec2, req2)
+
+	if rec2.Code != http.StatusConflict {
+		t.Errorf("Expected 409 Conflict, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	// Check that the response contains the already_vouched error code
+	var errResp map[string]interface{}
+	_ = json.NewDecoder(rec2.Body).Decode(&errResp)
+	if code, ok := errResp["error"].(string); !ok || code != "already_vouched" {
+		t.Errorf("Expected error code 'already_vouched', got %v", errResp["error"])
+	}
+}
+
 func TestGroupHandler_GetTrustVouchStatus_Success(t *testing.T) {
 	suite := setupGroupTestSuite(t)
 

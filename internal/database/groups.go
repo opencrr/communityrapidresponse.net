@@ -1435,6 +1435,9 @@ func (r *GroupRepository) CreateTrustVouch(ctx context.Context, groupID, voucher
 			vouchID, groupID, voucherUserID, vouchedUserID, time.Now().UTC(),
 		)
 		if err != nil {
+			if strings.Contains(err.Error(), "Duplicate entry") {
+				return ErrAlreadyVouched
+			}
 			return fmt.Errorf("insert trust vouch: %w", err)
 		}
 
