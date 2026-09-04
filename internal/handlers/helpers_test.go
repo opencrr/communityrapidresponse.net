@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/opencrr/communityrapidresponse.net/internal/logging"
 )
 
 func makeRepeatedByte(b byte, n int) []byte {
@@ -121,5 +126,102 @@ func TestRouter_SchoolDistrictByID_InvalidUUID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// =============================================================================
+// writeServerError Tests
+// =============================================================================
+
+func TestWriteServerError_NormalError(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	oldDefault := slog.Default()
+	defer func() { slog.SetDefault(oldDefault) }()
+	slog.SetDefault(slog.New(base))
+
+	ctx := logging.WithRequestID(context.Background(), "req-123")
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	testErr := context.DeadlineExceeded
+	writeServerError(rec, req, testErr, "Internal server error", "test", "operation")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d", rec.Code)
+	}
+
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if body.Error != "internal_error" {
+		t.Errorf("Expected error code 'internal_error', got %q", body.Error)
+	}
+	if body.Message != "Internal server error" {
+		t.Errorf("Expected message 'Internal server error', got %q", body.Message)
+	}
+
+	var logEntry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &logEntry); err != nil {
+		t.Fatalf("Failed to unmarshal log: %v", err)
+	}
+	if logEntry["level"] != "ERROR" {
+		t.Errorf("Expected log level ERROR, got %v", logEntry["level"])
+	}
+	if logEntry["component"] != "test" {
+		t.Errorf("Expected component 'test', got %v", logEntry["component"])
+	}
+	if logEntry["operation"] != "operation" {
+		t.Errorf("Expected operation 'operation', got %v", logEntry["operation"])
+	}
+}
+
+func TestWriteServerError_ClientDisconnected(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	oldDefault := slog.Default()
+	defer func() { slog.SetDefault(oldDefault) }()
+	slog.SetDefault(slog.New(base))
+
+	ctxWithCancel, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ctx := logging.WithRequestID(ctxWithCancel, "req-456")
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	testErr := context.Canceled
+	writeServerError(rec, req, testErr, "Internal server error", "test", "operation")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status 500, got %d", rec.Code)
+	}
+
+	var body ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if body.Error != "internal_error" {
+		t.Errorf("Expected error code 'internal_error', got %q", body.Error)
+	}
+
+	var logEntry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &logEntry); err != nil {
+		t.Fatalf("Failed to unmarshal log: %v", err)
+	}
+	if logEntry["level"] != "INFO" {
+		t.Errorf("Expected log level INFO for client_disconnected, got %v", logEntry["level"])
+	}
+	if logEntry["msg"] != "client_disconnected" {
+		t.Errorf("Expected msg 'client_disconnected', got %v", logEntry["msg"])
+	}
+	if logEntry["component"] != "test" {
+		t.Errorf("Expected component 'test', got %v", logEntry["component"])
+	}
+	if logEntry["operation"] != "operation" {
+		t.Errorf("Expected operation 'operation', got %v", logEntry["operation"])
 	}
 }

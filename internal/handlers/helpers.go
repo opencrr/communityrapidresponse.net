@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/database"
+	"github.com/opencrr/communityrapidresponse.net/internal/logging"
 	appSentry "github.com/opencrr/communityrapidresponse.net/internal/sentry"
 )
 
@@ -122,9 +124,27 @@ func writeError(w http.ResponseWriter, status int, errorCode, message string) {
 	})
 }
 
-// writeServerError captures the error in Sentry and writes a 500 response.
+// writeServerError logs the error and writes a 500 response.
+// For context-canceled/deadline-exceeded requests where the client is gone,
+// logs at INFO level and skips Sentry. Otherwise logs at ERROR level and captures to Sentry.
 func writeServerError(w http.ResponseWriter, r *http.Request, err error, message, component, operation string) {
-	_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", component, "operation", operation)
+	requestID := logging.RequestID(r.Context())
+	isClientGone := r.Context().Err() != nil
+	isClientCanceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+
+	if isClientCanceled && isClientGone {
+		slog.InfoContext(r.Context(), "client_disconnected",
+			"component", component,
+			"operation", operation,
+			"error", err.Error())
+	} else {
+		slog.ErrorContext(r.Context(), "server error",
+			"request_id", requestID,
+			"component", component,
+			"operation", operation,
+			"error", err.Error())
+		_ = appSentry.CaptureErrorWithContext(r.Context(), err, "component", component, "operation", operation)
+	}
 	writeError(w, http.StatusInternalServerError, "internal_error", message)
 }
 
