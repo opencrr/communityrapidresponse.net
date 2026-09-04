@@ -1828,8 +1828,8 @@ func TestGroupHandler_VouchForMember_AlreadyVouched(t *testing.T) {
 	// Check that the response contains the already_vouched error code
 	var errResp map[string]interface{}
 	_ = json.NewDecoder(rec2.Body).Decode(&errResp)
-	if code, ok := errResp["code"].(string); !ok || code != "already_vouched" {
-		t.Errorf("Expected error code 'already_vouched', got %v", errResp["code"])
+	if code, ok := errResp["error"].(string); !ok || code != "already_vouched" {
+		t.Errorf("Expected error code 'already_vouched', got %v", errResp["error"])
 	}
 }
 
