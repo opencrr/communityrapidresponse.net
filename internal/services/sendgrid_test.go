@@ -2,6 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/opencrr/communityrapidresponse.net/internal/config"
@@ -200,4 +204,111 @@ func TestNewEmailService_RequiresSMTPHost(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when SMTP host is missing")
 	}
+}
+
+func TestSendGridEmailService_Send_TrackingSettings(t *testing.T) {
+	var capturedBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("Failed to read request body: %v", err)
+		}
+		capturedBody = body
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+
+	cfg := &config.EmailConfig{
+		Backend:         config.EmailBackendSendGrid,
+		Enabled:         true,
+		SendGridAPIKey:  "test-key",
+		FromAddress:     "test@example.com",
+		FromName:        "Test",
+		VerificationURL: "http://localhost:3000/verify-email",
+	}
+
+	service := NewSendGridEmailService(cfg)
+
+	msg := &EmailMessage{
+		To:          "user@example.com",
+		Subject:     "Test Subject",
+		HTMLContent: "<html>Test HTML</html>",
+		TextContent: "Test Text",
+	}
+
+	transport := &testHTTPTransport{
+		handler: server.Config.Handler,
+	}
+	service.httpClient = &http.Client{Transport: transport}
+
+	err := service.Send(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	var payload map[string]interface{}
+	err = json.Unmarshal(capturedBody, &payload)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal payload: %v", err)
+	}
+
+	trackingSettings, exists := payload["tracking_settings"]
+	if !exists {
+		t.Fatal("tracking_settings not found in payload")
+	}
+
+	ts, ok := trackingSettings.(map[string]interface{})
+	if !ok {
+		t.Fatalf("tracking_settings is not a map: %T", trackingSettings)
+	}
+
+	clickTracking, clickExists := ts["click_tracking"]
+	if !clickExists {
+		t.Fatal("click_tracking not found in tracking_settings")
+	}
+
+	ct, ok := clickTracking.(map[string]interface{})
+	if !ok {
+		t.Fatalf("click_tracking is not a map: %T", clickTracking)
+	}
+
+	if enable, ok := ct["enable"]; !ok || enable != false {
+		t.Errorf("click_tracking.enable should be false, got %v", enable)
+	}
+
+	if enableText, ok := ct["enable_text"]; !ok || enableText != false {
+		t.Errorf("click_tracking.enable_text should be false, got %v", enableText)
+	}
+
+	openTracking, openExists := ts["open_tracking"]
+	if !openExists {
+		t.Fatal("open_tracking not found in tracking_settings")
+	}
+
+	ot, ok := openTracking.(map[string]interface{})
+	if !ok {
+		t.Fatalf("open_tracking is not a map: %T", openTracking)
+	}
+
+	if enable, ok := ot["enable"]; !ok || enable != false {
+		t.Errorf("open_tracking.enable should be false, got %v", enable)
+	}
+}
+
+type testHTTPTransport struct {
+	handler http.Handler
+}
+
+func (t *testHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	t.handler.ServeHTTP(recorder, req)
+	return recorder.Result(), nil
 }
