@@ -77,6 +77,15 @@ func (s *SendGridEmailService) Send(ctx context.Context, msg *EmailMessage) erro
 			{"type": "text/plain", "value": msg.TextContent},
 			{"type": "text/html", "value": msg.HTMLContent},
 		},
+		"tracking_settings": map[string]interface{}{
+			"click_tracking": map[string]interface{}{
+				"enable":      false,
+				"enable_text": false,
+			},
+			"open_tracking": map[string]interface{}{
+				"enable": false,
+			},
+		},
 	}
 
 	jsonPayload, err := json.Marshal(payload)
